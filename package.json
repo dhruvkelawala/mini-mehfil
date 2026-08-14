@@ -1,0 +1,13 @@
+{
+  "name": "minimax-mehfil",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mini Mehfil — a tiny local song room for MiniMax Music 3",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
