@@ -19,6 +19,7 @@ const seek = document.querySelector('#seek');
 const timecode = document.querySelector('#timecode');
 const trackTitle = document.querySelector('#track-title');
 const trackSubtitle = document.querySelector('#track-subtitle');
+const shareButton = document.querySelector('#share');
 const download = document.querySelector('#download');
 const scene = document.querySelector('.scene');
 const main = document.querySelector('main');
@@ -48,6 +49,8 @@ let lyricSheet = null;
 let hasRevealed = false;
 let generating = false;
 let typingRun = 0;
+let shareReference = null;
+let shareUrl = null;
 
 function updateClock() {
   document.querySelector('#clock').textContent = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(new Date()).toLowerCase();
@@ -239,13 +242,17 @@ async function post(url, payload) {
   return result;
 }
 
-function loadSong(source, title) {
+function loadSong(source, title, reference) {
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   const isUrl = /^https?:\/\//i.test(source);
   objectUrl = isUrl ? null : decodeHexAudio(source);
   audio.src = isUrl ? source : objectUrl;
   trackTitle.textContent = title || 'Your Mehfil recording';
   trackSubtitle.textContent = 'Fresh from MiniMax Music 3';
+  shareReference = reference || null;
+  shareUrl = null;
+  shareButton.disabled = !shareReference;
+  shareButton.innerHTML = '↗<span>Share</span>';
   playButton.disabled = false;
   download.href = audio.src;
   download.setAttribute('aria-disabled', 'false');
@@ -266,6 +273,10 @@ form.addEventListener('submit', async event => {
   generating = true;
   updateScenePerformance();
   let generationFailed = false;
+  shareReference = null;
+  shareUrl = null;
+  shareButton.disabled = true;
+  shareButton.innerHTML = '↗<span>Share</span>';
 
   try {
     setBusy(true, writingLines);
@@ -289,7 +300,7 @@ form.addEventListener('submit', async event => {
     const source = result?.data?.audio || result?.audio?.url || result?.audio;
     if (!source || typeof source !== 'string') throw new Error('MiniMax succeeded but did not return an audio file.');
 
-    loadSong(source, lyricSheet.title);
+    loadSong(source, lyricSheet.title, result.share_ref);
     notice.className = 'notice working';
     notice.textContent = 'Your recording is ready.';
   } catch (error) {
@@ -352,4 +363,57 @@ seek.addEventListener('input', () => {
 });
 audio.addEventListener('ended', () => {
   if (!performanceView.hidden) performanceReplay.hidden = false;
+});
+
+async function copyShareLink(url) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(url);
+    return;
+  }
+  const field = document.createElement('textarea');
+  field.value = url;
+  field.setAttribute('readonly', '');
+  field.style.position = 'fixed';
+  field.style.opacity = '0';
+  document.body.append(field);
+  field.select();
+  const copied = document.execCommand('copy');
+  field.remove();
+  if (!copied) throw new Error('Copy the link from the message below.');
+}
+
+shareButton.addEventListener('click', async () => {
+  if (!shareReference || !lyricSheet) return;
+  shareButton.disabled = true;
+  shareButton.innerHTML = '…<span>Sharing</span>';
+  try {
+    if (!shareUrl) {
+      const result = await post('/api/share', {
+        shareRef: shareReference,
+        title: lyricSheet.title,
+        language: lyricSheet.language,
+        nativeScriptName: lyricSheet.nativeScriptName,
+        isLatinScript: lyricSheet.isLatinScript,
+        lyricsNative: lyricSheet.lyricsNative,
+        lyricsRoman: lyricSheet.lyricsRoman
+      });
+      shareUrl = result.url;
+    }
+    try {
+      await copyShareLink(shareUrl);
+      shareButton.innerHTML = '✓<span>Copied</span>';
+      notice.className = 'notice working';
+      notice.textContent = 'Share link copied. The mehfil can travel now.';
+    } catch {
+      shareButton.innerHTML = '↗<span>Link ready</span>';
+      notice.className = 'notice working';
+      notice.textContent = `Share link: ${shareUrl}`;
+    }
+  } catch (error) {
+    shareButton.innerHTML = '↻<span>Retry</span>';
+    notice.className = 'notice';
+    notice.textContent = error.message;
+  } finally {
+    shareButton.disabled = false;
+  }
 });

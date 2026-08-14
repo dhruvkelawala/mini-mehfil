@@ -19,8 +19,18 @@ Bring your own key. Lyrics cost roughly a tenth of a cent (MiniMax M3 text model
 ## Privacy
 
 - Your token lives only in the browser field. It is sent to the local Node proxy per request, forwarded to `api.minimax.io`, and never logged or stored.
-- Lyrics and prompts are not stored anywhere.
-- Generated MiniMax audio URLs expire after 24 hours; use **Save** to download tracks you want to keep.
+- Lyrics and prompts stay local unless you explicitly share a finished song. A share stores the MP3 and its lyric sheet in the configured R2 bucket until its lifecycle rule expires them.
+- Generated MiniMax audio URLs expire after 24 hours; use **Save** to download tracks you want to keep. If the optional share Worker is configured, **Share** copies a hosted courtyard link after an explicit click.
+
+## Optional sharing
+
+Deploy the zero-dependency Cloudflare Worker described in [`share/README.md`](share/README.md), then start the app with its HTTPS origin:
+
+```bash
+MEHFIL_SHARE_URL=https://mini-mehfil-share.example.workers.dev npm start
+```
+
+Sharing is opt-in for each finished song. The local proxy downloads only audio it just generated and uploads the MP3 plus the title, language, and lyric sheet. Your MiniMax token is never included.
 
 ## How it works
 
