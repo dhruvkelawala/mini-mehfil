@@ -221,7 +221,14 @@ function renderPlaybackLyrics() {
   let spokenSeen = 0;
   renderedLines.forEach((line, index) => {
     const lyric = lines[index];
-    line.hidden = lyric.cue ? shownSpokenCount <= spokenSeen : ++spokenSeen > shownSpokenCount;
+    if (!lyric.cue) {
+      line.hidden = ++spokenSeen > shownSpokenCount;
+      return;
+    }
+    // A cue surfaces with the spoken line that follows it; a trailing cue
+    // (like a final [Outro]) surfaces once every spoken line is on screen.
+    const isTrailingCue = spokenSeen === spokenLineCount;
+    line.hidden = isTrailingCue ? shownSpokenCount < spokenLineCount : shownSpokenCount <= spokenSeen;
   });
   revealLines.scrollTop = revealLines.scrollHeight;
 }

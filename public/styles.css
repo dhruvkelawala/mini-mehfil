@@ -243,12 +243,12 @@ input::placeholder { color: #b3a08a; opacity: 1; }
   .composer { padding: 20px 18px; }
   .composer h2 { font-size: 26px; }
   .field-row, .modes { grid-template-columns: 1fr; }
-    .player-shell { bottom: 12px; min-height: 72px; grid-template-columns: 52px 1fr 43px 43px 43px; gap: 8px; padding: 8px 12px 8px 8px; }
-  .player-shell:has(.performance-entry[hidden]) { grid-template-columns: 52px 1fr 43px 43px; }
+  .player-shell { bottom: 12px; min-height: 72px; grid-template-columns: 52px 1fr 43px 43px 43px 43px; gap: 8px; padding: 8px 12px 8px 8px; }
+  .player-shell:has(.performance-entry[hidden]) { grid-template-columns: 52px 1fr 43px 43px 43px; }
   .record { width: 50px; height: 50px; }
   .record-label { width: 22px; height: 22px; font-size: 11px; }
   .play { width: 41px; height: 41px; }
-  .download { display: none; }
+  .download { width: 40px; }
   #timecode { display: none; }
   .timeline { grid-template-columns: 1fr; }
   .performance { padding: 64px 14px 100px; align-items: center; }
