@@ -52,6 +52,7 @@ let lyricSheet = null;
 let hasRevealed = false;
 let generating = false;
 let typingRun = 0;
+let generationRun = 0;
 let shareReference = null;
 let shareUrl = null;
 let performanceAvailable = false;
@@ -285,6 +286,27 @@ async function post(url, payload) {
   return result;
 }
 
+function clearLoadedSong() {
+  generationRun += 1;
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  objectUrl = null;
+  audio.pause();
+  audio.removeAttribute('src');
+  audio.load();
+  seek.value = 0;
+  timecode.textContent = '0:00 / 0:00';
+  playButton.disabled = true;
+  playButton.querySelector('span').textContent = '▶';
+  playButton.setAttribute('aria-label', 'Play');
+  download.removeAttribute('href');
+  download.setAttribute('aria-disabled', 'true');
+  shareReference = null;
+  shareUrl = null;
+  shareButton.disabled = true;
+  shareButton.innerHTML = '↗<span>Share</span>';
+  performanceReplay.hidden = true;
+}
+
 function loadSong(source, title, reference) {
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   const isUrl = /^https?:\/\//i.test(source);
@@ -310,20 +332,14 @@ form.addEventListener('submit', async event => {
   event.preventDefault();
   notice.textContent = '';
   if (!form.reportValidity()) return;
-  audio.pause();
-  audio.currentTime = 0;
+  clearLoadedSong();
   resetPeek();
   performanceAvailable = true;
   performanceButton.hidden = false;
   openPerformance(generateButton);
-  performanceReplay.hidden = true;
   generating = true;
   updateScenePerformance();
   let generationFailed = false;
-  shareReference = null;
-  shareUrl = null;
-  shareButton.disabled = true;
-  shareButton.innerHTML = '↗<span>Share</span>';
   trackTitle.textContent = 'Your mehfil is recording';
   trackSubtitle.textContent = 'View the performance while you wait';
 
@@ -355,6 +371,8 @@ form.addEventListener('submit', async event => {
   } catch (error) {
     notice.className = 'notice';
     notice.textContent = error.message;
+    trackTitle.textContent = 'No recording was made';
+    trackSubtitle.textContent = 'Try the mehfil again';
     performanceAvailable = false;
     generationFailed = true;
   } finally {
@@ -456,9 +474,13 @@ async function copyShareLink(url) {
 
 shareButton.addEventListener('click', async () => {
   if (!shareReference || !lyricSheet) return;
+  const requestRun = generationRun;
+  const requestReference = shareReference;
+  const requestIsCurrent = () => requestRun === generationRun && requestReference === shareReference;
   shareButton.disabled = true;
   shareButton.innerHTML = '…<span>Sharing</span>';
   try {
+    let requestedUrl = shareUrl;
     if (!shareUrl) {
       const result = await post('/api/share', {
         shareRef: shareReference,
@@ -469,23 +491,28 @@ shareButton.addEventListener('click', async () => {
         lyricsNative: lyricSheet.lyricsNative,
         lyricsRoman: lyricSheet.lyricsRoman
       });
-      shareUrl = result.url;
+      if (!requestIsCurrent()) return;
+      requestedUrl = result.url;
+      shareUrl = requestedUrl;
     }
     try {
-      await copyShareLink(shareUrl);
+      await copyShareLink(requestedUrl);
+      if (!requestIsCurrent()) return;
       shareButton.innerHTML = '✓<span>Copied</span>';
       notice.className = 'notice working';
       notice.textContent = 'Share link copied. The mehfil can travel now.';
     } catch {
+      if (!requestIsCurrent()) return;
       shareButton.innerHTML = '↗<span>Link ready</span>';
       notice.className = 'notice working';
-      notice.textContent = `Share link: ${shareUrl}`;
+      notice.textContent = `Share link: ${requestedUrl}`;
     }
   } catch (error) {
+    if (!requestIsCurrent()) return;
     shareButton.innerHTML = '↻<span>Retry</span>';
     notice.className = 'notice';
     notice.textContent = error.message;
   } finally {
-    shareButton.disabled = false;
+    if (requestIsCurrent()) shareButton.disabled = false;
   }
 });
