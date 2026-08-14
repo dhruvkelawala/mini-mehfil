@@ -27,7 +27,10 @@ const topbar = document.querySelector('.topbar');
 const performanceView = document.querySelector('#performance');
 const performanceClose = document.querySelector('#performance-close');
 const performanceStatus = document.querySelector('#performance-status');
+const performanceTiming = document.querySelector('#performance-timing');
 const performanceReplay = document.querySelector('#performance-replay');
+const performanceButton = document.querySelector('#view-performance');
+const playerHome = document.querySelector('#player-home');
 
 const writingLines = [
   'Listening to your idea…',
@@ -51,6 +54,8 @@ let generating = false;
 let typingRun = 0;
 let shareReference = null;
 let shareUrl = null;
+let performanceAvailable = false;
+let performanceOpener = null;
 
 function updateClock() {
   document.querySelector('#clock').textContent = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(new Date()).toLowerCase();
@@ -80,9 +85,8 @@ function resetPeek() {
 }
 
 // Lines arrive one at a time, like someone writing them in front of you.
-function typeOut(text) {
+function typeOut(lines) {
   const run = ++typingRun;
-  const lines = text.split('\n').filter(line => line.trim());
   let index = 0;
   revealLines.textContent = '';
   revealLines.dataset.render = 'typing';
@@ -99,8 +103,21 @@ function typeOut(text) {
 
 function createLyricLine(line) {
   const element = document.createElement('span');
-  element.className = /^\[.+\]$/.test(line) ? 'lyric-line lyric-cue' : 'lyric-line';
-  element.textContent = line.replace(/^\[(.+)\]$/, '$1');
+  element.className = line.cue ? 'lyric-line lyric-cue' : 'lyric-line';
+  if (line.cue) {
+    element.textContent = line.primary.replace(/^\[(.+)\]$/, '$1');
+    return element;
+  }
+  const primary = document.createElement('span');
+  primary.className = 'lyric-primary';
+  primary.textContent = line.primary;
+  element.append(primary);
+  if (line.secondary) {
+    const secondary = document.createElement('span');
+    secondary.className = 'lyric-secondary';
+    secondary.textContent = line.secondary;
+    element.append(secondary);
+  }
   return element;
 }
 
@@ -118,7 +135,19 @@ function showFullLyrics() {
 }
 
 function lyricLines() {
-  return (lyricSheet?.lyricsRoman || '').split('\n').filter(line => line.trim());
+  const roman = (lyricSheet?.lyricsRoman || '').split('\n').filter(line => line.trim());
+  const native = (lyricSheet?.lyricsNative || '').split('\n').filter(line => line.trim());
+  const useNative = !lyricSheet?.isLatinScript && native.length;
+  const primary = useNative ? native : roman;
+  return primary.map((primaryLine, index) => {
+    const romanLine = roman[index] || '';
+    const cue = /^\[.+\]$/.test(romanLine || primaryLine);
+    return {
+      cue,
+      primary: cue ? (romanLine || primaryLine) : primaryLine,
+      secondary: useNative && !cue && romanLine && romanLine !== primaryLine ? romanLine : ''
+    };
+  });
 }
 
 function languageLabel() {
@@ -132,23 +161,35 @@ function updateScenePerformance() {
   scene.classList.toggle('is-performing', generating || !audio.paused);
 }
 
-function openPerformance() {
+function openPerformance(opener = document.activeElement) {
+  if (!performanceAvailable) return;
+  performanceOpener = opener;
   performanceView.hidden = false;
+  performanceView.append(player);
+  performanceButton.hidden = true;
   document.body.classList.add('performance-open');
   main.inert = true;
   topbar.inert = true;
   notice.setAttribute('aria-hidden', 'true');
+  if (audio.src) {
+    renderPlaybackLyrics();
+    performanceReplay.hidden = !audio.ended;
+  }
   performanceClose.focus();
 }
 
 function closePerformance() {
+  playerHome.after(player);
   performanceView.hidden = true;
+  performanceButton.hidden = !performanceAvailable;
   document.body.classList.remove('performance-open');
   main.inert = false;
   topbar.inert = false;
   notice.removeAttribute('aria-hidden');
-  performanceStatus.textContent = '';
-  form.querySelector('input:not([disabled]), select:not([disabled]), button:not([disabled])')?.focus();
+  const focusTarget = performanceOpener && !performanceOpener.disabled
+    ? performanceOpener
+    : performanceButton;
+  focusTarget?.focus();
 }
 
 function showPerformanceStatus(message) {
@@ -163,6 +204,7 @@ function renderPlaybackLyrics() {
   peek.hidden = true;
   lyricReveal.hidden = false;
   revealLanguage.textContent = languageLabel();
+  performanceTiming.hidden = hasRevealed;
   if (hasRevealed) {
     if (revealLines.dataset.render !== 'full') showFullLyrics();
     return;
@@ -170,15 +212,15 @@ function renderPlaybackLyrics() {
   const lines = lyricLines();
   const pacedDuration = audio.duration * .9;
   const progress = pacedDuration > 0 ? Math.min(audio.currentTime / pacedDuration, 1) : 0;
-  const shownCount = Math.min(lines.length, Math.floor(progress * lines.length));
+  const spokenLineCount = lines.filter(line => !line.cue).length;
+  const shownSpokenCount = Math.min(spokenLineCount, Math.floor(progress * spokenLineCount));
   if (revealLines.dataset.render !== 'paced') buildLyricLines(lines, 'paced');
   const renderedLines = [...revealLines.children];
+  let spokenSeen = 0;
   renderedLines.forEach((line, index) => {
-    line.hidden = index >= shownCount;
-    line.classList.remove('lyric-current');
+    const lyric = lines[index];
+    line.hidden = lyric.cue ? shownSpokenCount <= spokenSeen : ++spokenSeen > shownSpokenCount;
   });
-  const currentLine = renderedLines.slice(0, shownCount).reverse().find(line => !line.classList.contains('lyric-cue'));
-  currentLine?.classList.add('lyric-current');
   revealLines.scrollTop = revealLines.scrollHeight;
 }
 
@@ -195,7 +237,7 @@ peekToggle.addEventListener('click', () => {
   revealLanguage.textContent = languageLabel();
   // Type them out the first time; after that just show them instantly.
   if (hasRevealed) showFullLyrics();
-  else typeOut(lyricSheet.lyricsRoman);
+  else typeOut(lyricLines());
   hasRevealed = true;
 });
 
@@ -256,6 +298,8 @@ function loadSong(source, title, reference) {
   playButton.disabled = false;
   download.href = audio.src;
   download.setAttribute('aria-disabled', 'false');
+  performanceAvailable = true;
+  performanceButton.hidden = !performanceView.hidden;
   performanceReplay.hidden = true;
   renderPlaybackLyrics();
   audio.play().catch(() => {});
@@ -268,7 +312,9 @@ form.addEventListener('submit', async event => {
   audio.pause();
   audio.currentTime = 0;
   resetPeek();
-  openPerformance();
+  performanceAvailable = true;
+  performanceButton.hidden = false;
+  openPerformance(generateButton);
   performanceReplay.hidden = true;
   generating = true;
   updateScenePerformance();
@@ -277,6 +323,8 @@ form.addEventListener('submit', async event => {
   shareUrl = null;
   shareButton.disabled = true;
   shareButton.innerHTML = '↗<span>Share</span>';
+  trackTitle.textContent = 'Your mehfil is recording';
+  trackSubtitle.textContent = 'View the performance while you wait';
 
   try {
     setBusy(true, writingLines);
@@ -306,6 +354,7 @@ form.addEventListener('submit', async event => {
   } catch (error) {
     notice.className = 'notice';
     notice.textContent = error.message;
+    performanceAvailable = false;
     generationFailed = true;
   } finally {
     generating = false;
@@ -316,8 +365,29 @@ form.addEventListener('submit', async event => {
 });
 
 performanceClose.addEventListener('click', closePerformance);
+performanceButton.addEventListener('click', () => openPerformance(performanceButton));
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && !performanceView.hidden) closePerformance();
+  if (performanceView.hidden) return;
+  if (event.key === 'Escape') {
+    closePerformance();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const controls = [...performanceView.querySelectorAll('button:not([disabled]), input:not([disabled]), a[href]:not([aria-disabled="true"])')]
+    .filter(control => !control.hidden && control.getClientRects().length);
+  if (!controls.length) return;
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  } else if (!performanceView.contains(document.activeElement)) {
+    event.preventDefault();
+    first.focus();
+  }
 });
 performanceReplay.addEventListener('click', () => {
   performanceReplay.hidden = true;
@@ -357,6 +427,7 @@ audio.addEventListener('loadedmetadata', () => {
 });
 seek.addEventListener('input', () => {
   if (audio.duration) {
+    performanceReplay.hidden = true;
     audio.currentTime = (Number(seek.value) / 100) * audio.duration;
     renderPlaybackLyrics();
   }
