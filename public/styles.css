@@ -148,19 +148,21 @@ input::placeholder { color: #b3a08a; opacity: 1; }
 #seek::-webkit-slider-thumb { appearance: none; width: 9px; height: 9px; border-radius: 50%; background: white; opacity: 0; transition: opacity .2s; }
 .player-shell:hover #seek::-webkit-slider-thumb { opacity: 1; }
 #timecode { color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; }
-.play { width: 49px; height: 49px; border: 0; border-radius: 50%; color: #29322e; background: #fffaf0; cursor: pointer; box-shadow: 0 5px 15px rgba(0,0,0,.18); }
+.play { width: 49px; height: 49px; display: grid; place-items: center; border: 0; border-radius: 50%; color: #29322e; background: #fffaf0; cursor: pointer; box-shadow: 0 5px 15px rgba(0,0,0,.18); }
 .play:disabled { opacity: .45; cursor: default; }
-.play span { display: block; transform: translateX(1px); }
-.player-action { width: 44px; height: 45px; display: grid; place-items: center; border: 0; color: var(--ink); background: transparent; cursor: pointer; }
-.player-action svg { width: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.player-action span { font-size: 8px; text-transform: uppercase; letter-spacing: .08em; margin-top: -7px; }
+.player-icon { width: 20px; height: 20px; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.play .player-icon { width: 19px; height: 19px; }
+.play .play-icon { fill: currentColor; stroke: none; transform: translateX(1px); }
+.play .pause-icon { display: none; }
+.player-shell.playing .play-icon { display: none; }
+.player-shell.playing .pause-icon { display: block; }
+.player-action, .share, .download { width: 44px; height: 45px; display: grid; grid-template-rows: 22px 10px; row-gap: 2px; align-content: center; justify-items: center; border: 0; color: var(--ink); background: transparent; cursor: pointer; }
+.player-action svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.player-action span, .share span, .download span { margin: 0; font-size: 8px; line-height: 1; text-transform: uppercase; letter-spacing: .08em; }
 .player-action:hover { color: #fff; }
 .player-action[hidden] { display: none; }
-.share { width: 44px; height: 45px; display: grid; place-items: center; border: 0; color: var(--ink); background: transparent; font-size: 19px; line-height: 1; cursor: pointer; }
-.share span { font-size: 8px; text-transform: uppercase; letter-spacing: .08em; margin-top: -9px; }
 .share:disabled { opacity: .35; cursor: default; }
-.download { width: 42px; height: 45px; display: grid; place-items: center; color: var(--ink); text-decoration: none; font-size: 20px; line-height: 1; opacity: 1; }
-.download span { font-size: 8px; text-transform: uppercase; letter-spacing: .08em; margin-top: -9px; }
+.download { width: 42px; text-decoration: none; opacity: 1; }
 .download[aria-disabled="true"] { opacity: .35; pointer-events: none; }
 .performance {
   position: fixed; z-index: 4; inset: 0; display: grid; place-items: center; padding: 74px 24px 132px;

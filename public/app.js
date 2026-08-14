@@ -293,6 +293,10 @@ async function post(url, payload) {
   return result;
 }
 
+function setShareLabel(label) {
+  shareButton.querySelector('span').textContent = label;
+}
+
 function clearLoadedSong() {
   generationRun += 1;
   if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -303,14 +307,13 @@ function clearLoadedSong() {
   seek.value = 0;
   timecode.textContent = '0:00 / 0:00';
   playButton.disabled = true;
-  playButton.querySelector('span').textContent = '▶';
   playButton.setAttribute('aria-label', 'Play');
   download.removeAttribute('href');
   download.setAttribute('aria-disabled', 'true');
   shareReference = null;
   shareUrl = null;
   shareButton.disabled = true;
-  shareButton.innerHTML = '↗<span>Share</span>';
+  setShareLabel('Share');
   performanceReplay.hidden = true;
 }
 
@@ -324,7 +327,7 @@ function loadSong(source, title, reference) {
   shareReference = reference || null;
   shareUrl = null;
   shareButton.disabled = !shareReference;
-  shareButton.innerHTML = '↗<span>Share</span>';
+  setShareLabel('Share');
   playButton.disabled = false;
   download.href = audio.src;
   download.setAttribute('aria-disabled', 'false');
@@ -434,13 +437,11 @@ audio.addEventListener('play', () => {
   performanceReplay.hidden = true;
   updateScenePerformance();
   renderPlaybackLyrics();
-  playButton.querySelector('span').textContent = '❚❚';
   playButton.setAttribute('aria-label', 'Pause');
 });
 audio.addEventListener('pause', () => {
   player.classList.remove('playing');
   updateScenePerformance();
-  playButton.querySelector('span').textContent = '▶';
   playButton.setAttribute('aria-label', 'Play');
 });
 audio.addEventListener('timeupdate', () => {
@@ -485,7 +486,7 @@ shareButton.addEventListener('click', async () => {
   const requestReference = shareReference;
   const requestIsCurrent = () => requestRun === generationRun && requestReference === shareReference;
   shareButton.disabled = true;
-  shareButton.innerHTML = '…<span>Sharing</span>';
+  setShareLabel('Sharing');
   try {
     let requestedUrl = shareUrl;
     if (!shareUrl) {
@@ -505,18 +506,18 @@ shareButton.addEventListener('click', async () => {
     try {
       await copyShareLink(requestedUrl);
       if (!requestIsCurrent()) return;
-      shareButton.innerHTML = '✓<span>Copied</span>';
+      setShareLabel('Copied');
       notice.className = 'notice working';
       notice.textContent = 'Share link copied. The mehfil can travel now.';
     } catch {
       if (!requestIsCurrent()) return;
-      shareButton.innerHTML = '↗<span>Link ready</span>';
+      setShareLabel('Link ready');
       notice.className = 'notice working';
       notice.textContent = `Share link: ${requestedUrl}`;
     }
   } catch (error) {
     if (!requestIsCurrent()) return;
-    shareButton.innerHTML = '↻<span>Retry</span>';
+    setShareLabel('Retry');
     notice.className = 'notice';
     notice.textContent = error.message;
   } finally {

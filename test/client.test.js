@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
 function functionBody(name) {
   const start = app.indexOf(`function ${name}(`);
@@ -17,6 +18,16 @@ function functionBody(name) {
   }
   assert.fail(`${name} should have a complete body`);
 }
+
+test('player controls use SVG icons instead of platform-dependent glyphs', () => {
+  const start = html.indexOf('<section class="player-shell"');
+  const player = html.slice(start, html.indexOf('</section>', start));
+  assert.doesNotMatch(player, /[▶❚↗↓✓↻]/);
+  assert.match(player, /id="play"[\s\S]*play-icon[\s\S]*pause-icon/);
+  assert.match(player, /id="share"[\s\S]*<svg class="player-icon"/);
+  assert.match(player, /id="download"[\s\S]*<svg class="player-icon"/);
+  assert.doesNotMatch(app, /shareButton\.innerHTML|playButton\.querySelector\(['"]span['"]\)/);
+});
 
 test('a stale share request cannot mutate a later generation', () => {
   assert.match(app, /let generationRun\s*=\s*0/);
