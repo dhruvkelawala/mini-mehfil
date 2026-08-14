@@ -19,9 +19,16 @@ const seek = document.querySelector('#seek');
 const timecode = document.querySelector('#timecode');
 const trackTitle = document.querySelector('#track-title');
 const trackSubtitle = document.querySelector('#track-subtitle');
+const viewPerformanceButton = document.querySelector('#view-performance');
 const shareButton = document.querySelector('#share');
 const download = document.querySelector('#download');
 const scene = document.querySelector('.scene');
+const main = document.querySelector('main');
+const topbar = document.querySelector('.topbar');
+const performanceView = document.querySelector('#performance');
+const performanceClose = document.querySelector('#performance-close');
+const performanceStatus = document.querySelector('#performance-status');
+const performanceReplay = document.querySelector('#performance-replay');
 
 const writingLines = [
   'Listening to your idea…',
@@ -43,6 +50,8 @@ let lyricSheet = null;
 let hasRevealed = false;
 let shareReference = null;
 let shareUrl = null;
+let generating = false;
+let typingRun = 0;
 
 function updateClock() {
   document.querySelector('#clock').textContent = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(new Date()).toLowerCase();
@@ -59,11 +68,13 @@ revealButton.addEventListener('click', () => {
 });
 
 function resetPeek() {
+  typingRun += 1;
   lyricSheet = null;
   hasRevealed = false;
   peek.hidden = true;
   lyricReveal.hidden = true;
   revealLines.textContent = '';
+  delete revealLines.dataset.render;
   peekToggle.setAttribute('aria-expanded', 'false');
   peekToggle.querySelector('strong').textContent = 'Reveal lyrics';
   peekToggle.querySelector('small').textContent = "Wanna be surprised? Don't click me.";
@@ -71,16 +82,105 @@ function resetPeek() {
 
 // Lines arrive one at a time, like someone writing them in front of you.
 function typeOut(text) {
-  const lines = text.split('\n');
+  const run = ++typingRun;
+  const lines = text.split('\n').filter(line => line.trim());
   let index = 0;
   revealLines.textContent = '';
+  revealLines.dataset.render = 'typing';
+  if (!lines.length) return;
   const tick = () => {
-    revealLines.textContent += (index ? '\n' : '') + lines[index];
+    if (run !== typingRun) return;
+    revealLines.append(createLyricLine(lines[index]));
     revealLines.scrollTop = revealLines.scrollHeight;
     index += 1;
     if (index < lines.length) setTimeout(tick, 55);
   };
   tick();
+}
+
+function createLyricLine(line) {
+  const element = document.createElement('span');
+  element.className = /^\[.+\]$/.test(line) ? 'lyric-line lyric-cue' : 'lyric-line';
+  element.textContent = line.replace(/^\[(.+)\]$/, '$1');
+  return element;
+}
+
+function buildLyricLines(lines, mode) {
+  const fragment = document.createDocumentFragment();
+  lines.forEach(line => fragment.append(createLyricLine(line)));
+  revealLines.replaceChildren(fragment);
+  revealLines.dataset.render = mode;
+}
+
+function showFullLyrics() {
+  typingRun += 1;
+  const lines = lyricLines();
+  buildLyricLines(lines, 'full');
+}
+
+function lyricLines() {
+  return (lyricSheet?.lyricsRoman || '').split('\n').filter(line => line.trim());
+}
+
+function languageLabel() {
+  if (!lyricSheet) return '';
+  return lyricSheet.isLatinScript
+    ? lyricSheet.language
+    : `${lyricSheet.language} · ${lyricSheet.nativeScriptName}`;
+}
+
+function updateScenePerformance() {
+  scene.classList.toggle('is-performing', generating || !audio.paused);
+}
+
+function openPerformance() {
+  performanceView.hidden = false;
+  document.body.classList.add('performance-open');
+  main.inert = true;
+  topbar.inert = true;
+  notice.setAttribute('aria-hidden', 'true');
+  performanceClose.focus();
+}
+
+function closePerformance() {
+  performanceView.hidden = true;
+  document.body.classList.remove('performance-open');
+  main.inert = false;
+  topbar.inert = false;
+  notice.removeAttribute('aria-hidden');
+  performanceStatus.textContent = '';
+  form.querySelector('input:not([disabled]), select:not([disabled]), button:not([disabled])')?.focus();
+}
+
+function showPerformanceStatus(message) {
+  performanceView.dataset.stage = 'waiting';
+  performanceStatus.textContent = message;
+}
+
+function renderPlaybackLyrics() {
+  if (!lyricSheet || performanceView.hidden) return;
+  performanceView.dataset.stage = 'playing';
+  performanceStatus.textContent = '';
+  peek.hidden = true;
+  lyricReveal.hidden = false;
+  revealLanguage.textContent = languageLabel();
+  if (hasRevealed) {
+    if (revealLines.dataset.render !== 'full') showFullLyrics();
+    return;
+  }
+  const lines = lyricLines();
+  const pacedDuration = audio.duration * .9;
+  const progress = pacedDuration > 0 ? Math.min(audio.currentTime / pacedDuration, 1) : 0;
+  const shownCount = Math.min(lines.length, Math.floor(progress * lines.length));
+  if (revealLines.dataset.render !== 'paced') buildLyricLines(lines, 'paced');
+  const renderedLines = [...revealLines.children];
+  renderedLines.forEach((line, index) => {
+    line.hidden = index >= shownCount;
+    line.classList.remove('lyric-current');
+  });
+  const currentLine = renderedLines.slice(0, shownCount).reverse().find(line => !line.classList.contains('lyric-cue'));
+  currentLine?.classList.add('lyric-current');
+  revealLines.scrollTop = revealLines.scrollHeight;
 }
 
 peekToggle.addEventListener('click', () => {
@@ -93,11 +193,9 @@ peekToggle.addEventListener('click', () => {
     ? 'Too late now.'
     : "Wanna be surprised? Don't click me.";
   if (!opening) return;
-  revealLanguage.textContent = lyricSheet.isLatinScript
-    ? lyricSheet.language
-    : `${lyricSheet.language} · ${lyricSheet.nativeScriptName}`;
+  revealLanguage.textContent = languageLabel();
   // Type them out the first time; after that just show them instantly.
-  if (hasRevealed) revealLines.textContent = lyricSheet.lyricsRoman;
+  if (hasRevealed) showFullLyrics();
   else typeOut(lyricSheet.lyricsRoman);
   hasRevealed = true;
 });
@@ -113,9 +211,11 @@ function setBusy(busy, lines) {
   let index = 0;
   notice.className = 'notice working';
   notice.textContent = lines[index];
+  showPerformanceStatus(lines[index]);
   waitingTimer = setInterval(() => {
     index = Math.min(index + 1, lines.length - 1);
     notice.textContent = lines[index];
+    showPerformanceStatus(lines[index]);
   }, 6000);
 }
 
@@ -154,9 +254,12 @@ function loadSong(source, title, reference) {
   shareUrl = null;
   shareButton.disabled = !shareReference;
   shareButton.innerHTML = '↗<span>Share</span>';
+  viewPerformanceButton.disabled = false;
   playButton.disabled = false;
   download.href = audio.src;
   download.setAttribute('aria-disabled', 'false');
+  performanceReplay.hidden = true;
+  renderPlaybackLyrics();
   audio.play().catch(() => {});
 }
 
@@ -164,11 +267,19 @@ form.addEventListener('submit', async event => {
   event.preventDefault();
   notice.textContent = '';
   if (!form.reportValidity()) return;
+  audio.pause();
+  audio.currentTime = 0;
   resetPeek();
   shareReference = null;
   shareUrl = null;
   shareButton.disabled = true;
   shareButton.innerHTML = '↗<span>Share</span>';
+  viewPerformanceButton.disabled = true;
+  openPerformance();
+  performanceReplay.hidden = true;
+  generating = true;
+  updateScenePerformance();
+  let generationFailed = false;
 
   try {
     setBusy(true, writingLines);
@@ -182,7 +293,6 @@ form.addEventListener('submit', async event => {
     // The words exist now. Offer the peek, then record whether or not it is taken.
     peek.hidden = false;
     setBusy(true, recordingLines);
-    scene.classList.add('is-performing');
 
     // The native script is what gets sung: the music model pronounces it best.
     const result = await post('/api/generate', {
@@ -199,10 +309,32 @@ form.addEventListener('submit', async event => {
   } catch (error) {
     notice.className = 'notice';
     notice.textContent = error.message;
+    generationFailed = true;
   } finally {
-    scene.classList.remove('is-performing');
+    generating = false;
+    updateScenePerformance();
     setBusy(false, []);
+    if (generationFailed) closePerformance();
   }
+});
+
+performanceClose.addEventListener('click', closePerformance);
+viewPerformanceButton.addEventListener('click', () => {
+  openPerformance();
+  renderPlaybackLyrics();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !performanceView.hidden) closePerformance();
+});
+performanceReplay.addEventListener('click', () => {
+  performanceReplay.hidden = true;
+  hasRevealed = false;
+  lyricReveal.hidden = false;
+  revealLines.textContent = '';
+  delete revealLines.dataset.render;
+  audio.currentTime = 0;
+  renderPlaybackLyrics();
+  audio.play().catch(() => {});
 });
 
 playButton.addEventListener('click', () => {
@@ -210,25 +342,34 @@ playButton.addEventListener('click', () => {
 });
 audio.addEventListener('play', () => {
   player.classList.add('playing');
-  scene.classList.add('is-performing');
+  performanceReplay.hidden = true;
+  updateScenePerformance();
+  renderPlaybackLyrics();
   playButton.querySelector('span').textContent = '❚❚';
   playButton.setAttribute('aria-label', 'Pause');
 });
 audio.addEventListener('pause', () => {
   player.classList.remove('playing');
-  scene.classList.remove('is-performing');
+  updateScenePerformance();
   playButton.querySelector('span').textContent = '▶';
   playButton.setAttribute('aria-label', 'Play');
 });
 audio.addEventListener('timeupdate', () => {
   seek.value = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
   timecode.textContent = `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`;
+  renderPlaybackLyrics();
 });
 audio.addEventListener('loadedmetadata', () => {
   timecode.textContent = `0:00 / ${formatTime(audio.duration)}`;
 });
 seek.addEventListener('input', () => {
-  if (audio.duration) audio.currentTime = (Number(seek.value) / 100) * audio.duration;
+  if (audio.duration) {
+    audio.currentTime = (Number(seek.value) / 100) * audio.duration;
+    renderPlaybackLyrics();
+  }
+});
+audio.addEventListener('ended', () => {
+  if (!performanceView.hidden) performanceReplay.hidden = false;
 });
 
 async function copyShareLink(url) {
