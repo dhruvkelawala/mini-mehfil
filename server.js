@@ -84,6 +84,19 @@ function decodeAudioSource(source) {
   return audio;
 }
 
+function normalizeShareBaseUrl(value) {
+  if (!value) return '';
+  try {
+    const url = new URL(value);
+    const localHttp = url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === 'localhost');
+    if (url.protocol !== 'https:' && !localHttp) return '';
+    if (url.username || url.password || url.search || url.hash || (url.pathname !== '/' && url.pathname !== '')) return '';
+    return url.origin;
+  } catch {
+    return '';
+  }
+}
+
 function staticFile(req, res) {
   const requestPath = req.url === '/' ? '/index.html' : new URL(req.url, 'http://localhost').pathname;
   const filePath = path.resolve(PUBLIC_DIR, `.${requestPath}`);
@@ -119,7 +132,9 @@ function createServer(options = {}) {
   const apiBase = options.apiBase || process.env.MINIMAX_API_BASE || 'https://api.minimax.io';
   const fetchImpl = options.fetchImpl || global.fetch;
   const writeLyricsImpl = options.writeLyrics;
-  const shareBaseUrl = (options.shareBaseUrl ?? process.env.MEHFIL_SHARE_URL ?? '').replace(/\/$/, '');
+  const shareBaseUrl = normalizeShareBaseUrl(options.shareBaseUrl ?? process.env.MEHFIL_SHARE_URL ?? '');
+  const shareSecret = String(options.shareSecret ?? process.env.MEHFIL_SHARE_SECRET ?? '').trim();
+  const sharingConfigured = Boolean(shareBaseUrl && shareSecret);
   const generatedAudio = new Map();
 
   return http.createServer(async (req, res) => {
@@ -200,7 +215,7 @@ function createServer(options = {}) {
           return sendJson(res, upstream.ok ? 400 : upstream.status, { error: String(message), details: result });
         }
         const source = audioSource(result);
-        if (source && shareBaseUrl) {
+        if (source && sharingConfigured) {
           const shareReference = crypto.randomBytes(18).toString('base64url');
           const now = Date.now();
           for (const [key, entry] of generatedAudio) {
@@ -218,7 +233,7 @@ function createServer(options = {}) {
 
     if (req.method === 'POST' && req.url === '/api/share') {
       try {
-        if (!shareBaseUrl) return sendJson(res, 503, { error: 'Sharing is not configured on this mehfil.' });
+        if (!sharingConfigured) return sendJson(res, 503, { error: 'Sharing is not configured on this mehfil.' });
         const body = await readJson(req);
         const shareReference = typeof body.shareRef === 'string' ? body.shareRef : '';
         const entry = generatedAudio.get(shareReference);
@@ -226,6 +241,7 @@ function createServer(options = {}) {
           generatedAudio.delete(shareReference);
           return sendJson(res, 404, { error: 'That recording is no longer ready to share. Make it again and retry.' });
         }
+        if (entry.shareUrl) return sendJson(res, 201, { url: entry.shareUrl });
 
         const metadata = {
           title: typeof body.title === 'string' ? body.title : '',
@@ -257,7 +273,15 @@ function createServer(options = {}) {
         const timeout = setTimeout(() => controller.abort(), 2 * 60 * 1000);
         let response;
         try {
-          response = await fetchImpl(`${shareBaseUrl}/shares`, { method: 'POST', body: form, signal: controller.signal });
+          response = await fetchImpl(`${shareBaseUrl}/shares`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${shareSecret}`,
+              'Idempotency-Key': shareReference
+            },
+            body: form,
+            signal: controller.signal
+          });
         } finally {
           clearTimeout(timeout);
         }
@@ -271,8 +295,9 @@ function createServer(options = {}) {
         if (publicUrl.origin !== configuredOrigin || !/^\/s\/[A-Za-z0-9_-]{16}$/.test(publicUrl.pathname)) {
           throw Object.assign(new Error('The share service returned an invalid link.'), { status: 502 });
         }
-        generatedAudio.delete(shareReference);
-        return sendJson(res, 201, { url: publicUrl.href });
+        entry.shareUrl = publicUrl.href;
+        entry.source = null;
+        return sendJson(res, 201, { url: entry.shareUrl });
       } catch (error) {
         if (error.name === 'AbortError') return sendJson(res, 504, { error: 'Sharing took too long. Please retry.' });
         return sendJson(res, error.status || 502, { error: error.message || 'The song could not be shared. Please retry.' });

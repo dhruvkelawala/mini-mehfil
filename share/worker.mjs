@@ -2,6 +2,7 @@ const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 const MAX_REQUEST_BYTES = MAX_AUDIO_BYTES + 128 * 1024;
 const ALLOWED_AUDIO_TYPES = new Set(['audio/mpeg', 'audio/mp3']);
 const ID_PATTERN = /^[A-Za-z0-9_-]{16}$/;
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{24}$/;
 const REPOSITORY_URL = 'https://github.com/dhruvkelawala/mini-mehfil';
 
 function json(value, status = 200, headers = {}) {
@@ -22,6 +23,38 @@ function randomId() {
     .replaceAll('+', '-')
     .replaceAll('/', '_')
     .replaceAll('=', '');
+}
+
+function base64Url(bytes) {
+  return btoa(String.fromCharCode(...bytes))
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replaceAll('=', '');
+}
+
+async function digest(value) {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)));
+}
+
+async function validBearer(request, secret) {
+  const authorization = request.headers.get('authorization') || '';
+  const provided = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+  const [expectedDigest, providedDigest] = await Promise.all([digest(secret), digest(provided)]);
+  let difference = expectedDigest.length ^ providedDigest.length;
+  for (let index = 0; index < expectedDigest.length; index += 1) difference |= expectedDigest[index] ^ providedDigest[index];
+  return Boolean(provided) && difference === 0;
+}
+
+async function deriveShareId(idempotencyKey, secret) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(idempotencyKey)));
+  return base64Url(signature.slice(0, 12));
 }
 
 function escapeHtml(value) {
@@ -88,11 +121,26 @@ function validateMetadata(raw) {
   return metadata;
 }
 
+function parseByteRange(header, size) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header || '');
+  if (!match || (!match[1] && !match[2])) return null;
+  if (!match[1]) {
+    const suffix = Number(match[2]);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return null;
+    const length = Math.min(suffix, size);
+    return { offset: size - length, length };
+  }
+  const offset = Number(match[1]);
+  const requestedEnd = match[2] ? Number(match[2]) : size - 1;
+  if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(requestedEnd) || offset >= size || requestedEnd < offset) return null;
+  return { offset, length: Math.min(requestedEnd, size - 1) - offset + 1 };
+}
+
 function notFoundPage() {
   return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>This song has left the mehfil</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 20%,#315d55,#112f2d 55%,#081b1c);color:#f9edda;font:18px Georgia,serif;text-align:center}.card{max-width:34rem;padding:3rem}.moon{font-size:4rem;color:#e6a653}h1{font-size:clamp(2rem,8vw,4rem);margin:.5rem}p{line-height:1.6;color:#d9c9ae}a{color:#e6a653}</style><main class="card"><div class="moon">☾</div><h1>This song has left the mehfil.</h1><p>It may have finished its stay in the courtyard, but there is always room to make another.</p><a href="${REPOSITORY_URL}">Make your own song →</a></main></html>`;
 }
 
-function playbackPage(id, song, nonce) {
+function playbackPage(id, song, nonce, origin, previewImageUrl) {
   const label = song.isLatinScript || !song.nativeScriptName
     ? song.language
     : `${song.language} · ${song.nativeScriptName}`;
@@ -100,10 +148,17 @@ function playbackPage(id, song, nonce) {
     native: song.lyricsNative.split('\n'),
     roman: song.lyricsRoman.split('\n')
   });
+  const shareUrl = `${origin}/s/${id}`;
+  const audioUrl = `${shareUrl}/audio`;
+  const description = `Listen to ${song.title} in the Mini Mehfil courtyard.`;
+  const imageMetadata = previewImageUrl
+    ? `<meta property="og:image" content="${escapeHtml(previewImageUrl)}"><meta name="twitter:image" content="${escapeHtml(previewImageUrl)}">`
+    : '';
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>${escapeHtml(song.title)} · Mini Mehfil</title><meta name="description" content="Listen to ${escapeHtml(song.title)} in the Mini Mehfil courtyard.">
-<meta property="og:title" content="${escapeHtml(song.title)} · Mini Mehfil"><meta property="og:type" content="music.song">
+<title>${escapeHtml(song.title)} · Mini Mehfil</title><meta name="description" content="${escapeHtml(description)}">
+<meta property="og:title" content="${escapeHtml(song.title)} · Mini Mehfil"><meta property="og:type" content="music.song"><meta property="og:url" content="${escapeHtml(shareUrl)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:audio" content="${escapeHtml(audioUrl)}"><meta property="og:audio:secure_url" content="${escapeHtml(audioUrl)}"><meta property="og:audio:type" content="audio/mpeg">
+<meta name="twitter:card" content="player"><meta name="twitter:title" content="${escapeHtml(song.title)} · Mini Mehfil"><meta name="twitter:description" content="${escapeHtml(description)}"><meta name="twitter:player" content="${escapeHtml(shareUrl)}"><meta name="twitter:player:width" content="1280"><meta name="twitter:player:height" content="720">${imageMetadata}
 <style nonce="${nonce}">
 :root{color-scheme:dark;--ink:#f9edda;--amber:#e6a653;--teal:#123d39;--red:#9f4532}*{box-sizing:border-box}body{margin:0;min-height:100svh;overflow:hidden;background:#0d302f;color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,sans-serif}.courtyard{position:fixed;inset:0;background:radial-gradient(circle at 72% 12%,#f5c66f 0 3%,transparent 3.3%),linear-gradient(#48716a 0 32%,#bd6a47 58%,#172f2c 100%)}.courtyard:before{content:"";position:absolute;inset:9% -8% 0;border:clamp(28px,6vw,84px) solid #143a36;border-bottom:0;border-radius:50% 50% 0 0/36% 36% 0 0;box-shadow:inset 0 0 0 4px #31564d}.lights{position:absolute;top:12%;left:8%;right:8%;height:80px;border-top:2px solid #5b3424;border-radius:50%}.lights i{position:absolute;width:10px;height:16px;background:#ffd684;border-radius:50%;box-shadow:0 0 22px #ffd684}.lights i:nth-child(1){left:8%;top:6px}.lights i:nth-child(2){left:30%;top:24px}.lights i:nth-child(3){left:52%;top:29px}.lights i:nth-child(4){left:74%;top:20px}.lights i:nth-child(5){left:92%;top:4px}.stage{position:absolute;left:50%;bottom:10%;width:min(720px,90vw);height:30vh;transform:translateX(-50%);background:radial-gradient(ellipse at center bottom,#8f3d2f 0 40%,transparent 41%)}.stage:before{content:"♩  ◉  ♫  ◉  ♪";position:absolute;inset:25% 0 auto;text-align:center;color:#1f2825;font:clamp(2rem,8vw,5rem) Georgia;letter-spacing:.09em}.veil{position:fixed;inset:0;background:linear-gradient(transparent 28%,rgba(4,20,20,.28) 65%,rgba(4,15,16,.8))}.top{position:fixed;top:0;left:0;right:0;padding:20px max(20px,4vw);display:flex;justify-content:space-between;align-items:center}.brand{font:700 24px Georgia;color:var(--ink)}.brand small{display:block;color:var(--amber);font:italic 12px Georgia}.language{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#f5d19a}.performance{position:relative;z-index:1;min-height:100svh;display:grid;place-items:center;padding:90px 18px 150px;text-align:center}.sheet{width:min(760px,94vw);max-height:58svh;overflow:hidden;text-shadow:0 2px 14px #071817}.sheet h1{margin:0 0 24px;font:700 clamp(2rem,7vw,4.4rem) Georgia;color:#fff1d2}.line{margin:.35rem 0;font:600 clamp(1.05rem,3.3vw,1.65rem)/1.35 Georgia;animation:rise .55s both}.line.roman{margin-top:-.1rem;color:#f5c98c;font:italic 500 clamp(.82rem,2.5vw,1.05rem)/1.25 Georgia}.player{position:fixed;z-index:2;left:50%;bottom:max(18px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(720px,calc(100vw - 28px));display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:center;padding:13px 16px;background:rgba(8,28,28,.9);border:1px solid rgba(230,166,83,.45);border-radius:10px;backdrop-filter:blur(12px)}.start{grid-row:1/3;width:58px;height:58px;border:1px solid var(--amber);border-radius:50%;background:#873d2d;color:white;font-size:21px;cursor:pointer}.player strong{font:700 16px Georgia}.player audio{width:100%;height:32px}.cta{position:fixed;z-index:3;right:20px;bottom:116px;color:var(--ink);font-size:12px;text-decoration:none;border-bottom:1px solid var(--amber);padding-bottom:3px}@keyframes rise{from{opacity:0;transform:translateY(10px)}}@media(max-width:600px){.top{padding:16px 18px}.sheet{max-height:56svh}.cta{right:18px;bottom:112px}}
 </style></head><body><div class="courtyard" aria-hidden="true"><div class="lights"><i></i><i></i><i></i><i></i><i></i></div><div class="stage"></div></div><div class="veil" aria-hidden="true"></div>
@@ -135,18 +190,29 @@ export function createR2Storage(bucket) {
       try { return JSON.parse(await object.text()); } catch { return null; }
     },
     async getAudio(id, range) {
-      const options = range ? { range: new Headers({ range }) } : undefined;
-      return bucket.get(`shares/${id}.mp3`, options);
+      const key = `shares/${id}.mp3`;
+      if (!range) return bucket.get(key);
+      const object = await bucket.head(key);
+      if (!object) return null;
+      const parsedRange = parseByteRange(range, object.size);
+      if (!parsedRange) return { unsatisfiable: true, size: object.size };
+      return bucket.get(key, { range: parsedRange });
     }
   };
 }
 
-export function createShareHandler({ storage, rateLimit = async () => true, idGenerator = randomId } = {}) {
+export function createShareHandler({ storage, rateLimit = async () => true, idGenerator = deriveShareId, uploadSecret = '', previewImageUrl = '' } = {}) {
   if (!storage) throw new Error('Share storage is required.');
 
   return async function handle(request) {
     const url = new URL(request.url);
     if (request.method === 'POST' && url.pathname === '/shares') {
+      if (!uploadSecret) return json({ error: 'Sharing is not configured.' }, 503);
+      if (!await validBearer(request, uploadSecret)) {
+        return json({ error: 'Upload credentials are missing or invalid.' }, 401, { 'www-authenticate': 'Bearer' });
+      }
+      const idempotencyKey = request.headers.get('idempotency-key') || '';
+      if (!IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) return json({ error: 'A valid idempotency key is required.' }, 400);
       const ip = request.headers.get('cf-connecting-ip') || 'unknown';
       if (!await rateLimit(ip)) return json({ error: 'Too many songs are arriving at once. Please try again in a minute.' }, 429, { 'retry-after': '60' });
 
@@ -169,7 +235,7 @@ export function createShareHandler({ storage, rateLimit = async () => true, idGe
 
       let metadata;
       try { metadata = validateMetadata(form.get('metadata')); } catch (error) { return json({ error: error.message }, 400); }
-      const id = idGenerator();
+      const id = await idGenerator(idempotencyKey, uploadSecret);
       if (!ID_PATTERN.test(id)) return json({ error: 'Could not create a share link.' }, 500);
       try {
         await storage.put(id, { audio: await audio.arrayBuffer(), contentType, metadata });
@@ -185,13 +251,19 @@ export function createShareHandler({ storage, rateLimit = async () => true, idGe
       if (asset === 'audio') {
         const object = await storage.getAudio(id, request.headers.get('range'));
         if (!object) return new Response(null, { status: 404 });
+        if (object.unsatisfiable) return new Response(null, { status: 416, headers: {
+          'accept-ranges': 'bytes',
+          'content-range': `bytes */${object.size}`,
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff'
+        } });
         const headers = new Headers({
           'content-type': object.httpMetadata?.contentType || object.contentType || 'audio/mpeg',
           'cache-control': 'public, max-age=31536000, immutable',
           'accept-ranges': 'bytes',
           'x-content-type-options': 'nosniff'
         });
-        if (object.etag) headers.set('etag', object.etag);
+        if (object.httpEtag || object.etag) headers.set('etag', object.httpEtag || object.etag);
         if (object.range && Number.isFinite(object.size)) {
           const offset = object.range.offset || 0;
           const length = object.range.length || object.size;
@@ -206,11 +278,11 @@ export function createShareHandler({ storage, rateLimit = async () => true, idGe
       const song = await storage.getMetadata(id);
       if (!song) return new Response(request.method === 'HEAD' ? null : notFoundPage(), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       const nonce = randomId();
-      const html = playbackPage(id, song, nonce);
+      const html = playbackPage(id, song, nonce, url.origin, previewImageUrl);
       return new Response(request.method === 'HEAD' ? null : html, { headers: {
         'content-type': 'text/html; charset=utf-8',
         'cache-control': 'public, max-age=300',
-        'content-security-policy': `default-src 'none'; media-src 'self'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+        'content-security-policy': `default-src 'none'; media-src 'self'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors https://twitter.com https://*.twitter.com https://x.com https://*.x.com`,
         'referrer-policy': 'no-referrer',
         'x-content-type-options': 'nosniff'
       } });
@@ -224,6 +296,11 @@ export default {
   fetch(request, env) {
     const storage = createR2Storage(env.SHARES);
     const rateLimit = async ip => (await env.UPLOAD_RATE_LIMIT.limit({ key: ip })).success;
-    return createShareHandler({ storage, rateLimit })(request);
+    return createShareHandler({
+      storage,
+      rateLimit,
+      uploadSecret: env.MEHFIL_SHARE_SECRET,
+      previewImageUrl: env.SHARE_PREVIEW_IMAGE_URL
+    })(request);
   }
 };
