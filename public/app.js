@@ -213,7 +213,8 @@ function renderPlaybackLyrics() {
   const pacedDuration = audio.duration * .9;
   const progress = pacedDuration > 0 ? Math.min(audio.currentTime / pacedDuration, 1) : 0;
   const spokenLineCount = lines.filter(line => !line.cue).length;
-  const shownSpokenCount = Math.min(spokenLineCount, Math.floor(progress * spokenLineCount));
+  // The first lyric should arrive as playback begins, not one full lyric interval later.
+  const shownSpokenCount = Math.min(spokenLineCount, Math.ceil(progress * spokenLineCount));
   if (revealLines.dataset.render !== 'paced') buildLyricLines(lines, 'paced');
   const renderedLines = [...revealLines.children];
   let spokenSeen = 0;
