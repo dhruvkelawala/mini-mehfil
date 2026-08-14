@@ -195,7 +195,7 @@ input::placeholder { color: #b3a08a; opacity: 1; }
 .performance .reveal-language { color: #e9c27f; text-align: center; }
 .performance-timing { display: block; margin: 4px 0 14px; color: #cfbda8; font-size: 10px; font-style: italic; letter-spacing: .03em; text-align: center; }
 .performance-timing[hidden] { display: none; }
-.performance .reveal-lines { max-height: min(52svh, 430px); font-size: clamp(18px, 2.3vw, 25px); line-height: 1.55; text-align: center; }
+.performance .reveal-lines { max-height: max(140px, min(52svh, 430px, calc(100svh - 340px))); font-size: clamp(18px, 2.3vw, 25px); line-height: 1.55; text-align: center; }
 .lyric-line { display: block; color: rgba(249,237,218,.78); transition: color .35s, text-shadow .35s, transform .35s; }
 .lyric-line[hidden] { display: none; }
 .lyric-line + .lyric-line { margin-top: .2em; }
@@ -254,6 +254,18 @@ input::placeholder { color: #b3a08a; opacity: 1; }
   .performance { padding: 64px 14px 100px; align-items: center; }
   .performance-close { top: 12px; right: 12px; }
   .performance .lyric-reveal { padding: 18px 14px; }
-  .performance .reveal-lines { max-height: 55svh; font-size: 18px; line-height: 1.55; }
+  .performance .reveal-lines { max-height: max(140px, min(55svh, calc(100svh - 330px))); font-size: 18px; line-height: 1.55; }
+}
+@media (max-height: 500px) {
+  /* Landscape phones: shrink the sheet's chrome so the lyrics and the replay
+     button stay clear of the fixed player bar instead of sliding beneath it. */
+  .performance { padding: 46px 20px 92px; }
+  .performance-status { font-size: clamp(18px, 3vh, 26px); }
+  .performance-status::after { margin-top: 10px; }
+  .performance .peek { margin-top: 12px; }
+  .performance .lyric-reveal { padding: 14px 22px 16px; }
+  .performance-timing { margin: 2px 0 8px; }
+  .performance .reveal-lines { max-height: max(88px, calc(100svh - 302px)); }
+  .performance-replay { margin-top: 12px; padding: 8px 16px; font-size: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
