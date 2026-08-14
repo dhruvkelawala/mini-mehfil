@@ -309,11 +309,16 @@ function createServer(options = {}) {
   });
 }
 
+const server = createServer();
+
 if (require.main === module) {
   const port = Number(process.env.PORT) || 4173;
-  createServer().listen(port, '127.0.0.1', () => {
+  server.listen(port, '127.0.0.1', () => {
     console.log(`Mehfil is open at http://127.0.0.1:${port}`);
   });
 }
 
-module.exports = { createServer };
+// Vercel's Node runtime requires the CommonJS default export to be a request
+// handler or HTTP server. Keep createServer attached for isolated tests.
+module.exports = server;
+module.exports.createServer = createServer;

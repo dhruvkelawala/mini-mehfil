@@ -1,6 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createServer } = require('../server');
+const serverModule = require('../server');
+const { createServer } = serverModule;
+
+test('exports an HTTP server for serverless runtimes', () => {
+  assert.equal(typeof serverModule.listen, 'function');
+  assert.equal(typeof serverModule.emit, 'function');
+  assert.equal(typeof serverModule.createServer, 'function');
+});
 
 async function withServer(fetchImpl, run, options = {}) {
   const server = createServer({ fetchImpl, apiBase: 'https://mock.minimax.test', ...options });
