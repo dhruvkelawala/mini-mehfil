@@ -1,3 +1,5 @@
+import { playbackPage } from './playback-page.mjs';
+
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 const MAX_REQUEST_BYTES = MAX_AUDIO_BYTES + 128 * 1024;
 const ALLOWED_AUDIO_TYPES = new Set(['audio/mpeg', 'audio/mp3']);
@@ -55,22 +57,6 @@ async function deriveShareId(idempotencyKey, secret) {
   );
   const signature = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(idempotencyKey)));
   return base64Url(signature.slice(0, 12));
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function scriptJson(value) {
-  return JSON.stringify(value)
-    .replaceAll('<', '\\u003c')
-    .replaceAll('>', '\\u003e')
-    .replaceAll('&', '\\u0026');
 }
 
 async function readBody(request, limit) {
@@ -138,35 +124,6 @@ function parseByteRange(header, size) {
 
 function notFoundPage() {
   return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>This song has left the mehfil</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 20%,#315d55,#112f2d 55%,#081b1c);color:#f9edda;font:18px Georgia,serif;text-align:center}.card{max-width:34rem;padding:3rem}.moon{font-size:4rem;color:#e6a653}h1{font-size:clamp(2rem,8vw,4rem);margin:.5rem}p{line-height:1.6;color:#d9c9ae}a{color:#e6a653}</style><main class="card"><div class="moon">☾</div><h1>This song has left the mehfil.</h1><p>It may have finished its stay in the courtyard, but there is always room to make another.</p><a href="${REPOSITORY_URL}">Make your own song →</a></main></html>`;
-}
-
-function playbackPage(id, song, nonce, origin, previewImageUrl) {
-  const label = song.isLatinScript || !song.nativeScriptName
-    ? song.language
-    : `${song.language} · ${song.nativeScriptName}`;
-  const data = scriptJson({
-    native: song.lyricsNative.split('\n'),
-    roman: song.lyricsRoman.split('\n')
-  });
-  const shareUrl = `${origin}/s/${id}`;
-  const audioUrl = `${shareUrl}/audio`;
-  const description = `Listen to ${song.title} in the Mini Mehfil courtyard.`;
-  const imageMetadata = previewImageUrl
-    ? `<meta property="og:image" content="${escapeHtml(previewImageUrl)}"><meta name="twitter:image" content="${escapeHtml(previewImageUrl)}">`
-    : '';
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>${escapeHtml(song.title)} · Mini Mehfil</title><meta name="description" content="${escapeHtml(description)}">
-<meta property="og:title" content="${escapeHtml(song.title)} · Mini Mehfil"><meta property="og:type" content="music.song"><meta property="og:url" content="${escapeHtml(shareUrl)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:audio" content="${escapeHtml(audioUrl)}"><meta property="og:audio:secure_url" content="${escapeHtml(audioUrl)}"><meta property="og:audio:type" content="audio/mpeg">
-<meta name="twitter:card" content="player"><meta name="twitter:title" content="${escapeHtml(song.title)} · Mini Mehfil"><meta name="twitter:description" content="${escapeHtml(description)}"><meta name="twitter:player" content="${escapeHtml(shareUrl)}"><meta name="twitter:player:width" content="1280"><meta name="twitter:player:height" content="720">${imageMetadata}
-<style nonce="${nonce}">
-:root{color-scheme:dark;--ink:#f9edda;--amber:#e6a653;--teal:#123d39;--red:#9f4532}*{box-sizing:border-box}body{margin:0;min-height:100svh;overflow:hidden;background:#0d302f;color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,sans-serif}.courtyard{position:fixed;inset:0;background:radial-gradient(circle at 72% 12%,#f5c66f 0 3%,transparent 3.3%),linear-gradient(#48716a 0 32%,#bd6a47 58%,#172f2c 100%)}.courtyard:before{content:"";position:absolute;inset:9% -8% 0;border:clamp(28px,6vw,84px) solid #143a36;border-bottom:0;border-radius:50% 50% 0 0/36% 36% 0 0;box-shadow:inset 0 0 0 4px #31564d}.lights{position:absolute;top:12%;left:8%;right:8%;height:80px;border-top:2px solid #5b3424;border-radius:50%}.lights i{position:absolute;width:10px;height:16px;background:#ffd684;border-radius:50%;box-shadow:0 0 22px #ffd684}.lights i:nth-child(1){left:8%;top:6px}.lights i:nth-child(2){left:30%;top:24px}.lights i:nth-child(3){left:52%;top:29px}.lights i:nth-child(4){left:74%;top:20px}.lights i:nth-child(5){left:92%;top:4px}.stage{position:absolute;left:50%;bottom:10%;width:min(720px,90vw);height:30vh;transform:translateX(-50%);background:radial-gradient(ellipse at center bottom,#8f3d2f 0 40%,transparent 41%)}.stage:before{content:"♩  ◉  ♫  ◉  ♪";position:absolute;inset:25% 0 auto;text-align:center;color:#1f2825;font:clamp(2rem,8vw,5rem) Georgia;letter-spacing:.09em}.veil{position:fixed;inset:0;background:linear-gradient(transparent 28%,rgba(4,20,20,.28) 65%,rgba(4,15,16,.8))}.top{position:fixed;top:0;left:0;right:0;padding:20px max(20px,4vw);display:flex;justify-content:space-between;align-items:center}.brand{font:700 24px Georgia;color:var(--ink)}.brand small{display:block;color:var(--amber);font:italic 12px Georgia}.language{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#f5d19a}.performance{position:relative;z-index:1;min-height:100svh;display:grid;place-items:center;padding:90px 18px 150px;text-align:center}.sheet{width:min(760px,94vw);max-height:58svh;overflow:hidden;text-shadow:0 2px 14px #071817}.sheet h1{margin:0 0 24px;font:700 clamp(2rem,7vw,4.4rem) Georgia;color:#fff1d2}.line{margin:.35rem 0;font:600 clamp(1.05rem,3.3vw,1.65rem)/1.35 Georgia;animation:rise .55s both}.line.roman{margin-top:-.1rem;color:#f5c98c;font:italic 500 clamp(.82rem,2.5vw,1.05rem)/1.25 Georgia}.player{position:fixed;z-index:2;left:50%;bottom:max(18px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(720px,calc(100vw - 28px));display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:center;padding:13px 16px;background:rgba(8,28,28,.9);border:1px solid rgba(230,166,83,.45);border-radius:10px;backdrop-filter:blur(12px)}.start{grid-row:1/3;width:58px;height:58px;border:1px solid var(--amber);border-radius:50%;background:#873d2d;color:white;font-size:21px;cursor:pointer}.player strong{font:700 16px Georgia}.player audio{width:100%;height:32px}.cta{position:fixed;z-index:3;right:20px;bottom:116px;color:var(--ink);font-size:12px;text-decoration:none;border-bottom:1px solid var(--amber);padding-bottom:3px}@keyframes rise{from{opacity:0;transform:translateY(10px)}}@media(max-width:600px){.top{padding:16px 18px}.sheet{max-height:56svh}.cta{right:18px;bottom:112px}}
-</style></head><body><div class="courtyard" aria-hidden="true"><div class="lights"><i></i><i></i><i></i><i></i><i></i></div><div class="stage"></div></div><div class="veil" aria-hidden="true"></div>
-<header class="top"><div class="brand"><small>Mini</small>महफ़िल</div><span class="language">${escapeHtml(label)}</span></header>
-<main class="performance"><section class="sheet" aria-live="polite"><h1>${escapeHtml(song.title)}</h1><div id="lyrics"></div></section></main>
-<a class="cta" href="${REPOSITORY_URL}">Make your own song →</a>
-<section class="player" aria-label="Song player"><button class="start" id="start" type="button" aria-label="Play ${escapeHtml(song.title)}">▶</button><strong>${escapeHtml(song.title)}</strong><audio id="audio" controls preload="metadata" src="/s/${id}/audio"></audio></section>
-<script id="song-data" type="application/json">${data}</script><script nonce="${nonce}">const audio=document.querySelector('#audio'),start=document.querySelector('#start'),lyrics=document.querySelector('#lyrics'),song=JSON.parse(document.querySelector('#song-data').textContent);function sync(){const lines=Math.max(song.native.length,song.roman.length),duration=Number.isFinite(audio.duration)?audio.duration:0,count=duration?Math.min(lines,Math.ceil((audio.currentTime/(duration*.9))*lines)):0;lyrics.replaceChildren();for(let i=0;i<count;i++){const native=(song.native[i]||'').trim(),roman=(song.roman[i]||'').trim();if(native){const p=document.createElement('p');p.className='line';p.textContent=native;lyrics.append(p)}if(roman&&roman!==native){const p=document.createElement('p');p.className='line roman';p.textContent=roman;lyrics.append(p)}}lyrics.lastElementChild?.scrollIntoView({block:'nearest',behavior:'smooth'})}start.addEventListener('click',()=>audio.paused?audio.play():audio.pause());audio.addEventListener('play',()=>{start.textContent='❚❚';start.setAttribute('aria-label','Pause')});audio.addEventListener('pause',()=>{start.textContent='▶';start.setAttribute('aria-label','Play')});audio.addEventListener('timeupdate',sync);audio.addEventListener('seeked',sync);</script></body></html>`;
 }
 
 export function createR2Storage(bucket) {

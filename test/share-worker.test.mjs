@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { COURTYARD_SCENE } from '../share/courtyard.mjs';
 import { createR2Storage, createShareHandler } from '../share/worker.mjs';
 
 const ID = 'AbCdEfGhIjKlMnOp';
@@ -43,6 +45,15 @@ function uploadRequest(audio = new Uint8Array([73, 68, 51]), metadata = SONG, he
   return uploadFormRequest(form, headers);
 }
 
+test('shared playback uses the exact courtyard artwork from the app', () => {
+  const app = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const start = app.indexOf('  <div class="scene"');
+  const end = app.indexOf('  <div class="grain"', start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  assert.equal(COURTYARD_SCENE.trim(), app.slice(start, end).trim());
+});
+
 test('upload to playback round trip preserves title, language, and both lyric scripts', async () => {
   const handle = createShareHandler({
     storage: memoryStorage(),
@@ -63,6 +74,16 @@ test('upload to playback round trip preserves title, language, and both lyric sc
   assert.match(html, /આ સાંજ ધીમે/);
   assert.match(html, /aa saanj dhime/);
   assert.match(html, /Make your own song/);
+  assert.match(html, /class="scene"/);
+  assert.match(html, /viewBox="0 0 1600 1000"/);
+  assert.match(html, /class="performance"/);
+  assert.match(html, /class="player-shell"/);
+  assert.match(html, /class="record-label">M</);
+  assert.match(html, /id="seek"/);
+  assert.match(html, /id="timecode"/);
+  assert.match(html, /id="replay"/);
+  assert.doesNotMatch(html, /<audio[^>]+controls/);
+  assert.doesNotMatch(html, /class="courtyard"/);
   assert.match(html, /property="og:url" content="https:\/\/share\.example\/s\/AbCdEfGhIjKlMnOp"/);
   assert.match(html, /property="og:audio" content="https:\/\/share\.example\/s\/AbCdEfGhIjKlMnOp\/audio"/);
   assert.match(html, /property="og:audio:type" content="audio\/mpeg"/);
