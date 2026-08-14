@@ -139,10 +139,10 @@ test('rejects lyrics longer than the MiniMax ceiling', async () => {
   await withServer(async () => { contacted = true; }, async base => {
     const response = await fetch(`${base}/api/generate`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: 'sk-test', lyrics: 'x'.repeat(3001) })
+      body: JSON.stringify({ token: 'sk-test', lyrics: 'x'.repeat(3501) })
     });
     assert.equal(response.status, 400);
-    assert.match((await response.json()).error, /3,000 characters/);
+    assert.match((await response.json()).error, /3,500 characters/);
     assert.equal(contacted, false);
   });
 });

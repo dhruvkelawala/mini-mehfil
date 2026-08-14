@@ -121,7 +121,7 @@ function createServer(options = {}) {
 
         if (!token) return sendJson(res, 400, { error: 'Add your MiniMax API token.' });
         if (!lyrics) return sendJson(res, 400, { error: 'Add some lyrics first.' });
-        if (lyrics.length > 3000) return sendJson(res, 400, { error: 'Lyrics must be 3,000 characters or fewer.' });
+        if (lyrics.length > 3500) return sendJson(res, 400, { error: 'Lyrics must be 3,500 characters or fewer.' });
         if (prompt.length > 2000) return sendJson(res, 400, { error: 'Sound description must be 2,000 characters or fewer.' });
 
         const controller = new AbortController();
