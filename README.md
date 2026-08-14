@@ -24,13 +24,15 @@ Bring your own key. Lyrics cost roughly a tenth of a cent (MiniMax M3 text model
 
 ## Optional sharing
 
-Deploy the zero-dependency Cloudflare Worker described in [`share/README.md`](share/README.md), then start the app with its HTTPS origin:
+Deploy the zero-dependency Cloudflare Worker described in [`share/README.md`](share/README.md), configure the same server-only upload secret on both sides, then start the app:
 
 ```bash
-MEHFIL_SHARE_URL=https://mini-mehfil-share.example.workers.dev npm start
+MEHFIL_SHARE_URL=https://mini-mehfil-share.example.workers.dev \
+MEHFIL_SHARE_SECRET=replace-with-a-long-random-secret \
+npm start
 ```
 
-Sharing is opt-in for each finished song. The local proxy downloads only audio it just generated and uploads the MP3 plus the title, language, and lyric sheet. Your MiniMax token is never included.
+Sharing is opt-in for each finished song and remains unavailable unless both variables are present. The local proxy downloads only audio it just generated and uploads the MP3 plus the title, language, and lyric sheet through an authenticated, idempotent request. Neither the MiniMax token nor the Worker upload secret is exposed to the browser.
 
 ## How it works
 
