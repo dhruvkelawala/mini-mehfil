@@ -131,7 +131,7 @@ input::placeholder { color: #b3a08a; opacity: 1; }
   position: fixed; z-index: 5; bottom: 25px; min-height: 88px;
   left: calc((100vw - min(1180px, 100vw - 44px)) / 2);
   width: min(620px, calc(min(1180px, 100vw - 44px) - 532px));
-  display: grid; grid-template-columns: 72px 1fr 55px 54px; align-items: center; gap: 15px; padding: 10px 15px 10px 10px; border: 1px solid rgba(255,255,255,.2); border-radius: 52px;
+  display: grid; grid-template-columns: 72px 1fr 55px 48px 54px; align-items: center; gap: 12px; padding: 10px 15px 10px 10px; border: 1px solid rgba(255,255,255,.2); border-radius: 52px;
   background: rgba(122,54,45,.93); box-shadow: 0 20px 55px rgba(8,19,18,.42), inset 0 1px rgba(255,255,255,.15); backdrop-filter: blur(12px);
   animation: player-up .85s .5s both;
 }
@@ -150,6 +150,9 @@ input::placeholder { color: #b3a08a; opacity: 1; }
 .play { width: 49px; height: 49px; border: 0; border-radius: 50%; color: #29322e; background: #fffaf0; cursor: pointer; box-shadow: 0 5px 15px rgba(0,0,0,.18); }
 .play:disabled { opacity: .45; cursor: default; }
 .play span { display: block; transform: translateX(1px); }
+.share { width: 44px; height: 45px; display: grid; place-items: center; border: 0; color: var(--ink); background: transparent; font-size: 19px; line-height: 1; cursor: pointer; }
+.share span { font-size: 8px; text-transform: uppercase; letter-spacing: .08em; margin-top: -9px; }
+.share:disabled { opacity: .35; cursor: default; }
 .download { width: 42px; height: 45px; display: grid; place-items: center; color: var(--ink); text-decoration: none; font-size: 20px; line-height: 1; opacity: 1; }
 .download span { font-size: 8px; text-transform: uppercase; letter-spacing: .08em; margin-top: -9px; }
 .download[aria-disabled="true"] { opacity: .35; pointer-events: none; }
@@ -181,7 +184,7 @@ input::placeholder { color: #b3a08a; opacity: 1; }
   .composer { padding: 20px 18px; }
   .composer h2 { font-size: 26px; }
   .field-row, .modes { grid-template-columns: 1fr; }
-    .player-shell { bottom: 12px; min-height: 72px; grid-template-columns: 52px 1fr 43px; gap: 10px; padding: 8px 12px 8px 8px; }
+    .player-shell { bottom: 12px; min-height: 72px; grid-template-columns: 52px 1fr 43px 43px; gap: 8px; padding: 8px 12px 8px 8px; }
   .record { width: 50px; height: 50px; }
   .record-label { width: 22px; height: 22px; font-size: 11px; }
   .play { width: 41px; height: 41px; }
