@@ -475,11 +475,12 @@ export class MehfilRoom {
       randomId: () => randomId(),
       randomCredential: () => { const bytes=new Uint8Array(32); crypto.getRandomValues(bytes); return base64Url(bytes); },
       send: (socket, message) => socket?.send(JSON.stringify(message)),
-      broadcast: fn => { for (const socket of state.getWebSockets()) socket.send(JSON.stringify(fn(socket))); },
+      broadcast: fn => { for (const socket of state.getWebSockets()) if (socket.deserializeAttachment()?.authenticated) socket.send(JSON.stringify(fn(socket))); },
       close: (socket, code, reason) => socket?.close(code, reason),
       setAttachment: (socket, value) => socket.serializeAttachment(value),
       getAttachment: socket => socket?.deserializeAttachment(),
-      setAlarm: value => state.storage.setAlarm(value)
+      setAlarm: value => state.storage.setAlarm(value),
+      listSockets: () => state.getWebSockets()
     });
   }
   async fetch(request) {

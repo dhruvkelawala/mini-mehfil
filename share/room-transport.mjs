@@ -20,8 +20,9 @@ export function constantTimeEqual(left, right) {
   return difference === 0;
 }
 
-export function createRoomTransport({ storage, now = Date.now, randomId, randomCredential, send, broadcast, close, setAttachment, getAttachment, setAlarm } = {}) {
+export function createRoomTransport({ storage, now = Date.now, randomId, randomCredential, send, broadcast, close, setAttachment, getAttachment, setAlarm, listSockets } = {}) {
   const sockets = new Set();
+  const activeSockets = () => listSockets ? listSockets() : [...sockets];
   let state;
   let meta;
   const load = async () => {
@@ -37,7 +38,7 @@ export function createRoomTransport({ storage, now = Date.now, randomId, randomC
   };
   const snapshots = async () => broadcast(socket => ({ type: 'snapshot', state: projectRoomState(state, getAttachment(socket) || {}) }));
   const schedule = async () => {
-    const connected = [...sockets].some(socket => getAttachment(socket)?.authenticated);
+    const connected = [...activeSockets()].some(socket => getAttachment(socket)?.authenticated);
     meta.emptyDeadline = connected ? null : now() + EMPTY_GRACE_MS;
     await storage.put('meta', meta);
     await setAlarm(Math.min(meta.absoluteDeadline, meta.emptyDeadline || Infinity));
@@ -48,8 +49,8 @@ export function createRoomTransport({ storage, now = Date.now, randomId, randomC
     await persist(result.state);
     await snapshots();
     for (const effect of result.effects) {
-      if (effect.type === 'close-participant') for (const candidate of sockets) if (getAttachment(candidate)?.participantId === effect.participantId) close(candidate, 4003, 'kicked');
-      if (effect.type === 'close-all') for (const candidate of sockets) close(candidate, 4004, 'expired');
+      if (effect.type === 'close-participant') for (const candidate of activeSockets()) if (getAttachment(candidate)?.participantId === effect.participantId) close(candidate, 4003, 'kicked');
+      if (effect.type === 'close-all') for (const candidate of activeSockets()) close(candidate, 4004, 'expired');
     }
     return true;
   };
@@ -63,7 +64,7 @@ export function createRoomTransport({ storage, now = Date.now, randomId, randomC
     },
     async connect(socket) { await load(); sockets.add(socket); setAttachment(socket, { authenticated: false, connectedAt: now() }); },
     async message(socket, raw) {
-      await load();
+      await load(); sockets.add(socket);
       if (typeof raw !== 'string' || new TextEncoder().encode(raw).byteLength > MAX_MESSAGE_BYTES) return privateError(socket, 'invalid-message');
       let message; try { message = JSON.parse(raw); } catch { return privateError(socket, 'invalid-message'); }
       if (!message || typeof message.type !== 'string') return privateError(socket, 'invalid-message');

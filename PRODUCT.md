@@ -8,7 +8,7 @@ web
 
 ## Users
 
-Primarily the owner (Dhruv), generating songs locally for themself while testing. If it proves itself, the intended second audience is the public running it self-hosted with their own MiniMax API key (BYOK). Design and copy should already read well to a stranger, but no multi-user features exist or are planned.
+Primarily a host generating songs locally with their own MiniMax API key (BYOK). A host may optionally open a transient live mehfil where listeners join without accounts or keys, request songs, and hear the explicitly shared recordings together.
 
 ## Product Purpose
 
@@ -30,7 +30,8 @@ An immersive single-room experience (inspired by saloon.wtf) rather than a utili
 - **One key for everything:** the same MiniMax token drives the lyricist (`api.minimax.io/anthropic`, Anthropic-compatible) and the music call (`/v1/music_generation`). Never introduce a second required credential — it would break BYOK.
 - **Lyrics are sung literally.** MiniMax performs the `lyrics` field verbatim, so keywords must be expanded into a full structured song before generating. Direct music-3.0 generation accepts 1–3,500 lyric chars and 0–2,000 prompt chars (the 10–1,000 figure applies to cover mode only); we target ~1,100 and cap at 3,500. Prompt/lyric craft findings live in `docs/research/minimax-native-vocals.md`.
 - Single-page static frontend (`public/index.html`, `styles.css`, `app.js`) served by the Node proxy.
-- Privacy posture documented in README: the token lives only in the browser field, is forwarded per-request, and is never logged or stored. Lyrics and prompts are never persisted on the server; one pending lyric sheet may live temporarily in the current tab's `sessionStorage` so a paid recording can survive refresh or iOS suspension.
+- Privacy posture documented in README: the token lives only in the browser field, is forwarded per-request, and is never logged or stored. One pending lyric sheet may live temporarily in the current tab's `sessionStorage` so a paid recording can survive refresh or iOS suspension. Optional rooms keep transient queue/presence state in a Durable Object and explicitly shared recordings in R2; the Worker never receives the MiniMax key or generation prompt.
+- Live rooms are optional and host-controlled: accepting a listener request does not spend money, and only an explicit host **Record** action runs the existing write → record → share pipeline.
 - Open decision: whether/when to publish for public BYOK consumption.
 
 ## Brand Commitments
