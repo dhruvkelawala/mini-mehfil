@@ -4,9 +4,11 @@ A tiny local song room for MiniMax Music 3. Keywords in any language go in; a
 lyricist model writes structured native-script lyrics and a production prompt,
 and MiniMax Music 3 sings them.
 
-Run with `npm start` on Node 24 or newer, test with `npm test`. There are **no
-dependencies** — standard-library Node only — and no build step. Keep it that
-way.
+Run with `npm start` on Node 24 or newer and test with `npm test`. For browser
+coverage, run `npm install`, `npx playwright install chromium`, then
+`npm run test:browser`. There are **no runtime dependencies** — production is
+standard-library Node only, with no build step. Development-only dependencies
+are allowed when they provide an automated verification gate.
 
 ## Agent skills
 

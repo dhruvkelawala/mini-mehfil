@@ -26,7 +26,7 @@ An immersive single-room experience (inspired by saloon.wtf) rather than a utili
 
 ## Capabilities and Constraints
 
-- **Zero-dependency Node is binding (reinstated 2026-08-14):** `@earendil-works/pi-ai` briefly powered the lyricist, but its 88 MB / 48-package footprint wasn't worth one-line model swaps, so its wire format was copied into `lyricist.mjs` (Anthropic Messages protocol: `POST {base}/v1/messages`, `x-api-key`, `anthropic-version: 2023-06-01`) and the dependency removed. Standard library only, no build steps; `public/` stays plain HTML/CSS/JS. Node 24 or newer is required.
+- **Zero-runtime-dependency Node is binding (reinstated 2026-08-14):** `@earendil-works/pi-ai` briefly powered the lyricist, but its 88 MB / 48-package footprint wasn't worth one-line model swaps, so its wire format was copied into `lyricist.mjs` (Anthropic Messages protocol: `POST {base}/v1/messages`, `x-api-key`, `anthropic-version: 2023-06-01`) and the runtime dependency removed. Production remains standard-library only, with no build steps; `public/` stays plain HTML/CSS/JS. Development-only dependencies are allowed when they provide an automated verification gate; contributors run `npm install` and `npx playwright install chromium` before `npm run test:browser`. Node 24 or newer is required.
 - **One key for everything:** the same MiniMax token drives the lyricist (`api.minimax.io/anthropic`, Anthropic-compatible) and the music call (`/v1/music_generation`). Never introduce a second required credential — it would break BYOK.
 - **Lyrics are sung literally.** MiniMax performs the `lyrics` field verbatim, so keywords must be expanded into a full structured song before generating. Direct music-3.0 generation accepts 1–3,500 lyric chars and 0–2,000 prompt chars (the 10–1,000 figure applies to cover mode only); we target ~1,100 and cap at 3,500. Prompt/lyric craft findings live in `docs/research/minimax-native-vocals.md`.
 - Single-page static frontend (`public/index.html`, `styles.css`, `app.js`) served by the Node proxy.
@@ -43,5 +43,5 @@ The saloon.wtf-inspired dusk-courtyard identity is **binding**: that stacked wor
 
 1. One room, one loop — everything serves write → record → listen on a single screen.
 2. The user's key, the user's music — never store, log, or phone home with tokens, lyrics, or audio.
-3. Stdlib or nothing — features that require a dependency are features to redesign.
+3. Stdlib in production — features that require a runtime dependency are features to redesign; development-only verification tooling is allowed.
 4. Warmth over utility chrome — the mehfil atmosphere is the product's differentiation; keep it even in error states and edge cases.

@@ -5,9 +5,15 @@
   "description": "Mini Mehfil — a tiny local song room for MiniMax Music 3",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test test/*.test.js test/*.test.mjs",
+    "test:unit": "node --test test/*.test.js test/*.test.mjs",
+    "test:browser": "playwright test --project=chromium",
+    "test:all": "npm run test:unit && npm run test:browser"
   },
   "engines": {
     "node": ">=24"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
   }
 }
