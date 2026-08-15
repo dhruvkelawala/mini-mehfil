@@ -1,12 +1,12 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_SHARE_AUDIO_BYTES = 10 * 1024 * 1024;
-const SHARE_REFERENCE_TTL_MS = 30 * 60 * 1000;
+const JOB_ID_PATTERN = /^[A-Za-z0-9_-]{24}$/;
+const RECOVERY_TIMEOUT_MS = 15 * 1000;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -97,6 +97,22 @@ function normalizeShareBaseUrl(value) {
   }
 }
 
+function completedGeneration(record) {
+  const result = {
+    jobId: record.jobId,
+    status: 'complete',
+    data: { audio: record.source },
+    share_ref: record.jobId
+  };
+  if (record.traceId) result.trace_id = record.traceId;
+  return result;
+}
+
+function publicFailure(message, code = 'GENERATION_FAILED') {
+  const safe = typeof message === 'string' && message.trim() ? message.trim().slice(0, 500) : 'Generation failed.';
+  return { code, message: safe };
+}
+
 function staticFile(req, res) {
   const pathname = new URL(req.url, 'http://localhost').pathname;
   const requestPath = pathname === '/' ? '/index.html' : pathname;
@@ -136,7 +152,39 @@ function createServer(options = {}) {
   const shareBaseUrl = normalizeShareBaseUrl(options.shareBaseUrl ?? process.env.MEHFIL_SHARE_URL ?? '');
   const shareSecret = String(options.shareSecret ?? process.env.MEHFIL_SHARE_SECRET ?? '').trim();
   const sharingConfigured = Boolean(shareBaseUrl && shareSecret);
-  const generatedAudio = new Map();
+  const sharedUrls = new Map();
+
+  async function recoveryRequest(pathname, { method = 'GET', body } = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), RECOVERY_TIMEOUT_MS);
+    let response;
+    try {
+      response = await fetchImpl(`${shareBaseUrl}${pathname}`, {
+        method,
+        headers: {
+          'Authorization': `Bearer ${shareSecret}`,
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal
+      });
+    } catch {
+      throw Object.assign(new Error('Recording recovery is temporarily unavailable. Please check again.'), { status: 503 });
+    } finally {
+      clearTimeout(timeout);
+    }
+    let value;
+    try { value = JSON.parse(await response.text()); } catch {
+      throw Object.assign(new Error('Recording recovery returned an unreadable response. Please check again.'), { status: 503 });
+    }
+    return { response, value };
+  }
+
+  async function checkpointFailure(jobId, failure) {
+    try {
+      await recoveryRequest(`/generation-jobs/${jobId}`, { method: 'PUT', body: { status: 'failed', error: failure } });
+    } catch {}
+  }
 
   return http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/write-lyrics') {
@@ -168,21 +216,38 @@ function createServer(options = {}) {
     }
 
     if (req.method === 'POST' && req.url === '/api/generate') {
+      let claimedJobId = '';
+      let paidCallStarted = false;
+      let audioReady = false;
       try {
         const body = await readJson(req);
         const token = typeof body.token === 'string' ? body.token.trim() : '';
         const lyrics = typeof body.lyrics === 'string' ? body.lyrics.trim() : '';
         const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+        const jobId = typeof body.jobId === 'string' ? body.jobId : '';
 
         if (!token) return sendJson(res, 400, { error: 'Add your MiniMax API token.' });
         if (!lyrics) return sendJson(res, 400, { error: 'Add some lyrics first.' });
         if (lyrics.length > 3500) return sendJson(res, 400, { error: 'Lyrics must be 3,500 characters or fewer.' });
         if (prompt.length > 2000) return sendJson(res, 400, { error: 'Sound description must be 2,000 characters or fewer.' });
+        if (sharingConfigured && !JOB_ID_PATTERN.test(jobId)) return sendJson(res, 400, { error: 'A valid generation job ID is required.' });
+
+        if (sharingConfigured) {
+          const claim = await recoveryRequest(`/generation-jobs/${jobId}/claim`, { method: 'POST' });
+          if (!claim.response.ok) return sendJson(res, 503, { error: claim.value.error || 'Recording recovery is temporarily unavailable. Please check again.' });
+          if (claim.response.status === 200) {
+            if (claim.value.status === 'complete') return sendJson(res, 200, completedGeneration(claim.value));
+            if (claim.value.status === 'failed') return sendJson(res, 400, { error: claim.value.error?.message || 'Generation failed.' });
+            return sendJson(res, 202, { jobId, status: 'pending' });
+          }
+          claimedJobId = jobId;
+        }
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 7 * 60 * 1000);
         let upstream;
         try {
+          paidCallStarted = true;
           upstream = await fetchImpl(`${apiBase}/v1/music_generation`, {
             method: 'POST',
             headers: {
@@ -213,22 +278,55 @@ function createServer(options = {}) {
 
         if (!upstream.ok || result?.base_resp?.status_code) {
           const message = result?.base_resp?.status_msg || result?.error?.message || result?.error || `MiniMax request failed (${upstream.status})`;
-          return sendJson(res, upstream.ok ? 400 : upstream.status, { error: String(message), details: result });
+          const failure = publicFailure(String(message), 'MINIMAX_FAILED');
+          if (claimedJobId) await checkpointFailure(claimedJobId, failure);
+          return sendJson(res, upstream.ok ? 400 : upstream.status, { error: failure.message });
         }
         const source = audioSource(result);
-        if (source && sharingConfigured) {
-          const shareReference = crypto.randomBytes(18).toString('base64url');
-          const now = Date.now();
-          for (const [key, entry] of generatedAudio) {
-            if (entry.expiresAt <= now) generatedAudio.delete(key);
-          }
-          generatedAudio.set(shareReference, { source, expiresAt: now + SHARE_REFERENCE_TTL_MS });
-          result.share_ref = shareReference;
+        if (!source) {
+          const failure = publicFailure('MiniMax succeeded but did not return an audio file.', 'MISSING_AUDIO');
+          if (claimedJobId) await checkpointFailure(claimedJobId, failure);
+          return sendJson(res, 502, { error: failure.message });
+        }
+        audioReady = true;
+        if (claimedJobId) {
+          const traceId = result?.trace_id || result?.traceId || result?.data?.trace_id;
+          const checkpoint = await recoveryRequest(`/generation-jobs/${claimedJobId}`, {
+            method: 'PUT',
+            body: { status: 'complete', source, ...(typeof traceId === 'string' ? { traceId } : {}) }
+          });
+          if (!checkpoint.response.ok) return sendJson(res, 503, { error: 'Your recording finished, but its recovery checkpoint is still pending. Please check again.' });
+          return sendJson(res, 200, completedGeneration(checkpoint.value));
         }
         return sendJson(res, 200, result);
       } catch (error) {
-        if (error.name === 'AbortError') return sendJson(res, 504, { error: 'Generation timed out after seven minutes.' });
+        if (error.name === 'AbortError') {
+          const failure = publicFailure('Generation timed out after seven minutes.', 'GENERATION_TIMEOUT');
+          if (claimedJobId) await checkpointFailure(claimedJobId, failure);
+          return sendJson(res, 504, { error: failure.message });
+        }
+        if (claimedJobId && paidCallStarted && !audioReady) {
+          const failure = publicFailure('Generation failed while contacting MiniMax.', 'MINIMAX_UNAVAILABLE');
+          await checkpointFailure(claimedJobId, failure);
+          return sendJson(res, 502, { error: failure.message });
+        }
         return sendJson(res, error.status || 500, { error: error.message || 'Generation failed.' });
+      }
+    }
+
+    if (req.method === 'GET' && new URL(req.url, 'http://localhost').pathname === '/api/generation-status') {
+      const jobId = new URL(req.url, 'http://localhost').searchParams.get('id') || '';
+      if (!JOB_ID_PATTERN.test(jobId)) return sendJson(res, 400, { error: 'A valid generation job ID is required.' });
+      if (!sharingConfigured) return sendJson(res, 503, { error: 'This deployment cannot recover a recording after the page loses its response.' });
+      try {
+        const status = await recoveryRequest(`/generation-jobs/${jobId}`);
+        if (status.response.status === 404) return sendJson(res, 404, { error: 'That recording can no longer be recovered.' });
+        if (!status.response.ok) return sendJson(res, 503, { error: 'Recording recovery is temporarily unavailable. Please check again.' });
+        if (status.value.status === 'complete') return sendJson(res, 200, completedGeneration(status.value));
+        if (status.value.status === 'failed') return sendJson(res, 200, { jobId, status: 'failed', error: status.value.error?.message || 'Generation failed.' });
+        return sendJson(res, 200, { jobId, status: 'pending' });
+      } catch (error) {
+        return sendJson(res, error.status || 503, { error: error.message || 'Recording recovery is temporarily unavailable. Please check again.' });
       }
     }
 
@@ -237,12 +335,11 @@ function createServer(options = {}) {
         if (!sharingConfigured) return sendJson(res, 503, { error: 'Sharing is not configured on this mehfil.' });
         const body = await readJson(req);
         const shareReference = typeof body.shareRef === 'string' ? body.shareRef : '';
-        const entry = generatedAudio.get(shareReference);
-        if (!entry || entry.expiresAt <= Date.now()) {
-          generatedAudio.delete(shareReference);
-          return sendJson(res, 404, { error: 'That recording is no longer ready to share. Make it again and retry.' });
-        }
-        if (entry.shareUrl) return sendJson(res, 201, { url: entry.shareUrl });
+        if (!JOB_ID_PATTERN.test(shareReference)) return sendJson(res, 404, { error: 'That recording is no longer ready to share. Make it again and retry.' });
+        if (sharedUrls.has(shareReference)) return sendJson(res, 201, { url: sharedUrls.get(shareReference) });
+        const recovered = await recoveryRequest(`/generation-jobs/${shareReference}`);
+        if (!recovered.response.ok || recovered.value.status !== 'complete') return sendJson(res, 404, { error: 'That recording is no longer ready to share. Make it again and retry.' });
+        const entry = { source: recovered.value.source };
 
         const metadata = {
           title: typeof body.title === 'string' ? body.title : '',
@@ -296,9 +393,8 @@ function createServer(options = {}) {
         if (publicUrl.origin !== configuredOrigin || !/^\/s\/[A-Za-z0-9_-]{16}$/.test(publicUrl.pathname)) {
           throw Object.assign(new Error('The share service returned an invalid link.'), { status: 502 });
         }
-        entry.shareUrl = publicUrl.href;
-        entry.source = null;
-        return sendJson(res, 201, { url: entry.shareUrl });
+        sharedUrls.set(shareReference, publicUrl.href);
+        return sendJson(res, 201, { url: publicUrl.href });
       } catch (error) {
         if (error.name === 'AbortError') return sendJson(res, 504, { error: 'Sharing took too long. Please retry.' });
         return sendJson(res, error.status || 502, { error: error.message || 'The song could not be shared. Please retry.' });

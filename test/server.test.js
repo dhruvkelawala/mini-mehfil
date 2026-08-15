@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const serverModule = require('../server');
 const { createServer } = serverModule;
+const JOB_ID = 'AbCdEfGhIjKlMnOpQrStUvWx';
 
 test('exports an HTTP server for serverless runtimes', () => {
   assert.equal(typeof serverModule.listen, 'function');
@@ -85,7 +86,17 @@ test('does not cache or expose the token in responses', async () => {
 
 test('shares only server-issued recordings and forwards no token', async () => {
   let uploaded;
+  let job;
   const mockFetch = async (url, init = {}) => {
+    if (url === `https://share.example/generation-jobs/${JOB_ID}/claim`) {
+      job = job || { version: 1, jobId: JOB_ID, status: 'pending' };
+      return new Response(JSON.stringify(job), { status: 201 });
+    }
+    if (url === `https://share.example/generation-jobs/${JOB_ID}` && init.method === 'PUT') {
+      job = { version: 1, jobId: JOB_ID, ...JSON.parse(init.body) };
+      return new Response(JSON.stringify(job));
+    }
+    if (url === `https://share.example/generation-jobs/${JOB_ID}`) return new Response(JSON.stringify(job));
     if (url === 'https://mock.minimax.test/v1/music_generation') {
       return new Response(JSON.stringify({
         data: { audio: 'https://cdn.minimax.test/song.mp3', status: 2 },
@@ -109,7 +120,7 @@ test('shares only server-issued recordings and forwards no token', async () => {
   await withServer(mockFetch, async base => {
     const generated = await fetch(`${base}/api/generate`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: 'sk-cp-never-upload', lyrics: '[Verse]\nઆ સાંજ', prompt: 'Gujarati indie pop' })
+      body: JSON.stringify({ jobId: JOB_ID, token: 'sk-cp-never-upload', lyrics: '[Verse]\nઆ સાંજ', prompt: 'Gujarati indie pop' })
     });
     const song = await generated.json();
     assert.match(song.share_ref, /^[A-Za-z0-9_-]{24}$/);
@@ -187,7 +198,17 @@ test('does not issue share references unless URL and secret are both configured'
 
 test('surfaces share upload failures so the same recording can be retried', async () => {
   let attempts = 0;
-  const mockFetch = async url => {
+  let job;
+  const mockFetch = async (url, init = {}) => {
+    if (url === `https://share.example/generation-jobs/${JOB_ID}/claim`) {
+      job = job || { version: 1, jobId: JOB_ID, status: 'pending' };
+      return new Response(JSON.stringify(job), { status: 201 });
+    }
+    if (url === `https://share.example/generation-jobs/${JOB_ID}` && init.method === 'PUT') {
+      job = { version: 1, jobId: JOB_ID, ...JSON.parse(init.body) };
+      return new Response(JSON.stringify(job));
+    }
+    if (url === `https://share.example/generation-jobs/${JOB_ID}`) return new Response(JSON.stringify(job));
     if (url === 'https://mock.minimax.test/v1/music_generation') {
       return new Response(JSON.stringify({
         data: { audio: '494433', status: 2 },
@@ -205,7 +226,7 @@ test('surfaces share upload failures so the same recording can be retried', asyn
   await withServer(mockFetch, async base => {
     const generated = await fetch(`${base}/api/generate`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: 'sk-test', lyrics: 'Retry this song' })
+      body: JSON.stringify({ jobId: JOB_ID, token: 'sk-test', lyrics: 'Retry this song' })
     });
     const { share_ref: shareRef } = await generated.json();
     const payload = JSON.stringify({
@@ -222,6 +243,105 @@ test('surfaces share upload failures so the same recording can be retried', asyn
     assert.equal((await lostResponseRetry.json()).url, 'https://share.example/s/AbCdEfGhIjKlMnOp');
   }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
   assert.equal(attempts, 2);
+});
+
+test('claims before one paid call, checkpoints before success, and recovers a lost response', async () => {
+  const calls = [];
+  let job;
+  let minimaxCalls = 0;
+  const mockFetch = async (url, init = {}) => {
+    if (url === `https://share.example/generation-jobs/${JOB_ID}/claim`) {
+      calls.push('claim');
+      if (job) return new Response(JSON.stringify(job), { status: 200 });
+      job = { version: 1, jobId: JOB_ID, status: 'pending' };
+      return new Response(JSON.stringify(job), { status: 201 });
+    }
+    if (url === 'https://mock.minimax.test/v1/music_generation') {
+      calls.push('minimax');
+      minimaxCalls += 1;
+      return new Response(JSON.stringify({ data: { audio: 'https://cdn.example/song.mp3' }, trace_id: 'safe-trace', base_resp: { status_code: 0 } }));
+    }
+    if (url === `https://share.example/generation-jobs/${JOB_ID}` && init.method === 'PUT') {
+      calls.push('checkpoint');
+      job = { version: 1, jobId: JOB_ID, ...JSON.parse(init.body) };
+      return new Response(JSON.stringify(job));
+    }
+    if (url === `https://share.example/generation-jobs/${JOB_ID}`) {
+      calls.push('status');
+      return new Response(JSON.stringify(job));
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  await withServer(mockFetch, async base => {
+    const payload = { jobId: JOB_ID, token: 'sk-private', lyrics: 'One paid song', prompt: 'Warm' };
+    const initial = await fetch(`${base}/api/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+    assert.equal(initial.status, 200);
+    const status = await fetch(`${base}/api/generation-status?id=${JOB_ID}`);
+    assert.deepEqual(await status.json(), {
+      jobId: JOB_ID, status: 'complete', data: { audio: 'https://cdn.example/song.mp3' }, trace_id: 'safe-trace', share_ref: JOB_ID
+    });
+    const duplicate = await fetch(`${base}/api/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+    assert.equal(duplicate.status, 200);
+  }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
+  assert.deepEqual(calls.slice(0, 3), ['claim', 'minimax', 'checkpoint']);
+  assert.equal(minimaxCalls, 1);
+});
+
+test('an existing pending claim returns 202 without contacting MiniMax', async () => {
+  let minimaxCalls = 0;
+  const mockFetch = async url => {
+    if (url === `https://share.example/generation-jobs/${JOB_ID}/claim`) return new Response(JSON.stringify({ jobId: JOB_ID, status: 'pending' }), { status: 200 });
+    minimaxCalls += 1;
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  await withServer(mockFetch, async base => {
+    const response = await fetch(`${base}/api/generate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId: JOB_ID, token: 'sk-private', lyrics: 'Pending song' })
+    });
+    assert.equal(response.status, 202);
+    assert.deepEqual(await response.json(), { jobId: JOB_ID, status: 'pending' });
+  }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
+  assert.equal(minimaxCalls, 0);
+});
+
+test('claim failure precedes MiniMax and failed generations store only public feedback', async () => {
+  let minimaxCalls = 0;
+  await withServer(async url => {
+    if (url.includes('/claim')) return new Response(JSON.stringify({ error: 'Store unavailable.' }), { status: 503 });
+    minimaxCalls += 1;
+  }, async base => {
+    const response = await fetch(`${base}/api/generate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId: JOB_ID, token: 'sk-private', lyrics: 'Never charged' })
+    });
+    assert.equal(response.status, 503);
+  }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
+  assert.equal(minimaxCalls, 0);
+
+  let checkpoint;
+  await withServer(async (url, init = {}) => {
+    if (url.includes('/claim')) return new Response(JSON.stringify({ jobId: JOB_ID, status: 'pending' }), { status: 201 });
+    if (url.includes('/generation-jobs/') && init.method === 'PUT') {
+      checkpoint = JSON.parse(init.body);
+      return new Response(JSON.stringify({ jobId: JOB_ID, ...checkpoint }));
+    }
+    return new Response(JSON.stringify({ base_resp: { status_code: 1001, status_msg: 'invalid token' }, raw: 'do-not-store' }));
+  }, async base => {
+    const response = await fetch(`${base}/api/generate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId: JOB_ID, token: 'sk-never-store', lyrics: 'private lyrics', prompt: 'private prompt' })
+    });
+    assert.equal(response.status, 400);
+  }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
+  assert.deepEqual(checkpoint, { status: 'failed', error: { code: 'MINIMAX_FAILED', message: 'invalid token' } });
+  assert.doesNotMatch(JSON.stringify(checkpoint), /never-store|private lyrics|private prompt|do-not-store/);
+});
+
+test('generation status validates IDs and explains unconfigured recovery', async () => {
+  await withServer(global.fetch, async base => {
+    assert.equal((await fetch(`${base}/api/generation-status?id=bad`)).status, 400);
+    const response = await fetch(`${base}/api/generation-status?id=${JOB_ID}`);
+    assert.equal(response.status, 503);
+    assert.match((await response.json()).error, /cannot recover/);
+  });
 });
 
 const SHEET = {
