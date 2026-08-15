@@ -255,6 +255,14 @@
     <section class="identity" aria-labelledby="brand-title">
       <h1 id="brand-title" aria-label="Mini Mehfil"><span class="mini" aria-hidden="true">Mini</span>महफ़िल</h1>
       <p class="tagline">A private song room. Write the words, set the mood, let them sing.</p>
+      <button id="open-room" class="room-open" type="button">Open this mehfil to friends</button>
+      <section id="room-panel" class="room-panel" aria-labelledby="room-heading" hidden>
+        <div class="room-panel-head"><h2 id="room-heading">Live mehfil</h2><span id="room-state">closed</span></div>
+        <p>Room <strong id="room-code">—</strong> · <span id="room-presence">No listeners yet</span></p>
+        <div class="room-link-row"><input id="room-link" readonly aria-label="Listener join link"><button id="copy-room" type="button">Copy link</button></div>
+        <ol id="host-queue" class="host-queue" aria-label="Request queue"></ol>
+        <button id="close-room" class="room-close" type="button">Close room</button>
+      </section>
     </section>
 
     <form id="song-form" class="composer">

@@ -38,6 +38,13 @@ const diagnostics = window.MehfilMediaDiagnostics || {
   snapshot() { return null; }, redactUrl() { return '[diagnostics unavailable]'; }
 };
 const recoveryApi = window.MehfilGenerationRecovery;
+const openRoomButton = document.querySelector('#open-room');
+const roomPanel = document.querySelector('#room-panel');
+const roomStateLabel = document.querySelector('#room-state');
+const roomCode = document.querySelector('#room-code');
+const roomLink = document.querySelector('#room-link');
+const roomPresence = document.querySelector('#room-presence');
+const hostQueue = document.querySelector('#host-queue');
 
 const writingLines = [
   'Listening to your idea…',
@@ -67,6 +74,10 @@ let performanceOpener = null;
 let generationRequestInFlight = false;
 let lifecycleBackgroundVersion = 0;
 const foregroundWaiters = [];
+let roomSocket = null;
+let roomSnapshot = null;
+let roomRetry = 0;
+const ROOM_SESSION_KEY = 'mini-mehfil-host-room';
 
 function updateClock() {
   document.querySelector('#clock').textContent = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(new Date()).toLowerCase();
@@ -527,16 +538,8 @@ function resumePendingGeneration(reason, pendingRecord = recovery.read()) {
   return true;
 }
 
-form.addEventListener('submit', async event => {
-  event.preventDefault();
-  notice.textContent = '';
-  if (!form.reportValidity()) return;
-  const previousPending = recovery.read();
-  if (previousPending && !window.confirm('A recording is still being followed in this tab. Start a new song and stop checking it?')) return;
-  recovery.cancel();
-  recovery.clear();
-  clearLoadedSong();
-  resetPeek();
+async function generateSong({ idea, vibe, language }, hooks = {}) {
+  const requestRun = generationRun;
   performanceAvailable = true;
   performanceButton.hidden = false;
   openPerformance(generateButton);
@@ -553,10 +556,12 @@ form.addEventListener('submit', async event => {
     setBusy(true, writingLines);
     lyricSheet = await writeLyricsAcrossLifecycle({
       token: tokenInput.value,
-      idea: ideaInput.value,
-      vibe: vibeInput.value,
-      language: languageSelect.value
+      idea,
+      vibe,
+      language
     });
+    if (requestRun !== generationRun) throw new Error('This recording was replaced by a newer request.');
+    hooks.onLyrics?.(lyricSheet, requestRun);
 
     // The words exist now. Offer the peek, then record whether or not it is taken.
     peek.hidden = false;
@@ -574,7 +579,7 @@ form.addEventListener('submit', async event => {
       result = await post('/api/generate', {
         jobId,
         token: tokenInput.value,
-        prompt: lyricSheet.prompt || vibeInput.value,
+        prompt: lyricSheet.prompt || vibe,
         lyrics: lyricSheet.lyricsNative || lyricSheet.lyricsRoman
       });
     } finally {
@@ -591,7 +596,11 @@ form.addEventListener('submit', async event => {
       resumePendingGeneration('pending-response', pending);
     } else {
       generationStage = 'load-song';
-      finalizeGeneration({ ...result, jobId: result.jobId || jobId }, pending);
+      const completed = finalizeGeneration({ ...result, jobId: result.jobId || jobId }, pending);
+      if (completed) {
+        await hooks.onReady?.({ lyricSheet, shareReference: result.share_ref, requestRun });
+        return { lyricSheet, shareReference: result.share_ref, requestRun };
+      }
     }
   } catch (error) {
     if (generationStage === 'generate-music' && pending && !Number.isInteger(error.httpStatus)) {
@@ -608,6 +617,8 @@ form.addEventListener('submit', async event => {
     trackSubtitle.textContent = 'Try the mehfil again';
     performanceAvailable = false;
     generationFailed = true;
+    hooks.onFailed?.(error, requestRun);
+    throw error;
   } finally {
     if (awaitingRecovery) return;
     generating = false;
@@ -615,6 +626,21 @@ form.addEventListener('submit', async event => {
     setBusy(false, []);
     if (generationFailed) closePerformance('generation-failed');
   }
+}
+
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  notice.textContent = '';
+  if (!form.reportValidity()) return;
+  const previousPending = recovery.read();
+  if (previousPending && !window.confirm('A recording is still being followed in this tab. Start a new song and stop checking it?')) return;
+  recovery.cancel();
+  recovery.clear();
+  clearLoadedSong();
+  resetPeek();
+  try {
+    await generateSong({ idea: ideaInput.value, vibe: vibeInput.value, language: languageSelect.value });
+  } catch { /* generateSong owns the visible standalone error state. */ }
 });
 
 window.addEventListener('pagehide', () => { lifecycleBackgroundVersion += 1; });
@@ -725,10 +751,8 @@ async function copyShareLink(url) {
   if (!copied) throw new Error('Copy the link from the message below.');
 }
 
-shareButton.addEventListener('click', async () => {
+async function uploadCurrentSong({ copy = false, requestRun = generationRun, requestReference = shareReference } = {}) {
   if (!shareReference || !lyricSheet) return;
-  const requestRun = generationRun;
-  const requestReference = shareReference;
   const requestIsCurrent = () => requestRun === generationRun && requestReference === shareReference;
   shareButton.disabled = true;
   setShareLabel('Sharing');
@@ -749,6 +773,7 @@ shareButton.addEventListener('click', async () => {
       shareUrl = requestedUrl;
     }
     try {
+      if (!copy) return requestedUrl;
       await copyShareLink(requestedUrl);
       if (!requestIsCurrent()) return;
       setShareLabel('Copied');
@@ -765,7 +790,92 @@ shareButton.addEventListener('click', async () => {
     setShareLabel('Retry');
     notice.className = 'notice';
     notice.textContent = error.message;
+    if (!copy) throw error;
   } finally {
     if (requestIsCurrent()) shareButton.disabled = false;
   }
+}
+
+shareButton.addEventListener('click', async () => {
+  const requestRun = generationRun;
+  const requestReference = shareReference;
+  const requestIsCurrent = () => requestRun === generationRun && requestReference === shareReference;
+  if (!requestIsCurrent()) return;
+  await uploadCurrentSong({ copy: true, requestRun, requestReference });
 });
+
+function roomSend(message) {
+  if (roomSocket?.readyState === WebSocket.OPEN) roomSocket.send(JSON.stringify(message));
+}
+
+function roomSession() {
+  try { return JSON.parse(sessionStorage.getItem(ROOM_SESSION_KEY)); } catch { return null; }
+}
+
+function clearRoomSession() {
+  sessionStorage.removeItem(ROOM_SESSION_KEY);
+  roomSocket?.close(); roomSocket = null; roomSnapshot = null;
+  roomPanel.hidden = true; openRoomButton.hidden = false;
+}
+
+function roomButton(label, action, value) {
+  const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+  button.addEventListener('click', () => action(value)); return button;
+}
+
+function renderHostRoom(state) {
+  roomSnapshot = state;
+  roomStateLabel.textContent = state.expiredAt ? 'expired' : 'connected';
+  roomPresence.textContent = `${state.listenerCount} listener${state.listenerCount === 1 ? '' : 's'}`;
+  hostQueue.replaceChildren(...state.queue.filter(item => !['declined','ready'].includes(item.status)).map((item, index) => {
+    const row = document.createElement('li'); row.append(`${item.idea} · ${item.status}`, document.createElement('br'));
+    if (item.status === 'pending') row.append(roomButton('Accept', id => roomSend({ type:'request-accepted', requestId:id }), item.id));
+    if (['pending','accepted'].includes(item.status)) {
+      row.append(roomButton('↑', id => roomSend({ type:'request-reordered', requestId:id, toIndex:Math.max(0,index-1) }), item.id));
+      row.append(roomButton('↓', id => roomSend({ type:'request-reordered', requestId:id, toIndex:Math.min(state.queue.length-1,index+1) }), item.id));
+      row.append(roomButton('Decline', id => roomSend({ type:'request-declined', requestId:id }), item.id));
+    }
+    if (item.status === 'accepted') row.append(roomButton('Record', recordRoomRequest, item.id));
+    const participant = state.participants.find(value => value.id === item.participantId);
+    if (participant) row.append(roomButton('Kick', id => roomSend({ type:'kicked', participantId:id }), participant.id));
+    return row;
+  }));
+  if (state.expiredAt) clearRoomSession();
+}
+
+function connectHostRoom(details) {
+  roomPanel.hidden = false; openRoomButton.hidden = true; roomCode.textContent = details.roomId; roomLink.value = details.joinUrl;
+  roomStateLabel.textContent = roomRetry ? 'reconnecting' : 'connecting';
+  roomSocket = new WebSocket(details.socketUrl);
+  roomSocket.addEventListener('open', () => { roomRetry = 0; roomSocket.send(JSON.stringify({ type:'auth-host', secret:details.hostSecret })); });
+  roomSocket.addEventListener('message', event => { let message; try { message=JSON.parse(event.data); } catch { return; } if (message.type === 'snapshot') renderHostRoom(message.state); if (message.type === 'error') notice.textContent = message.code; });
+  roomSocket.addEventListener('close', event => { if (event.code === 4004 || Date.now() >= details.expiresAt) return clearRoomSession(); roomStateLabel.textContent='reconnecting'; const delay=Math.min(1000*2**roomRetry,30000); roomRetry=Math.min(roomRetry+1,6); setTimeout(()=>connectHostRoom(details),delay); });
+}
+
+async function recordRoomRequest(requestId) {
+  const item = roomSnapshot?.queue.find(value => value.id === requestId);
+  if (!item || item.status !== 'accepted' || generating) return;
+  ideaInput.value = item.idea; vibeInput.value = item.vibe; languageSelect.value = [...languageSelect.options].some(option => option.value === item.language) ? item.language : 'auto';
+  clearLoadedSong(); resetPeek(); roomSend({ type:'recording-started', requestId });
+  const run = generationRun;
+  try {
+    await generateSong({ idea:item.idea, vibe:item.vibe, language:item.language || 'auto' }, {
+      onLyrics: sheet => { if (run === generationRun) roomSend({ type:'lyrics-ready', requestId, lyrics:{ title:sheet.title, language:sheet.language, nativeScriptName:sheet.nativeScriptName, isLatinScript:sheet.isLatinScript, lyricsNative:sheet.lyricsNative, lyricsRoman:sheet.lyricsRoman } }); },
+      onReady: async () => {
+        if (run !== generationRun) return;
+        try { const url = await uploadCurrentSong({ copy:false, requestRun:run, requestReference:shareReference }); if (run !== generationRun) return; const match=/\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(url).pathname); if (!match) throw new Error('The share service returned an invalid link.'); roomSend({ type:'song-ready', requestId, shareId:match[1] }); }
+        catch { if (run === generationRun) roomSend({ type:'recording-failed', requestId }); }
+      }
+    });
+  } catch { if (run === generationRun) roomSend({ type:'recording-failed', requestId }); }
+}
+
+openRoomButton.addEventListener('click', async () => {
+  openRoomButton.disabled = true;
+  try { const details = await post('/api/rooms', {}); sessionStorage.setItem(ROOM_SESSION_KEY, JSON.stringify({ roomId:details.roomId, socketUrl:details.socketUrl, joinUrl:details.joinUrl, hostSecret:details.hostSecret, expiresAt:details.expiresAt })); connectHostRoom(details); }
+  catch (error) { notice.textContent=error.message; }
+  finally { openRoomButton.disabled=false; }
+});
+document.querySelector('#copy-room').addEventListener('click',()=>copyShareLink(roomLink.value));
+document.querySelector('#close-room').addEventListener('click',()=>{roomSend({type:'room-expired'});clearRoomSession()});
+const savedRoom=roomSession();if(savedRoom&&savedRoom.expiresAt>Date.now())connectHostRoom(savedRoom);else if(savedRoom)clearRoomSession();
