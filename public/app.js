@@ -323,6 +323,7 @@ async function post(url, payload) {
   });
   if (!response.ok) {
     const error = new Error(result.error || 'Something went wrong.');
+    error.httpStatus = response.status;
     diagnostics.record('api-http-error', { endpoint: url, status: response.status, error });
     throw error;
   }
@@ -570,7 +571,7 @@ form.addEventListener('submit', async event => {
       finalizeGeneration({ ...result, jobId: result.jobId || jobId }, pending);
     }
   } catch (error) {
-    if (generationStage === 'generate-music' && pending) {
+    if (generationStage === 'generate-music' && pending && !Number.isInteger(error.httpStatus)) {
       awaitingRecovery = true;
       notice.className = 'notice working';
       notice.textContent = 'Checking whether your recording finished…';
@@ -580,6 +581,7 @@ form.addEventListener('submit', async event => {
       return;
     }
     diagnostics.fatal('Generation flow failed before playback', error, audio, { generationStage });
+    if (pending) recovery.clear();
     notice.className = 'notice';
     notice.textContent = error.message;
     trackTitle.textContent = 'No recording was made';

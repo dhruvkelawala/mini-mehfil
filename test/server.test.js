@@ -367,7 +367,35 @@ test('a completed paid call is not reported successful when its checkpoint fails
     assert.match((await response.json()).error, /checkpoint/);
   }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
   assert.equal(minimaxCalls, 1);
-  assert.equal(checkpointCalls, 1);
+  assert.equal(checkpointCalls, 2);
+});
+
+test('a transient complete-checkpoint failure is retried without another paid call', async () => {
+  let minimaxCalls = 0;
+  let checkpointCalls = 0;
+  const complete = { jobId: JOB_ID, status: 'complete', source: 'https://cdn.example/song.mp3' };
+  const mockFetch = async (url, init = {}) => {
+    if (url.endsWith('/claim')) return new Response(JSON.stringify({ jobId: JOB_ID, status: 'pending' }), { status: 201 });
+    if (url === 'https://mock.minimax.test/v1/music_generation') {
+      minimaxCalls += 1;
+      return new Response(JSON.stringify({ data: { audio: complete.source }, base_resp: { status_code: 0 } }));
+    }
+    if (init.method === 'PUT') {
+      checkpointCalls += 1;
+      if (checkpointCalls === 1) return new Response(JSON.stringify({ error: 'Transient.' }), { status: 503 });
+      return new Response(JSON.stringify(complete));
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  await withServer(mockFetch, async base => {
+    const response = await fetch(`${base}/api/generate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId: JOB_ID, token: 'sk-private', lyrics: 'Retry checkpoint' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).data.audio, complete.source);
+  }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
+  assert.equal(minimaxCalls, 1);
+  assert.equal(checkpointCalls, 2);
 });
 
 test('a MiniMax network failure reports retryable storage trouble when failure checkpointing also fails', async () => {

@@ -85,4 +85,6 @@ test('generation recovery is wired without retrying the paid request', () => {
   assert.doesNotMatch(recoverySection, /post\(['"]\/api\/generate/);
   assert.match(recoverySection, /if \(generationRequestInFlight\) return false/);
   assert.match(app, /generationRequestInFlight = true[\s\S]*await post\(['"]\/api\/generate[\s\S]*finally[\s\S]*generationRequestInFlight = false/);
+  assert.match(functionBody('post'), /error\.httpStatus = response\.status/);
+  assert.match(app, /generationStage === ['"]generate-music['"] && pending && !Number\.isInteger\(error\.httpStatus\)/);
 });

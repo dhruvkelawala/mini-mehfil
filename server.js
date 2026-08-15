@@ -201,6 +201,16 @@ function createServer(options = {}) {
     return false;
   }
 
+  async function checkpointComplete(jobId, completion) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const checkpoint = await recoveryRequest(`/generation-jobs/${jobId}`, { method: 'PUT', body: completion });
+        if (checkpoint.response.ok) return checkpoint.value;
+      } catch {}
+    }
+    return null;
+  }
+
   return http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/write-lyrics') {
       try {
@@ -306,12 +316,11 @@ function createServer(options = {}) {
         audioReady = true;
         if (claimedJobId) {
           const traceId = result?.trace_id || result?.traceId || result?.data?.trace_id;
-          const checkpoint = await recoveryRequest(`/generation-jobs/${claimedJobId}`, {
-            method: 'PUT',
-            body: { status: 'complete', source, ...(typeof traceId === 'string' ? { traceId } : {}) }
+          const checkpoint = await checkpointComplete(claimedJobId, {
+            status: 'complete', source, ...(typeof traceId === 'string' ? { traceId } : {})
           });
-          if (!checkpoint.response.ok) return sendJson(res, 503, { error: 'Your recording finished, but its recovery checkpoint is still pending. Please check again.' });
-          return sendJson(res, 200, completedGeneration(checkpoint.value));
+          if (!checkpoint) return sendJson(res, 503, { error: 'Your recording finished, but its recovery checkpoint could not be saved. Start a new song when you are ready.' });
+          return sendJson(res, 200, completedGeneration(checkpoint));
         }
         return sendJson(res, 200, result);
       } catch (error) {
