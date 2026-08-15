@@ -99,15 +99,16 @@ export function createRoomTransport({ storage, now = Date.now, randomId, randomC
       const event = { ...message, role: attachment.role, actorId: attachment.participantId, participantId: message.type === 'request-submitted' ? attachment.participantId : message.participantId, at: now() };
       if (message.type === 'request-submitted') event.requestId = randomId();
       if (message.type === 'song-ready') event.startedAt = now() + SONG_START_DELAY_MS;
-      if (message.type === 'kicked') {
-        const digest = meta.resumeDigests[message.participantId];
-        if (digest) { meta.kickedDigests.push(digest); delete meta.resumeDigests[message.participantId]; await storage.put('meta', meta); }
+      const kickedDigest = message.type === 'kicked' ? meta.resumeDigests[message.participantId] : null;
+      const accepted = await apply(socket, event);
+      if (accepted && kickedDigest) {
+        meta.kickedDigests.push(kickedDigest); delete meta.resumeDigests[message.participantId]; await storage.put('meta', meta);
       }
-      await apply(socket, event);
     },
     async disconnect(socket) {
       await load(); const attachment = getAttachment(socket) || {}; sockets.delete(socket);
-      if (attachment.authenticated) await apply(socket, { type:'left', role:attachment.role, participantId:attachment.participantId, actorId:attachment.participantId, at:now() });
+      const stillConnected = [...activeSockets()].some(candidate => candidate !== socket && getAttachment(candidate)?.authenticated && getAttachment(candidate)?.role === attachment.role && getAttachment(candidate)?.participantId === attachment.participantId);
+      if (attachment.authenticated && !stillConnected) await apply(socket, { type:'left', role:attachment.role, participantId:attachment.participantId, actorId:attachment.participantId, at:now() });
       await schedule();
     },
     async checkAuthenticationTimeout(socket) { if (!getAttachment(socket)?.authenticated && now() - (getAttachment(socket)?.connectedAt || 0) >= AUTH_TIMEOUT_MS) close(socket, 4001, 'authentication-timeout'); },
