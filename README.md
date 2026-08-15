@@ -10,7 +10,7 @@ Type a few keywords in any language — `Aloopuri Khavsa`, `monsoon in Mumbai`, 
 npm start
 ```
 
-Then open [http://127.0.0.1:4173](http://127.0.0.1:4173) and paste your MiniMax API key ([get one here](https://platform.minimax.io/)). No install step: the app has zero dependencies, standard-library Node only (≥18).
+Then open [http://127.0.0.1:4173](http://127.0.0.1:4173) and paste your MiniMax API key ([get one here](https://platform.minimax.io/)). No install step: the app has zero dependencies, standard-library Node only (≥24).
 
 ## Cost
 
