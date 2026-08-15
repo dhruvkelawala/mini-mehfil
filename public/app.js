@@ -45,6 +45,8 @@ const roomCode = document.querySelector('#room-code');
 const roomLink = document.querySelector('#room-link');
 const roomPresence = document.querySelector('#room-presence');
 const hostQueue = document.querySelector('#host-queue');
+const hostParticipants = document.querySelector('#host-participants');
+const hostSetlist = document.querySelector('#host-setlist');
 
 const writingLines = [
   'Listening to your idea…',
@@ -79,6 +81,8 @@ let roomSnapshot = null;
 let roomRetry = 0;
 let roomClosing = false;
 let roomTerminal = false;
+let roomAuthenticated = false;
+let activeRoomDetails = null;
 const ROOM_SESSION_KEY = 'mini-mehfil-host-room';
 
 function updateClock() {
@@ -807,7 +811,9 @@ shareButton.addEventListener('click', async () => {
 });
 
 function roomSend(message) {
-  if (roomSocket?.readyState === WebSocket.OPEN) roomSocket.send(JSON.stringify(message));
+  if (roomSocket?.readyState !== WebSocket.OPEN || !roomAuthenticated) return false;
+  roomSocket.send(JSON.stringify(message));
+  return true;
 }
 
 function roomSession() {
@@ -819,6 +825,7 @@ function clearRoomSession() {
   roomTerminal = true;
   sessionStorage.removeItem(ROOM_SESSION_KEY);
   roomSocket?.close(); roomSocket = null; roomSnapshot = null;
+  roomAuthenticated = false; activeRoomDetails = null;
   roomPanel.hidden = true; openRoomButton.hidden = false;
 }
 
@@ -837,14 +844,29 @@ function roomReorderTargets(queue, itemId) {
   };
 }
 
+function hostRoomView(state, joinUrl) {
+  const origin = new URL(joinUrl).origin;
+  const names = new Map(state.participants.map(participant => [participant.id, participant.name || 'Listener']));
+  return {
+    participants: state.participants.map(participant => ({ id:participant.id, name:participant.name || 'Listener' })),
+    queue: state.queue.map(item => ({ ...item, requesterName:names.get(item.participantId) || 'Listener' })),
+    setlist: state.setlist.map(item => ({ ...item, url:`${origin}/s/${item.shareId}` }))
+  };
+}
+
 function renderHostRoom(state) {
   roomSnapshot = state;
+  const view = hostRoomView(state, activeRoomDetails.joinUrl);
   roomStateLabel.textContent = state.expiredAt ? 'expired' : 'connected';
   roomPresence.textContent = `${state.listenerCount} listener${state.listenerCount === 1 ? '' : 's'}`;
-  const movableQueue = state.queue.filter(item => !['declined','ready'].includes(item.status));
+  hostParticipants.replaceChildren(...view.participants.map(participant => {
+    const row=document.createElement('li'); row.append(participant.name, roomButton('Kick', id => roomSend({type:'kicked',participantId:id}), participant.id)); return row;
+  }));
+  hostSetlist.replaceChildren(...view.setlist.map(song => { const row=document.createElement('li'),link=document.createElement('a');link.href=song.url;link.target='_blank';link.rel='noreferrer';link.textContent=song.title;row.append(link);return row; }));
+  const movableQueue = view.queue.filter(item => !['declined','ready'].includes(item.status));
   hostQueue.replaceChildren(...movableQueue.map((item, index) => {
     const targets = roomReorderTargets(state.queue, item.id);
-    const row = document.createElement('li'); row.append(`${item.idea} · ${item.status}`, document.createElement('br'));
+    const row = document.createElement('li'); row.append(`${item.requesterName}: ${item.idea} · ${item.status}`, document.createElement('br'));
     if (item.status === 'pending') row.append(roomButton('Accept', id => roomSend({ type:'request-accepted', requestId:id }), item.id));
     if (['pending','accepted'].includes(item.status)) {
       row.append(roomButton('↑', id => roomSend({ type:'request-reordered', requestId:id, toIndex:targets.up }), item.id));
@@ -852,8 +874,6 @@ function renderHostRoom(state) {
       row.append(roomButton('Decline', id => roomSend({ type:'request-declined', requestId:id }), item.id));
     }
     if (item.status === 'accepted') row.append(roomButton('Record', recordRoomRequest, item.id));
-    const participant = state.participants.find(value => value.id === item.participantId);
-    if (participant) row.append(roomButton('Kick', id => roomSend({ type:'kicked', participantId:id }), participant.id));
     return row;
   }));
   if (state.expiredAt) clearRoomSession();
@@ -861,16 +881,17 @@ function renderHostRoom(state) {
 
 function connectHostRoom(details) {
   roomTerminal = false;
+  roomAuthenticated = false; activeRoomDetails = details;
   roomPanel.hidden = false; openRoomButton.hidden = true; roomCode.textContent = details.roomId; roomLink.value = details.joinUrl;
   roomStateLabel.textContent = roomRetry ? 'reconnecting' : 'connecting';
   roomSocket = new WebSocket(details.socketUrl);
   roomSocket.addEventListener('open', () => { roomRetry = 0; roomSocket.send(JSON.stringify({ type:'auth-host', secret:details.hostSecret })); });
-  roomSocket.addEventListener('message', event => { let message; try { message=JSON.parse(event.data); } catch { return; } if (message.type === 'snapshot') renderHostRoom(message.state); if (message.type === 'error') { notice.textContent = message.code; if (message.code === 'auth-failed' || message.code === 'room-expired') clearRoomSession(); } });
-  roomSocket.addEventListener('close', event => { if (roomTerminal) return; if (event.code === 4001 || event.code === 4004 || Date.now() >= details.expiresAt) return clearRoomSession(); if (roomClosing) return; roomStateLabel.textContent='reconnecting'; const delay=Math.min(1000*2**roomRetry,30000); roomRetry=Math.min(roomRetry+1,6); setTimeout(()=>{if(!roomTerminal)connectHostRoom(details)},delay); });
+  roomSocket.addEventListener('message', event => { let message; try { message=JSON.parse(event.data); } catch { return; } if (message.type === 'snapshot') { roomAuthenticated=true; renderHostRoom(message.state); } if (message.type === 'error') { notice.textContent = message.code; if (message.code === 'auth-failed' || message.code === 'room-expired') clearRoomSession(); } });
+  roomSocket.addEventListener('close', event => { roomAuthenticated=false; if (roomTerminal) return; if (event.code === 4001 || event.code === 4004 || Date.now() >= details.expiresAt) return clearRoomSession(); if (roomClosing) return; roomStateLabel.textContent='reconnecting'; const delay=Math.min(1000*2**roomRetry,30000); roomRetry=Math.min(roomRetry+1,6); setTimeout(()=>{if(!roomTerminal)connectHostRoom(details)},delay); });
 }
 
 async function runRoomRecordingLifecycle({ requestId, run, isCurrent, generate, upload, send }) {
-  send({ type:'recording-started', requestId });
+  if (!send({ type:'recording-started', requestId })) return 'disconnected';
   try {
     await generate({ onLyrics: sheet => {
       if (!isCurrent(run)) return;
@@ -895,13 +916,16 @@ async function recordRoomRequest(requestId) {
   ideaInput.value = item.idea; vibeInput.value = item.vibe; languageSelect.value = [...languageSelect.options].some(option => option.value === item.language) ? item.language : 'auto';
   clearLoadedSong(); resetPeek();
   const run = generationRun;
-  await runRoomRecordingLifecycle({
+  const outcome = await runRoomRecordingLifecycle({
     requestId, run,
     isCurrent: value => value === generationRun,
     generate: hooks => generateSong({ idea:item.idea, vibe:item.vibe, language:item.language || 'auto' }, hooks),
     upload: () => uploadCurrentSong({ copy:false, requestRun:run, requestReference:shareReference }),
     send: roomSend
   });
+  if (outcome === 'disconnected') {
+    notice.className='notice'; notice.textContent='The room is reconnecting. Wait for it to reconnect, then press Record again.';
+  }
 }
 
 openRoomButton.addEventListener('click', async () => {
@@ -911,5 +935,5 @@ openRoomButton.addEventListener('click', async () => {
   finally { openRoomButton.disabled=false; }
 });
 document.querySelector('#copy-room').addEventListener('click',()=>copyShareLink(roomLink.value));
-document.querySelector('#close-room').addEventListener('click',()=>{if(roomClosing)return;roomClosing=true;roomStateLabel.textContent='closing';roomSend({type:'room-expired'});setTimeout(()=>{if(roomClosing)clearRoomSession()},1500)});
+document.querySelector('#close-room').addEventListener('click',()=>{if(roomClosing)return;if(!roomSend({type:'room-expired'})){notice.className='notice';notice.textContent='The room is reconnecting. Wait for it to reconnect, then close it again.';roomStateLabel.textContent='reconnecting';return}roomClosing=true;roomStateLabel.textContent='closing';setTimeout(()=>{if(roomClosing)clearRoomSession()},1500)});
 const savedRoom=roomSession();if(savedRoom&&savedRoom.expiresAt>Date.now())connectHostRoom(savedRoom);else if(savedRoom)clearRoomSession();

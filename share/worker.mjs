@@ -456,7 +456,7 @@ export function createWorkerHandler({ shareHandler, rooms, rateLimit = async () 
       const nonce = randomId(); const html = roomPageRenderer(join[1], nonce);
       return new Response(request.method === 'HEAD' ? null : html, { headers: {
         'content-type':'text/html; charset=utf-8','cache-control':'no-store',
-        'content-security-policy':`default-src 'none'; connect-src 'self'; media-src 'self'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+        'content-security-policy':`default-src 'none'; connect-src 'self'; media-src 'self' blob:; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
         'referrer-policy':'no-referrer','x-content-type-options':'nosniff'
       }});
     }
