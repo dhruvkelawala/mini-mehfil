@@ -202,6 +202,8 @@ test('rejects malicious or mismatched room URLs',async()=>{for(const patch of [{
 
 test('normalizes room Worker errors',async()=>{const mockFetch=async()=>new Response(JSON.stringify({error:'Rooms are resting.'}),{status:503});await withServer(mockFetch,async base=>{const response=await fetch(`${base}/api/rooms`,{method:'POST'});assert.equal(response.status,503);assert.equal((await response.json()).error,'Rooms are resting.')},{shareBaseUrl:'https://share.example',shareSecret:'worker-upload-secret'});});
 
+test('times out room creation without exposing credentials',async()=>{const mockFetch=async(_url,{signal})=>new Promise((resolve,reject)=>{signal.addEventListener('abort',()=>reject(Object.assign(new Error('aborted'),{name:'AbortError'})),{once:true})});await withServer(mockFetch,async base=>{const response=await fetch(`${base}/api/rooms`,{method:'POST'});assert.equal(response.status,504);assert.equal((await response.json()).error,'Opening the room took too long. Please retry.')},{shareBaseUrl:'https://share.example',shareSecret:'worker-upload-secret',roomTimeoutMs:5});});
+
 test('does not issue share references unless URL and secret are both configured', async () => {
   const mockFetch = async () => new Response(JSON.stringify({
     data: { audio: 'https://cdn.minimax.test/song.mp3', status: 2 },

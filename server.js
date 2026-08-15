@@ -217,6 +217,8 @@ function createServer(options = {}) {
     }
     return null;
   }
+  const roomTimeoutMs = options.roomTimeoutMs || 2 * 60 * 1000;
+  const generatedAudio = new Map();
 
   return http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/write-lyrics') {
@@ -437,7 +439,7 @@ function createServer(options = {}) {
       try {
         if (!sharingConfigured) return sendJson(res, 503, { error: 'Live rooms are not configured on this mehfil.' });
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 2 * 60 * 1000);
+        const timeout = setTimeout(() => controller.abort(), roomTimeoutMs);
         let response;
         try {
           response = await fetchImpl(`${shareBaseUrl}/rooms`, {
