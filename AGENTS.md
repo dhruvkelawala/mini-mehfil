@@ -6,9 +6,11 @@ and MiniMax Music 3 sings them.
 
 Run with `npm start` on Node 24 or newer and test with `npm test`. For browser
 coverage, run `npm install`, `npx playwright install chromium`, then
-`npm run test:browser`. There are **no runtime dependencies** — production is
-standard-library Node only, with no build step. Development-only dependencies
-are allowed when they provide an automated verification gate.
+`npm run test:browser`. Run `npm run typecheck` for strict, no-emit checking of
+the Node/API JavaScript; it is a verification gate, not a production build.
+There are **no runtime dependencies** — production is standard-library Node
+only, with no build step. Development-only dependencies are allowed when they
+provide an automated verification gate.
 
 ## Agent skills
 

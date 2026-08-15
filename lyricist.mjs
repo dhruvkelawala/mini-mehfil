@@ -60,16 +60,34 @@ Your job:
 Reply with ONLY a JSON object, no markdown fence and no commentary:
 {"title":"","language":"","languageCode":"","nativeScriptName":"","isLatinScript":false,"lyricsNative":"","lyricsRoman":"","prompt":""}`;
 
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isRecord(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** @param {unknown} value @param {string} key @returns {unknown} */
+function property(value, key) {
+  return isRecord(value) ? value[key] : undefined;
+}
+
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isTextBlock(value) {
+  return isRecord(value) && value.type === 'text';
+}
+
+/** @param {unknown} response @returns {string} */
 function extractText(response) {
-  if (typeof response?.content === 'string') return response.content;
-  if (!Array.isArray(response?.content)) return '';
-  return response.content
-    .filter(block => block?.type === 'text')
+  const content = property(response, 'content');
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter(isTextBlock)
     .map(block => block.text)
     .join('');
 }
 
 // Models like to wrap JSON in prose or a code fence no matter how firmly you ask.
+/** @param {unknown} text @returns {unknown | null} */
 function parseJsonLoosely(text) {
   const trimmed = String(text || '').trim();
   const withoutFence = trimmed
@@ -90,10 +108,15 @@ function parseJsonLoosely(text) {
   }
 }
 
+/** @param {unknown} value @returns {string} */
 function asString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+/**
+ * @param {import('./types/contracts.d.ts').LyricistOptions} [options]
+ * @returns {Promise<import('./types/contracts.d.ts').LyricSheet>}
+ */
 export async function writeLyrics({
   token,
   idea,
@@ -132,7 +155,9 @@ export async function writeLyrics({
   try { response = JSON.parse(raw); } catch { response = null; }
 
   if (!upstream.ok) {
-    const message = response?.error?.message || response?.base_resp?.status_msg || `The lyricist request failed (${upstream.status}).`;
+    const message = property(property(response, 'error'), 'message')
+      || property(property(response, 'base_resp'), 'status_msg')
+      || `The lyricist request failed (${upstream.status}).`;
     throw Object.assign(new Error(String(message)), { status: upstream.status === 401 ? 401 : 502 });
   }
 
@@ -141,23 +166,23 @@ export async function writeLyrics({
     throw Object.assign(new Error('The lyricist replied in a format I could not read. Try again.'), { status: 502 });
   }
 
-  const lyricsNative = asString(parsed.lyricsNative);
-  const lyricsRoman = asString(parsed.lyricsRoman) || lyricsNative;
+  const lyricsNative = asString(property(parsed, 'lyricsNative'));
+  const lyricsRoman = asString(property(parsed, 'lyricsRoman')) || lyricsNative;
   if (!lyricsNative) {
     throw Object.assign(new Error('The lyricist came back empty-handed. Try different keywords.'), { status: 502 });
   }
 
-  const isLatinScript = parsed.isLatinScript === true || lyricsNative === lyricsRoman;
+  const isLatinScript = property(parsed, 'isLatinScript') === true || lyricsNative === lyricsRoman;
 
   return {
-    title: asString(parsed.title) || idea,
-    language: asString(parsed.language) || 'Unknown',
-    languageCode: asString(parsed.languageCode),
-    nativeScriptName: asString(parsed.nativeScriptName) || 'Latin',
+    title: asString(property(parsed, 'title')) || idea,
+    language: asString(property(parsed, 'language')) || 'Unknown',
+    languageCode: asString(property(parsed, 'languageCode')),
+    nativeScriptName: asString(property(parsed, 'nativeScriptName')) || 'Latin',
     isLatinScript,
     lyricsNative,
     lyricsRoman,
-    prompt: asString(parsed.prompt),
-    usage: response?.usage ?? null
+    prompt: asString(property(parsed, 'prompt')),
+    usage: property(response, 'usage') ?? null
   };
 }
