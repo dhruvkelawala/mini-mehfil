@@ -13,7 +13,7 @@ const playbackPage = fs.readFileSync(path.join(__dirname, '..', 'share', 'playba
 function functionBody(name) {
   const start = app.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `${name} should exist`);
-  const open = app.indexOf('{', start);
+  const open = app.indexOf('{', app.indexOf(')', start));
   let depth = 0;
   for (let index = open; index < app.length; index += 1) {
     if (app[index] === '{') depth += 1;
@@ -152,6 +152,21 @@ function browserHarness({ deferFirstLyrics = false } = {}) {
     pageshow() { windowListeners.get('pageshow')(); },
     submit() { return element('#song-form').listeners.get('submit')({ preventDefault() {} }); }
   };
+}
+
+function functionSource(name) {
+  const plain = app.indexOf(`function ${name}(`);
+  const asyncStart = app.indexOf(`async function ${name}(`);
+  const start = asyncStart >= 0 && (plain < 0 || asyncStart < plain) ? asyncStart : plain;
+  assert.notEqual(start, -1, `${name} should exist`);
+  const open = app.indexOf('{', app.indexOf(')', start));
+  let depth = 0;
+  for (let index = open; index < app.length; index += 1) {
+    if (app[index] === '{') depth += 1;
+    if (app[index] === '}') depth -= 1;
+    if (depth === 0) return app.slice(start, index + 1);
+  }
+  assert.fail(`${name} should have a complete source`);
 }
 
 test('player controls use SVG icons instead of platform-dependent glyphs', () => {
@@ -335,5 +350,7 @@ test('only a genuine status outage reveals a neutral Check generation action', (
 });
 test('standalone generation is extracted behind a thin form caller',()=>{assert.match(app,/async function generateSong\(\{ idea, vibe, language \}, hooks = \{\}\)/);const handler=app.slice(app.indexOf("form.addEventListener('submit'"),app.indexOf("performanceClose.addEventListener"));assert.match(handler,/clearLoadedSong\(\)[\s\S]*resetPeek\(\)[\s\S]*await generateSong/);});
 test('host room credentials remain session-only and authenticate first',()=>{assert.match(app,/sessionStorage\.setItem\(ROOM_SESSION_KEY/);assert.doesNotMatch(app,/localStorage/);assert.match(app,/new WebSocket\(details\.socketUrl\)/);assert.match(app,/roomSocket\.send\(JSON\.stringify\(\{ type:'auth-host', secret:details\.hostSecret \}\)\)/);assert.doesNotMatch(app,/details\.socketUrl\s*\+.*hostSecret|URLSearchParams.*hostSecret/);});
-test('room recording is explicit and preserves lifecycle order',()=>{const body=functionBody('recordRoomRequest');const started=body.indexOf("type:'recording-started'");const generated=body.indexOf('await generateSong');const lyrics=body.indexOf("type:'lyrics-ready'");const upload=body.indexOf('await uploadCurrentSong');const ready=body.indexOf("type:'song-ready'");assert.ok(started<generated&&generated<lyrics&&lyrics<upload&&upload<ready);assert.match(body,/item\.status !== 'accepted'/);assert.match(body,/run !== generationRun/);assert.match(body,/type:'recording-failed'/);});
+test('room recording lifecycle executes paid work and events in runtime order',async()=>{const lifecycle=Function(`return (${functionSource('runRoomRecordingLifecycle')})`)();const sequence=[];const sheet={title:'Rain',language:'Hindi',nativeScriptName:'Devanagari',isLatinScript:false,lyricsNative:'बारिश',lyricsRoman:'baarish'};const result=await lifecycle({requestId:'q1',run:1,isCurrent:()=>true,send:event=>sequence.push(event.type),generate:async hooks=>{sequence.push('generate');hooks.onLyrics(sheet);sequence.push('generated')},upload:async()=>{sequence.push('upload');return'https://share.example/s/AbCdEfGhIjKlMnOp'}});assert.equal(result,'ready');assert.deepEqual(sequence,['recording-started','generate','lyrics-ready','generated','upload','song-ready']);const failed=[];await lifecycle({requestId:'q2',run:1,isCurrent:()=>true,send:event=>failed.push(event.type),generate:async hooks=>hooks.onLyrics(sheet),upload:async()=>{throw new Error('bucket')}});assert.deepEqual(failed,['recording-started','lyrics-ready','recording-failed']);const body=functionBody('recordRoomRequest');assert.match(body,/item\.status !== 'accepted'/);assert.match(body,/runRoomRecordingLifecycle/);});
+test('host room treats auth close as terminal and waits for expiry acknowledgement',()=>{const connect=functionBody('connectHostRoom');assert.match(connect,/event\.code === 4001[\s\S]*clearRoomSession/);assert.match(connect,/if \(roomTerminal\) return/);const clear=functionBody('clearRoomSession');assert.match(clear,/roomTerminal = true/);const closeHandler=app.slice(app.indexOf("document.querySelector('#close-room')"));assert.match(closeHandler,/roomSend\(\{type:'room-expired'\}\)[\s\S]*setTimeout/);assert.doesNotMatch(closeHandler,/roomSend\(\{type:'room-expired'\}\);clearRoomSession/);});
+test('host reorder targets use full queue indices when terminal rows are hidden',()=>{const targets=Function(`return (${functionSource('roomReorderTargets')})`)();const queue=[{id:'done',status:'ready'},{id:'a',status:'pending'},{id:'declined',status:'declined'},{id:'b',status:'accepted'}];assert.deepEqual(targets(queue,'a'),{up:1,down:3});assert.deepEqual(targets(queue,'b'),{up:1,down:3});});
 test('host panel exposes queue management controls',()=>{for(const id of ['open-room','room-panel','room-link','host-queue','close-room'])assert.match(html,new RegExp(`id="${id}"`));for(const label of ['Accept','Decline','Record','Kick'])assert.ok(app.includes(`'${label}'`));});

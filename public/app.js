@@ -77,6 +77,8 @@ const foregroundWaiters = [];
 let roomSocket = null;
 let roomSnapshot = null;
 let roomRetry = 0;
+let roomClosing = false;
+let roomTerminal = false;
 const ROOM_SESSION_KEY = 'mini-mehfil-host-room';
 
 function updateClock() {
@@ -813,6 +815,8 @@ function roomSession() {
 }
 
 function clearRoomSession() {
+  roomClosing = false;
+  roomTerminal = true;
   sessionStorage.removeItem(ROOM_SESSION_KEY);
   roomSocket?.close(); roomSocket = null; roomSnapshot = null;
   roomPanel.hidden = true; openRoomButton.hidden = false;
@@ -823,16 +827,28 @@ function roomButton(label, action, value) {
   button.addEventListener('click', () => action(value)); return button;
 }
 
+function roomReorderTargets(queue, itemId) {
+  const movable = queue.filter(item => !['declined','ready'].includes(item.status));
+  const position = movable.findIndex(item => item.id === itemId);
+  const fullIndex = queue.findIndex(item => item.id === itemId);
+  return {
+    up: position > 0 ? queue.findIndex(item => item.id === movable[position - 1].id) : fullIndex,
+    down: position >= 0 && position < movable.length - 1 ? queue.findIndex(item => item.id === movable[position + 1].id) : fullIndex
+  };
+}
+
 function renderHostRoom(state) {
   roomSnapshot = state;
   roomStateLabel.textContent = state.expiredAt ? 'expired' : 'connected';
   roomPresence.textContent = `${state.listenerCount} listener${state.listenerCount === 1 ? '' : 's'}`;
-  hostQueue.replaceChildren(...state.queue.filter(item => !['declined','ready'].includes(item.status)).map((item, index) => {
+  const movableQueue = state.queue.filter(item => !['declined','ready'].includes(item.status));
+  hostQueue.replaceChildren(...movableQueue.map((item, index) => {
+    const targets = roomReorderTargets(state.queue, item.id);
     const row = document.createElement('li'); row.append(`${item.idea} · ${item.status}`, document.createElement('br'));
     if (item.status === 'pending') row.append(roomButton('Accept', id => roomSend({ type:'request-accepted', requestId:id }), item.id));
     if (['pending','accepted'].includes(item.status)) {
-      row.append(roomButton('↑', id => roomSend({ type:'request-reordered', requestId:id, toIndex:Math.max(0,index-1) }), item.id));
-      row.append(roomButton('↓', id => roomSend({ type:'request-reordered', requestId:id, toIndex:Math.min(state.queue.length-1,index+1) }), item.id));
+      row.append(roomButton('↑', id => roomSend({ type:'request-reordered', requestId:id, toIndex:targets.up }), item.id));
+      row.append(roomButton('↓', id => roomSend({ type:'request-reordered', requestId:id, toIndex:targets.down }), item.id));
       row.append(roomButton('Decline', id => roomSend({ type:'request-declined', requestId:id }), item.id));
     }
     if (item.status === 'accepted') row.append(roomButton('Record', recordRoomRequest, item.id));
@@ -844,30 +860,48 @@ function renderHostRoom(state) {
 }
 
 function connectHostRoom(details) {
+  roomTerminal = false;
   roomPanel.hidden = false; openRoomButton.hidden = true; roomCode.textContent = details.roomId; roomLink.value = details.joinUrl;
   roomStateLabel.textContent = roomRetry ? 'reconnecting' : 'connecting';
   roomSocket = new WebSocket(details.socketUrl);
   roomSocket.addEventListener('open', () => { roomRetry = 0; roomSocket.send(JSON.stringify({ type:'auth-host', secret:details.hostSecret })); });
-  roomSocket.addEventListener('message', event => { let message; try { message=JSON.parse(event.data); } catch { return; } if (message.type === 'snapshot') renderHostRoom(message.state); if (message.type === 'error') notice.textContent = message.code; });
-  roomSocket.addEventListener('close', event => { if (event.code === 4004 || Date.now() >= details.expiresAt) return clearRoomSession(); roomStateLabel.textContent='reconnecting'; const delay=Math.min(1000*2**roomRetry,30000); roomRetry=Math.min(roomRetry+1,6); setTimeout(()=>connectHostRoom(details),delay); });
+  roomSocket.addEventListener('message', event => { let message; try { message=JSON.parse(event.data); } catch { return; } if (message.type === 'snapshot') renderHostRoom(message.state); if (message.type === 'error') { notice.textContent = message.code; if (message.code === 'auth-failed' || message.code === 'room-expired') clearRoomSession(); } });
+  roomSocket.addEventListener('close', event => { if (roomTerminal) return; if (event.code === 4001 || event.code === 4004 || Date.now() >= details.expiresAt) return clearRoomSession(); if (roomClosing) return; roomStateLabel.textContent='reconnecting'; const delay=Math.min(1000*2**roomRetry,30000); roomRetry=Math.min(roomRetry+1,6); setTimeout(()=>{if(!roomTerminal)connectHostRoom(details)},delay); });
+}
+
+async function runRoomRecordingLifecycle({ requestId, run, isCurrent, generate, upload, send }) {
+  send({ type:'recording-started', requestId });
+  try {
+    await generate({ onLyrics: sheet => {
+      if (!isCurrent(run)) return;
+      send({ type:'lyrics-ready', requestId, lyrics:{ title:sheet.title, language:sheet.language, nativeScriptName:sheet.nativeScriptName, isLatinScript:sheet.isLatinScript, lyricsNative:sheet.lyricsNative, lyricsRoman:sheet.lyricsRoman } });
+    } });
+    if (!isCurrent(run)) return 'stale';
+    const url = await upload();
+    if (!isCurrent(run)) return 'stale';
+    const match = /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(url).pathname);
+    if (!match) throw new Error('The share service returned an invalid link.');
+    send({ type:'song-ready', requestId, shareId:match[1] });
+    return 'ready';
+  } catch {
+    if (isCurrent(run)) send({ type:'recording-failed', requestId });
+    return 'failed';
+  }
 }
 
 async function recordRoomRequest(requestId) {
   const item = roomSnapshot?.queue.find(value => value.id === requestId);
   if (!item || item.status !== 'accepted' || generating) return;
   ideaInput.value = item.idea; vibeInput.value = item.vibe; languageSelect.value = [...languageSelect.options].some(option => option.value === item.language) ? item.language : 'auto';
-  clearLoadedSong(); resetPeek(); roomSend({ type:'recording-started', requestId });
+  clearLoadedSong(); resetPeek();
   const run = generationRun;
-  try {
-    await generateSong({ idea:item.idea, vibe:item.vibe, language:item.language || 'auto' }, {
-      onLyrics: sheet => { if (run === generationRun) roomSend({ type:'lyrics-ready', requestId, lyrics:{ title:sheet.title, language:sheet.language, nativeScriptName:sheet.nativeScriptName, isLatinScript:sheet.isLatinScript, lyricsNative:sheet.lyricsNative, lyricsRoman:sheet.lyricsRoman } }); },
-      onReady: async () => {
-        if (run !== generationRun) return;
-        try { const url = await uploadCurrentSong({ copy:false, requestRun:run, requestReference:shareReference }); if (run !== generationRun) return; const match=/\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(url).pathname); if (!match) throw new Error('The share service returned an invalid link.'); roomSend({ type:'song-ready', requestId, shareId:match[1] }); }
-        catch { if (run === generationRun) roomSend({ type:'recording-failed', requestId }); }
-      }
-    });
-  } catch { if (run === generationRun) roomSend({ type:'recording-failed', requestId }); }
+  await runRoomRecordingLifecycle({
+    requestId, run,
+    isCurrent: value => value === generationRun,
+    generate: hooks => generateSong({ idea:item.idea, vibe:item.vibe, language:item.language || 'auto' }, hooks),
+    upload: () => uploadCurrentSong({ copy:false, requestRun:run, requestReference:shareReference }),
+    send: roomSend
+  });
 }
 
 openRoomButton.addEventListener('click', async () => {
@@ -877,5 +911,5 @@ openRoomButton.addEventListener('click', async () => {
   finally { openRoomButton.disabled=false; }
 });
 document.querySelector('#copy-room').addEventListener('click',()=>copyShareLink(roomLink.value));
-document.querySelector('#close-room').addEventListener('click',()=>{roomSend({type:'room-expired'});clearRoomSession()});
+document.querySelector('#close-room').addEventListener('click',()=>{if(roomClosing)return;roomClosing=true;roomStateLabel.textContent='closing';roomSend({type:'room-expired'});setTimeout(()=>{if(roomClosing)clearRoomSession()},1500)});
 const savedRoom=roomSession();if(savedRoom&&savedRoom.expiresAt>Date.now())connectHostRoom(savedRoom);else if(savedRoom)clearRoomSession();

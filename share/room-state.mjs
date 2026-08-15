@@ -114,8 +114,13 @@ export function transitionRoom(state, event) {
     case 'lyrics-ready': {
       if (!next.currentRecording || next.currentRecording.requestId !== event.requestId) return fail(state, 'invalid-transition');
       const sheet = event.lyrics || {};
-      const allowed = ['title', 'language', 'nativeScriptName', 'isLatinScript', 'lyricsNative', 'lyricsRoman'];
-      next.currentRecording.lyrics = Object.fromEntries(allowed.map(key => [key, key === 'isLatinScript' ? Boolean(sheet[key]) : String(sheet[key] || '')]));
+      const title = clean(sheet.title, 120, true);
+      const language = clean(sheet.language, 80, true);
+      const nativeScriptName = clean(sheet.nativeScriptName, 80);
+      const lyricsNative = typeof sheet.lyricsNative === 'string' && sheet.lyricsNative.trim() && sheet.lyricsNative.length <= 5000 ? sheet.lyricsNative : null;
+      const lyricsRoman = typeof sheet.lyricsRoman === 'string' && sheet.lyricsRoman.trim() && sheet.lyricsRoman.length <= 5000 ? sheet.lyricsRoman : null;
+      if (title === null || language === null || nativeScriptName === null || lyricsNative === null || lyricsRoman === null) return fail(state, 'invalid-lyrics');
+      next.currentRecording.lyrics = { title, language, nativeScriptName, isLatinScript: Boolean(sheet.isLatinScript), lyricsNative, lyricsRoman };
       return ok(next);
     }
     case 'recording-failed': {
