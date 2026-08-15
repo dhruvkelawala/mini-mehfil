@@ -33,9 +33,10 @@ const performanceButton = document.querySelector('#view-performance');
 const playerHome = document.querySelector('#player-home');
 const diagnostics = window.MehfilMediaDiagnostics || {
   enabled: false,
-  record() {}, fatal() {}, attachMedia() {}, setRetryHandler() {},
+  record() {}, fatal() {}, attachMedia() {}, setRetryHandler() {}, setRetryAction() {},
   snapshot() { return null; }, redactUrl() { return '[diagnostics unavailable]'; }
 };
+const recoveryApi = window.MehfilGenerationRecovery;
 
 const writingLines = [
   'Listening to your idea…',
@@ -395,10 +396,106 @@ function loadSong(source, title, reference) {
   void attemptPlayback('generation-complete');
 }
 
+function generationError(message, { clear = true } = {}) {
+  if (clear) recovery.clear();
+  generating = false;
+  updateScenePerformance();
+  setBusy(false, []);
+  notice.className = 'notice';
+  notice.textContent = message;
+  trackTitle.textContent = 'No recording was made';
+  trackSubtitle.textContent = 'Try the mehfil again';
+  performanceAvailable = false;
+  closePerformance('generation-failed');
+}
+
+function finalizeGeneration(result, pending) {
+  if (!pending || pending.run !== generationRun || pending.jobId !== result?.jobId) return false;
+  const source = result?.data?.audio || result?.audio?.url || result?.audio;
+  if (!source || typeof source !== 'string') {
+    generationError('MiniMax succeeded but did not return an audio file.');
+    return false;
+  }
+  lyricSheet = pending.lyricSheet;
+  peek.hidden = false;
+  diagnostics.record('generation-recovery-complete', { jobIdPrefix: pending.jobId.slice(0, 6) });
+  loadSong(source, lyricSheet.title, result.share_ref || null);
+  recovery.clear();
+  generating = false;
+  updateScenePerformance();
+  setBusy(false, []);
+  notice.className = 'notice working';
+  notice.textContent = 'Your recording is ready.';
+  diagnostics.setRetryAction?.('Retry playback', () => { void attemptPlayback('diagnostic-retry'); });
+  return true;
+}
+
+const recovery = recoveryApi.create({
+  storage: sessionStorage,
+  onRequest(pending) {
+    diagnostics.record('generation-status-request', { jobIdPrefix: pending.jobId.slice(0, 6) });
+  },
+  onResponse(response, pending) {
+    diagnostics.record('generation-status-response', { jobIdPrefix: pending.jobId.slice(0, 6), status: response.status, jobStatus: response.value?.status });
+  },
+  onPending() {
+    notice.className = 'notice working';
+    notice.textContent = 'Checking whether your recording finished…';
+    showPerformanceStatus(notice.textContent);
+  },
+  onComplete(result, pending) { finalizeGeneration(result, pending); },
+  onFailed(result, pending) {
+    if (pending.run !== generationRun) return;
+    diagnostics.record('generation-recovery-failed', { jobIdPrefix: pending.jobId.slice(0, 6), status: 'failed' });
+    generationError(result.error || 'Generation failed.');
+  },
+  onExpired(result, pending) {
+    if (pending.run !== generationRun) return;
+    diagnostics.record('generation-recovery-failed', { jobIdPrefix: pending.jobId.slice(0, 6), status: 404 });
+    generationError(result?.error || 'That recording can no longer be recovered.');
+  },
+  onRetryable(error, pending) {
+    if (pending.run !== generationRun) return;
+    diagnostics.record('generation-recovery-failed', { jobIdPrefix: pending.jobId.slice(0, 6), status: error.status });
+    notice.className = 'notice';
+    notice.textContent = `${error.message} Your recording checkpoint is safe.`;
+    showPerformanceStatus('The recording may still be finishing.');
+    diagnostics.setRetryAction?.('Check generation', () => recovery.resume());
+  }
+});
+
+function resumePendingGeneration(reason, pendingRecord = recovery.read()) {
+  if (!pendingRecord) return false;
+  const current = recovery.current();
+  if (current?.jobId === pendingRecord.jobId) {
+    recovery.resume();
+    return true;
+  }
+  generationRun += 1;
+  const pending = { ...pendingRecord, run: generationRun };
+  lyricSheet = pending.lyricSheet;
+  performanceAvailable = true;
+  generating = true;
+  peek.hidden = false;
+  openPerformance(generateButton);
+  updateScenePerformance();
+  setBusy(true, ['Checking whether your recording finished…']);
+  trackTitle.textContent = 'Your mehfil is recording';
+  trackSubtitle.textContent = 'Returning to the same recording';
+  diagnostics.record('generation-recovery-started', { reason, jobIdPrefix: pending.jobId.slice(0, 6) });
+  diagnostics.setRetryAction?.('Check generation', () => recovery.resume());
+  recovery.start(pending, pending.run);
+  return true;
+}
+
 form.addEventListener('submit', async event => {
   event.preventDefault();
   notice.textContent = '';
   if (!form.reportValidity()) return;
+  const previousPending = recovery.read();
+  if (previousPending && !window.confirm('A recording is still being followed in this tab. Start a new song and stop checking it?')) return;
+  recovery.cancel();
+  recovery.clear();
   clearLoadedSong();
   resetPeek();
   performanceAvailable = true;
@@ -407,7 +504,9 @@ form.addEventListener('submit', async event => {
   generating = true;
   updateScenePerformance();
   let generationFailed = false;
+  let awaitingRecovery = false;
   let generationStage = 'write-lyrics';
+  let pending;
   trackTitle.textContent = 'Your mehfil is recording';
   trackSubtitle.textContent = 'View the performance while you wait';
 
@@ -425,8 +524,13 @@ form.addEventListener('submit', async event => {
     setBusy(true, recordingLines);
     generationStage = 'generate-music';
 
+    const jobId = recovery.createJobId();
+    pending = { ...recovery.save({ jobId, lyricSheet }), run: generationRun };
+    diagnostics.record('generation-job-created', { jobIdPrefix: jobId.slice(0, 6) });
+
     // The native script is what gets sung: the music model pronounces it best.
     const result = await post('/api/generate', {
+      jobId,
       token: tokenInput.value,
       prompt: lyricSheet.prompt || vibeInput.value,
       lyrics: lyricSheet.lyricsNative || lyricSheet.lyricsRoman
@@ -437,14 +541,23 @@ form.addEventListener('submit', async event => {
       hasAudioUrl: typeof result?.audio?.url === 'string',
       audioValueType: typeof result?.audio
     });
-    const source = result?.data?.audio || result?.audio?.url || result?.audio;
-    if (!source || typeof source !== 'string') throw new Error('MiniMax succeeded but did not return an audio file.');
-
-    generationStage = 'load-song';
-    loadSong(source, lyricSheet.title, result.share_ref);
-    notice.className = 'notice working';
-    notice.textContent = 'Your recording is ready.';
+    if (result.status === 'pending') {
+      awaitingRecovery = true;
+      resumePendingGeneration('pending-response', pending);
+    } else {
+      generationStage = 'load-song';
+      finalizeGeneration({ ...result, jobId: result.jobId || jobId }, pending);
+    }
   } catch (error) {
+    if (generationStage === 'generate-music' && pending) {
+      awaitingRecovery = true;
+      notice.className = 'notice working';
+      notice.textContent = 'Checking whether your recording finished…';
+      diagnostics.record('generation-recovery-started', { reason: 'generate-request-rejected', jobIdPrefix: pending.jobId.slice(0, 6) });
+      diagnostics.setRetryAction?.('Check generation', () => recovery.resume());
+      recovery.start(pending, pending.run);
+      return;
+    }
     diagnostics.fatal('Generation flow failed before playback', error, audio, { generationStage });
     notice.className = 'notice';
     notice.textContent = error.message;
@@ -453,12 +566,19 @@ form.addEventListener('submit', async event => {
     performanceAvailable = false;
     generationFailed = true;
   } finally {
+    if (awaitingRecovery) return;
     generating = false;
     updateScenePerformance();
     setBusy(false, []);
     if (generationFailed) closePerformance('generation-failed');
   }
 });
+
+window.addEventListener('pageshow', () => { resumePendingGeneration('pageshow'); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') resumePendingGeneration('visibilitychange');
+});
+resumePendingGeneration('page-load');
 
 performanceClose.addEventListener('click', () => closePerformance('user-close-button'));
 performanceButton.addEventListener('click', () => openPerformance(performanceButton));

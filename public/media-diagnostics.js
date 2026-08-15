@@ -252,7 +252,15 @@
     }
 
     function setRetryHandler(handler) {
+      setRetryAction('Retry playback', handler);
+    }
+
+    function setRetryAction(label, handler) {
       retryHandler = typeof handler === 'function' ? handler : null;
+      if (enabled) {
+        const button = root.document.querySelector('#media-diagnostics-retry');
+        if (button) button.textContent = label || 'Retry';
+      }
     }
 
     if (!enabled) {
@@ -263,6 +271,7 @@
         open() {},
         attachMedia() {},
         setRetryHandler() {},
+        setRetryAction() {},
         snapshot: media => mediaSnapshot(media, baseUrl),
         redactUrl: value => redactUrl(value, baseUrl)
       };
@@ -298,6 +307,7 @@
       open,
       attachMedia,
       setRetryHandler,
+      setRetryAction,
       report,
       snapshot: media => mediaSnapshot(media, baseUrl),
       redactUrl: value => redactUrl(value, baseUrl),

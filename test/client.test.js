@@ -5,6 +5,7 @@ const path = require('node:path');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+const recovery = fs.readFileSync(path.join(__dirname, '..', 'public', 'generation-recovery.js'), 'utf8');
 
 function functionBody(name) {
   const start = app.indexOf(`function ${name}(`);
@@ -66,4 +67,16 @@ test('the opt-in diagnostic panel loads before the application', () => {
   assert.match(html, /id="media-diagnostics-copy"/);
   assert.match(html, /id="media-diagnostics-download"/);
   assert.ok(html.indexOf('/media-diagnostics.js') < html.indexOf('/app.js'));
+  assert.ok(html.indexOf('/generation-recovery.js') < html.indexOf('/app.js'));
+});
+
+test('generation recovery is wired without retrying the paid request', () => {
+  assert.match(app, /sessionStorage/);
+  assert.match(app, /jobId/);
+  assert.match(app, /finalizeGeneration/);
+  assert.match(recovery, /\/api\/generation-status/);
+  assert.match(app, /pageshow/);
+  assert.match(app, /visibilitychange/);
+  const recoverySection = functionBody('resumePendingGeneration');
+  assert.doesNotMatch(recoverySection, /post\(['"]\/api\/generate/);
 });
