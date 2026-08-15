@@ -5,6 +5,10 @@ const MAX_REQUEST_BYTES = MAX_AUDIO_BYTES + 128 * 1024;
 const ALLOWED_AUDIO_TYPES = new Set(['audio/mpeg', 'audio/mp3']);
 const ID_PATTERN = /^[A-Za-z0-9_-]{16}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{24}$/;
+const JOB_ID_PATTERN = /^[A-Za-z0-9_-]{24}$/;
+const JOB_VERSION = 1;
+const MAX_JOB_JSON_BYTES = 64 * 1024;
+const JOB_TTL_MS = 24 * 60 * 60 * 1000;
 const REPOSITORY_URL = 'https://github.com/dhruvkelawala/mini-mehfil';
 
 function json(value, status = 200, headers = {}) {
@@ -107,6 +111,82 @@ function validateMetadata(raw) {
   return metadata;
 }
 
+function pendingJob(jobId, now) {
+  const createdAt = new Date(now).toISOString();
+  return {
+    version: JOB_VERSION,
+    jobId,
+    status: 'pending',
+    createdAt,
+    updatedAt: createdAt,
+    expiresAt: new Date(now + JOB_TTL_MS).toISOString()
+  };
+}
+
+function validStoredJob(value, jobId) {
+  if (!value || value.version !== JOB_VERSION || value.jobId !== jobId || !['pending', 'complete', 'failed'].includes(value.status)) return null;
+  if (![value.createdAt, value.updatedAt, value.expiresAt].every(entry => typeof entry === 'string' && Number.isFinite(Date.parse(entry)))) return null;
+  const record = {
+    version: JOB_VERSION,
+    jobId,
+    status: value.status,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    expiresAt: value.expiresAt
+  };
+  if (value.status === 'complete') {
+    if (typeof value.source !== 'string' || !value.source || value.source.length > 32 * 1024) return null;
+    record.source = value.source;
+    if (typeof value.traceId === 'string' && value.traceId.length <= 200) record.traceId = value.traceId;
+  }
+  if (value.status === 'failed') {
+    if (!value.error || typeof value.error.code !== 'string' || typeof value.error.message !== 'string') return null;
+    if (!value.error.code || value.error.code.length > 80 || !value.error.message || value.error.message.length > 500) return null;
+    record.error = { code: value.error.code, message: value.error.message };
+  }
+  return record;
+}
+
+function terminalJob(current, input, now) {
+  const base = {
+    version: JOB_VERSION,
+    jobId: current.jobId,
+    status: input?.status,
+    createdAt: current.createdAt,
+    updatedAt: new Date(now).toISOString(),
+    expiresAt: current.expiresAt
+  };
+  if (input?.status === 'complete') {
+    if (typeof input.source !== 'string' || !input.source || input.source.length > 32 * 1024) throw Object.assign(new Error('A valid audio source is required.'), { status: 400 });
+    base.source = input.source;
+    if (typeof input.traceId === 'string') {
+      const traceId = input.traceId.trim();
+      if (/^[A-Za-z0-9._:-]{1,200}$/.test(traceId)) base.traceId = traceId;
+    }
+    return base;
+  }
+  if (input?.status === 'failed') {
+    const code = typeof input.error?.code === 'string' ? input.error.code.trim().slice(0, 80) : '';
+    const message = typeof input.error?.message === 'string' ? input.error.message.trim().slice(0, 500) : '';
+    if (!code || !message) throw Object.assign(new Error('A stable public error is required.'), { status: 400 });
+    base.error = { code, message };
+    return base;
+  }
+  throw Object.assign(new Error('Only complete or failed transitions are allowed.'), { status: 400 });
+}
+
+function sameTerminal(left, right) {
+  return left.status === right.status && left.source === right.source && left.traceId === right.traceId &&
+    left.error?.code === right.error?.code && left.error?.message === right.error?.message;
+}
+
+async function readJobJson(request) {
+  const declared = Number(request.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_JOB_JSON_BYTES) throw Object.assign(new Error('Job update is too large.'), { status: 413 });
+  const bytes = await readBody(request, MAX_JOB_JSON_BYTES);
+  try { return JSON.parse(new TextDecoder().decode(bytes)); } catch { throw Object.assign(new Error('Invalid JSON.'), { status: 400 }); }
+}
+
 function parseByteRange(header, size) {
   const match = /^bytes=(\d*)-(\d*)$/.exec(header || '');
   if (!match || (!match[1] && !match[2])) return null;
@@ -154,15 +234,72 @@ export function createR2Storage(bucket) {
       const parsedRange = parseByteRange(range, object.size);
       if (!parsedRange) return { unsatisfiable: true, size: object.size };
       return bucket.get(key, { range: parsedRange });
+    },
+    async claimJob(id, record) {
+      const object = await bucket.put(`jobs/${id}.json`, JSON.stringify(record), {
+        onlyIf: { etagDoesNotMatch: '*' },
+        httpMetadata: { contentType: 'application/json; charset=utf-8', cacheControl: 'no-store' }
+      });
+      if (!object) return { created: false };
+      return { created: true, record, etag: object.httpEtag || object.etag };
+    },
+    async getJob(id) {
+      const object = await bucket.get(`jobs/${id}.json`);
+      if (!object) return null;
+      try {
+        return { record: JSON.parse(await object.text()), etag: object.httpEtag || object.etag };
+      } catch { return null; }
+    },
+    async transitionJob(id, record, etag) {
+      const object = await bucket.put(`jobs/${id}.json`, JSON.stringify(record), {
+        onlyIf: { etagMatches: etag },
+        httpMetadata: { contentType: 'application/json; charset=utf-8', cacheControl: 'no-store' }
+      });
+      if (!object) return { conflict: true };
+      return { conflict: false, record, etag: object.httpEtag || object.etag };
     }
   };
 }
 
-export function createShareHandler({ storage, rateLimit = async () => true, idGenerator = deriveShareId, uploadSecret = '', previewImageUrl = '' } = {}) {
+export function createShareHandler({ storage, rateLimit = async () => true, idGenerator = deriveShareId, uploadSecret = '', previewImageUrl = '', now = Date.now } = {}) {
   if (!storage) throw new Error('Share storage is required.');
 
   return async function handle(request) {
     const url = new URL(request.url);
+    const claimMatch = url.pathname.match(/^\/generation-jobs\/([^/]+)\/claim$/);
+    const jobMatch = url.pathname.match(/^\/generation-jobs\/([^/]+)$/);
+    if ((claimMatch && request.method === 'POST') || (jobMatch && ['GET', 'PUT'].includes(request.method))) {
+      if (!uploadSecret) return json({ error: 'Generation recovery is not configured.' }, 503);
+      if (!await validBearer(request, uploadSecret)) return json({ error: 'Job credentials are missing or invalid.' }, 401, { 'www-authenticate': 'Bearer' });
+      const jobId = (claimMatch || jobMatch)[1];
+      if (!JOB_ID_PATTERN.test(jobId)) return json({ error: 'A valid generation job ID is required.' }, 400);
+
+      try {
+        if (claimMatch) {
+          const record = pendingJob(jobId, now());
+          let result = await storage.claimJob(jobId, record);
+          if (!result.created && !result.record) result = { ...result, ...await storage.getJob(jobId) };
+          const stored = validStoredJob(result.record, jobId);
+          if (!stored || Date.parse(stored.expiresAt) <= now()) return json({ error: 'Generation job is unavailable.' }, 404);
+          return json(stored, result.created ? 201 : 200);
+        }
+
+        const currentResult = await storage.getJob(jobId);
+        const current = validStoredJob(currentResult?.record, jobId);
+        if (!current || Date.parse(current.expiresAt) <= now()) return json({ error: 'Generation job was not found.' }, 404);
+        if (request.method === 'GET') return json(current);
+
+        const input = await readJobJson(request);
+        const next = terminalJob(current, input, now());
+        if (current.status !== 'pending') return sameTerminal(current, next) ? json(current) : json({ error: 'Generation job is already finished.' }, 409);
+        const transitioned = await storage.transitionJob(jobId, next, currentResult.etag);
+        if (transitioned.conflict) return json({ error: 'Generation job changed concurrently.' }, 409);
+        return json(next);
+      } catch (error) {
+        return json({ error: error.message || 'Generation job request failed.' }, error.status || 503);
+      }
+    }
+
     if (request.method === 'POST' && url.pathname === '/shares') {
       if (!uploadSecret) return json({ error: 'Sharing is not configured.' }, 503);
       if (!await validBearer(request, uploadSecret)) {
