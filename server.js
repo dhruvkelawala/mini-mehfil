@@ -98,7 +98,8 @@ function normalizeShareBaseUrl(value) {
 }
 
 function staticFile(req, res) {
-  const requestPath = req.url === '/' ? '/index.html' : new URL(req.url, 'http://localhost').pathname;
+  const pathname = new URL(req.url, 'http://localhost').pathname;
+  const requestPath = pathname === '/' ? '/index.html' : pathname;
   const filePath = path.resolve(PUBLIC_DIR, `.${requestPath}`);
   if (!filePath.startsWith(`${PUBLIC_DIR}${path.sep}`)) {
     res.writeHead(403).end('Forbidden');

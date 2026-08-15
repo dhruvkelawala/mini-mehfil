@@ -25,6 +25,14 @@ test('serves the app', async () => {
   });
 });
 
+test('serves the app root when diagnostics use a query string', async () => {
+  await withServer(global.fetch, async base => {
+    const response = await fetch(`${base}/?mediaDebug=1`);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /media-diagnostics\.js/);
+  });
+});
+
 test('rejects an empty token without contacting MiniMax', async () => {
   let contacted = false;
   await withServer(async () => { contacted = true; }, async base => {
