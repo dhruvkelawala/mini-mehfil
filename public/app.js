@@ -205,10 +205,10 @@ function showPerformanceStatus(message) {
   performanceStatus.textContent = message;
 }
 
-function setPlaybackStatus(stage, message) {
+function setPlaybackStatus(stage, message, working = false) {
   performanceView.dataset.stage = stage;
   performanceStatus.textContent = message;
-  notice.className = message ? 'notice working' : 'notice';
+  notice.className = working ? 'notice working' : 'notice';
   notice.textContent = message;
 }
 
@@ -367,10 +367,11 @@ async function attemptPlayback(trigger) {
     return true;
   } catch (error) {
     diagnostics.fatal('audio.play() rejected', error, audio, { trigger });
-    const message = error?.name === 'NotAllowedError'
+    const isPolicyRejection = error?.name === 'NotAllowedError';
+    const message = isPolicyRejection
       ? 'Your song is ready — tap Play.'
       : 'Playback hit a snag — tap Play to try again, or Save your song.';
-    setPlaybackStatus('waiting', message);
+    setPlaybackStatus('waiting', message, isPolicyRejection);
     return false;
   }
 }

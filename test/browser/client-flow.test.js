@@ -248,6 +248,7 @@ test('a non-policy play rejection keeps Play, Save, and Share available', async 
   await expect(page.locator('#performance-status')).toContainText('Play');
   await expect(page.locator('#performance-status')).toContainText('Save');
   await expect(page.locator('#performance-status')).not.toContainText('Raw decoder detail');
+  await expect(page.locator('#notice')).not.toHaveClass(/working/);
   await expect(page.locator('#performance')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Play' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Share this song' })).toBeEnabled();
@@ -281,5 +282,6 @@ test('a media error surfaces sanitized recovery without clearing controls', asyn
   await expect(page.getByRole('link', { name: 'Save this song' })).toHaveAttribute('aria-disabled', 'false');
   await expect(page.locator('#performance-status')).not.toContainText(rawMediaDetail);
   await expect(page.locator('#notice')).not.toContainText(signedUrlDetail);
+  await expect(page.locator('#notice')).not.toHaveClass(/working/);
   await expect(page.locator('#media-diagnostics')).toBeHidden();
 });
