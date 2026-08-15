@@ -30,7 +30,7 @@ An immersive single-room experience (inspired by saloon.wtf) rather than a utili
 - **One key for everything:** the same MiniMax token drives the lyricist (`api.minimax.io/anthropic`, Anthropic-compatible) and the music call (`/v1/music_generation`). Never introduce a second required credential — it would break BYOK.
 - **Lyrics are sung literally.** MiniMax performs the `lyrics` field verbatim, so keywords must be expanded into a full structured song before generating. Direct music-3.0 generation accepts 1–3,500 lyric chars and 0–2,000 prompt chars (the 10–1,000 figure applies to cover mode only); we target ~1,100 and cap at 3,500. Prompt/lyric craft findings live in `docs/research/minimax-native-vocals.md`.
 - Single-page static frontend (`public/index.html`, `styles.css`, `app.js`) served by the Node proxy.
-- Privacy posture documented in README: the token lives only in the browser field, is forwarded per-request, and is never logged or stored; lyrics and prompts are not persisted.
+- Privacy posture documented in README: the token lives only in the browser field, is forwarded per-request, and is never logged or stored. Lyrics and prompts are never persisted on the server; one pending lyric sheet may live temporarily in the current tab's `sessionStorage` so a paid recording can survive refresh or iOS suspension.
 - Open decision: whether/when to publish for public BYOK consumption.
 
 ## Brand Commitments

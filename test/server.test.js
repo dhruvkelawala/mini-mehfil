@@ -331,7 +331,7 @@ test('claim failure precedes MiniMax and failed generations store only public fe
     });
     assert.equal(response.status, 400);
   }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
-  assert.deepEqual(checkpoint, { status: 'failed', error: { code: 'MINIMAX_FAILED', message: 'invalid token' } });
+  assert.deepEqual(checkpoint, { status: 'failed', error: { code: 'MINIMAX_FAILED', message: 'MiniMax rejected the API token. Check it and try again.' } });
   assert.doesNotMatch(JSON.stringify(checkpoint), /never-store|private lyrics|private prompt|do-not-store/);
 });
 
@@ -342,6 +342,89 @@ test('generation status validates IDs and explains unconfigured recovery', async
     assert.equal(response.status, 503);
     assert.match((await response.json()).error, /cannot recover/);
   });
+});
+
+test('a completed paid call is not reported successful when its checkpoint fails', async () => {
+  let minimaxCalls = 0;
+  let checkpointCalls = 0;
+  const mockFetch = async (url, init = {}) => {
+    if (url.endsWith('/claim')) return new Response(JSON.stringify({ jobId: JOB_ID, status: 'pending' }), { status: 201 });
+    if (url === 'https://mock.minimax.test/v1/music_generation') {
+      minimaxCalls += 1;
+      return new Response(JSON.stringify({ data: { audio: 'https://cdn.example/song.mp3' }, base_resp: { status_code: 0 } }));
+    }
+    if (init.method === 'PUT') {
+      checkpointCalls += 1;
+      return new Response(JSON.stringify({ error: 'Store unavailable.' }), { status: 503 });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  await withServer(mockFetch, async base => {
+    const response = await fetch(`${base}/api/generate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId: JOB_ID, token: 'sk-private', lyrics: 'One paid song' })
+    });
+    assert.equal(response.status, 503);
+    assert.match((await response.json()).error, /checkpoint/);
+  }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
+  assert.equal(minimaxCalls, 1);
+  assert.equal(checkpointCalls, 1);
+});
+
+test('generation status preserves pending and failed contracts and distinguishes missing storage', async () => {
+  const pendingId = '111111111111111111111111';
+  const failedId = '222222222222222222222222';
+  const missingId = '333333333333333333333333';
+  const brokenId = '444444444444444444444444';
+  const states = new Map([
+    [pendingId, { jobId: pendingId, status: 'pending' }],
+    [failedId, { jobId: failedId, status: 'failed', error: { message: 'MiniMax rejected the API token.' } }]
+  ]);
+  await withServer(async url => {
+    const id = url.split('/').at(-1);
+    if (id === missingId) return new Response(JSON.stringify({ error: 'Not found.' }), { status: 404 });
+    if (id === brokenId) return new Response(JSON.stringify({ error: 'Unavailable.' }), { status: 503 });
+    return new Response(JSON.stringify(states.get(id)));
+  }, async base => {
+    const pending = await fetch(`${base}/api/generation-status?id=${pendingId}`);
+    assert.deepEqual(await pending.json(), { jobId: pendingId, status: 'pending' });
+    const failed = await fetch(`${base}/api/generation-status?id=${failedId}`);
+    assert.deepEqual(await failed.json(), { jobId: failedId, status: 'failed', error: 'MiniMax rejected the API token.' });
+    assert.equal((await fetch(`${base}/api/generation-status?id=${missingId}`)).status, 404);
+    assert.equal((await fetch(`${base}/api/generation-status?id=${brokenId}`)).status, 503);
+  }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
+});
+
+test('sharing resolves a completed job after the generating server process is gone', async () => {
+  let job;
+  const mockFetch = async (url, init = {}) => {
+    if (url.endsWith('/claim')) {
+      job = { jobId: JOB_ID, status: 'pending' };
+      return new Response(JSON.stringify(job), { status: 201 });
+    }
+    if (url === 'https://mock.minimax.test/v1/music_generation') return new Response(JSON.stringify({ data: { audio: '494433' }, base_resp: { status_code: 0 } }));
+    if (url === `https://share.example/generation-jobs/${JOB_ID}` && init.method === 'PUT') {
+      job = { jobId: JOB_ID, ...JSON.parse(init.body) };
+      return new Response(JSON.stringify(job));
+    }
+    if (url === `https://share.example/generation-jobs/${JOB_ID}`) return new Response(JSON.stringify(job));
+    if (url === 'https://share.example/shares') return new Response(JSON.stringify({ url: 'https://share.example/s/AbCdEfGhIjKlMnOp' }), { status: 201 });
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  const options = { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' };
+  await withServer(mockFetch, async base => {
+    const response = await fetch(`${base}/api/generate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId: JOB_ID, token: 'sk-private', lyrics: 'Persist me' })
+    });
+    assert.equal(response.status, 200);
+  }, options);
+  await withServer(mockFetch, async base => {
+    const response = await fetch(`${base}/api/share`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+        shareRef: JOB_ID, title: 'Persisted', language: 'English', isLatinScript: true, lyricsNative: 'Persist me', lyricsRoman: 'Persist me'
+      })
+    });
+    assert.equal(response.status, 201);
+  }, options);
 });
 
 const SHEET = {

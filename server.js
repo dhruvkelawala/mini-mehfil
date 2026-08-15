@@ -52,7 +52,12 @@ function readJson(req, limit = MAX_BODY_BYTES) {
 
 function audioSource(result) {
   const source = result?.data?.audio || result?.audio?.url || result?.audio;
-  return typeof source === 'string' && source ? source : null;
+  if (typeof source !== 'string' || !source || source.length > 32 * 1024) return null;
+  if (/^(?:0x)?[0-9a-f]+$/i.test(source) && source.replace(/^0x/i, '').length % 2 === 0) return source;
+  try {
+    const url = new URL(source);
+    return url.protocol === 'https:' && !url.username && !url.password ? source : null;
+  } catch { return null; }
 }
 
 async function readLimitedBody(response, limit) {
@@ -109,7 +114,13 @@ function completedGeneration(record) {
 }
 
 function publicFailure(message, code = 'GENERATION_FAILED') {
-  const safe = typeof message === 'string' && message.trim() ? message.trim().slice(0, 500) : 'Generation failed.';
+  const upstream = typeof message === 'string' ? message : '';
+  let safe = 'MiniMax could not make the recording. Please try again.';
+  if (/token|auth|unauthori[sz]ed|forbidden/i.test(upstream)) safe = 'MiniMax rejected the API token. Check it and try again.';
+  else if (/rate|quota|limit|too many/i.test(upstream)) safe = 'MiniMax is handling too many requests. Please try again shortly.';
+  else if (code === 'GENERATION_TIMEOUT') safe = 'Generation timed out after seven minutes.';
+  else if (code === 'MISSING_AUDIO') safe = 'MiniMax succeeded but did not return an audio file.';
+  else if (code === 'MINIMAX_UNAVAILABLE') safe = 'Generation failed while contacting MiniMax.';
   return { code, message: safe };
 }
 
@@ -181,9 +192,13 @@ function createServer(options = {}) {
   }
 
   async function checkpointFailure(jobId, failure) {
-    try {
-      await recoveryRequest(`/generation-jobs/${jobId}`, { method: 'PUT', body: { status: 'failed', error: failure } });
-    } catch {}
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const checkpoint = await recoveryRequest(`/generation-jobs/${jobId}`, { method: 'PUT', body: { status: 'failed', error: failure } });
+        if (checkpoint.response.ok) return true;
+      } catch {}
+    }
+    return false;
   }
 
   return http.createServer(async (req, res) => {
@@ -279,13 +294,13 @@ function createServer(options = {}) {
         if (!upstream.ok || result?.base_resp?.status_code) {
           const message = result?.base_resp?.status_msg || result?.error?.message || result?.error || `MiniMax request failed (${upstream.status})`;
           const failure = publicFailure(String(message), 'MINIMAX_FAILED');
-          if (claimedJobId) await checkpointFailure(claimedJobId, failure);
+          if (claimedJobId && !await checkpointFailure(claimedJobId, failure)) return sendJson(res, 503, { error: 'Generation ended, but recovery could not save its final status. Please check again.' });
           return sendJson(res, upstream.ok ? 400 : upstream.status, { error: failure.message });
         }
         const source = audioSource(result);
         if (!source) {
           const failure = publicFailure('MiniMax succeeded but did not return an audio file.', 'MISSING_AUDIO');
-          if (claimedJobId) await checkpointFailure(claimedJobId, failure);
+          if (claimedJobId && !await checkpointFailure(claimedJobId, failure)) return sendJson(res, 503, { error: 'Generation ended, but recovery could not save its final status. Please check again.' });
           return sendJson(res, 502, { error: failure.message });
         }
         audioReady = true;
@@ -302,7 +317,7 @@ function createServer(options = {}) {
       } catch (error) {
         if (error.name === 'AbortError') {
           const failure = publicFailure('Generation timed out after seven minutes.', 'GENERATION_TIMEOUT');
-          if (claimedJobId) await checkpointFailure(claimedJobId, failure);
+          if (claimedJobId && !await checkpointFailure(claimedJobId, failure)) return sendJson(res, 503, { error: 'Generation ended, but recovery could not save its final status. Please check again.' });
           return sendJson(res, 504, { error: failure.message });
         }
         if (claimedJobId && paidCallStarted && !audioReady) {

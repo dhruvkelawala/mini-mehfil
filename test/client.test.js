@@ -77,6 +77,8 @@ test('generation recovery is wired without retrying the paid request', () => {
   assert.match(recovery, /\/api\/generation-status/);
   assert.match(app, /pageshow/);
   assert.match(app, /visibilitychange/);
+  assert.match(html, /id="check-generation"/);
+  assert.match(app, /checkGenerationButton\.addEventListener\(['"]click['"]/);
   const recoverySection = functionBody('resumePendingGeneration');
   assert.doesNotMatch(recoverySection, /post\(['"]\/api\/generate/);
 });

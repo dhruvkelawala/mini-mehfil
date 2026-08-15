@@ -123,6 +123,15 @@ function pendingJob(jobId, now) {
   };
 }
 
+function validAudioSource(source) {
+  if (typeof source !== 'string' || !source || source.length > 32 * 1024) return false;
+  if (/^(?:0x)?[0-9a-f]+$/i.test(source)) return source.replace(/^0x/i, '').length % 2 === 0;
+  try {
+    const url = new URL(source);
+    return url.protocol === 'https:' && !url.username && !url.password;
+  } catch { return false; }
+}
+
 function validStoredJob(value, jobId) {
   if (!value || value.version !== JOB_VERSION || value.jobId !== jobId || !['pending', 'complete', 'failed'].includes(value.status)) return null;
   if (![value.createdAt, value.updatedAt, value.expiresAt].every(entry => typeof entry === 'string' && Number.isFinite(Date.parse(entry)))) return null;
@@ -135,9 +144,9 @@ function validStoredJob(value, jobId) {
     expiresAt: value.expiresAt
   };
   if (value.status === 'complete') {
-    if (typeof value.source !== 'string' || !value.source || value.source.length > 32 * 1024) return null;
+    if (!validAudioSource(value.source)) return null;
     record.source = value.source;
-    if (typeof value.traceId === 'string' && value.traceId.length <= 200) record.traceId = value.traceId;
+    if (typeof value.traceId === 'string' && /^[A-Za-z0-9._:-]{1,200}$/.test(value.traceId)) record.traceId = value.traceId;
   }
   if (value.status === 'failed') {
     if (!value.error || typeof value.error.code !== 'string' || typeof value.error.message !== 'string') return null;
@@ -157,7 +166,7 @@ function terminalJob(current, input, now) {
     expiresAt: current.expiresAt
   };
   if (input?.status === 'complete') {
-    if (typeof input.source !== 'string' || !input.source || input.source.length > 32 * 1024) throw Object.assign(new Error('A valid audio source is required.'), { status: 400 });
+    if (!validAudioSource(input.source)) throw Object.assign(new Error('A valid audio source is required.'), { status: 400 });
     base.source = input.source;
     if (typeof input.traceId === 'string') {
       const traceId = input.traceId.trim();
@@ -293,7 +302,11 @@ export function createShareHandler({ storage, rateLimit = async () => true, idGe
         const next = terminalJob(current, input, now());
         if (current.status !== 'pending') return sameTerminal(current, next) ? json(current) : json({ error: 'Generation job is already finished.' }, 409);
         const transitioned = await storage.transitionJob(jobId, next, currentResult.etag);
-        if (transitioned.conflict) return json({ error: 'Generation job changed concurrently.' }, 409);
+        if (transitioned.conflict) {
+          const winner = validStoredJob((await storage.getJob(jobId))?.record, jobId);
+          if (winner && sameTerminal(winner, next)) return json(winner);
+          return json({ error: 'Generation job changed concurrently.' }, 409);
+        }
         return json(next);
       } catch (error) {
         return json({ error: error.message || 'Generation job request failed.' }, error.status || 503);

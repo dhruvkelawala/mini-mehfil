@@ -244,6 +244,15 @@ test('generation job completion is whitelisted, conditional, and idempotent', as
   assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body: { status: 'failed', error: { code: 'GENERATION_FAILED', message: 'No song.' } } }))).status, 409);
 });
 
+test('generation jobs reject non-HTTPS and malformed audio sources', async () => {
+  for (const source of ['http://cdn.example/song.mp3', 'not-a-url-or-hex', 'abc']) {
+    const handle = createShareHandler({ storage: memoryStorage(), uploadSecret: SECRET });
+    await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST' }));
+    const response = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body: { status: 'complete', source } }));
+    assert.equal(response.status, 400);
+  }
+});
+
 test('generation job routes reject invalid, expired, oversized, and unauthenticated requests without mutation', async () => {
   const storage = memoryStorage();
   let current = Date.parse('2026-08-15T12:00:00Z');
@@ -251,6 +260,10 @@ test('generation job routes reject invalid, expired, oversized, and unauthentica
   assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST', authorized: false }))).status, 401);
   assert.equal((await handle(jobRequest('/generation-jobs/bad/claim', { method: 'POST' }))).status, 400);
   await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST' }));
+  const malformed = await handle(new Request(`https://share.example/generation-jobs/${IDEMPOTENCY_KEY}`, {
+    method: 'PUT', headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' }, body: '{'
+  }));
+  assert.equal(malformed.status, 400);
   assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body: { status: 'complete', source: 'x'.repeat(70 * 1024) } }))).status, 413);
   current += 24 * 60 * 60 * 1000 + 1;
   assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`))).status, 404);
@@ -274,6 +287,22 @@ test('R2 generation storage uses atomic create and handles conditional conflicts
   const transition = await storage.transitionJob(IDEMPOTENCY_KEY, { ...record, status: 'failed' }, 'etag-1');
   assert.equal(transition.conflict, true);
   assert.deepEqual(puts[1].options.onlyIf, { etagMatches: 'etag-1' });
+});
+
+test('an identical terminal transition that loses an ETag race is idempotent success', async () => {
+  const createdAt = '2026-08-15T12:00:00.000Z';
+  const pending = { version: 1, jobId: IDEMPOTENCY_KEY, status: 'pending', createdAt, updatedAt: createdAt, expiresAt: '2026-08-16T12:00:00.000Z' };
+  const complete = { ...pending, status: 'complete', source: 'https://cdn.example/song.mp3' };
+  let reads = 0;
+  const storage = {
+    async getJob() { reads += 1; return { record: reads === 1 ? pending : complete, etag: `etag-${reads}` }; },
+    async transitionJob() { return { conflict: true }; },
+    async claimJob() { throw new Error('not used'); }
+  };
+  const handle = createShareHandler({ storage, uploadSecret: SECRET, now: () => Date.parse(createdAt) });
+  const response = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body: { status: 'complete', source: complete.source } }));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).source, complete.source);
 });
 
 test('R2 storage returns seekable ranges, HEAD metadata, and unsatisfiable range responses', async () => {

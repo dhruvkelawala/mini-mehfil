@@ -30,6 +30,7 @@ const performanceStatus = document.querySelector('#performance-status');
 const performanceTiming = document.querySelector('#performance-timing');
 const performanceReplay = document.querySelector('#performance-replay');
 const performanceButton = document.querySelector('#view-performance');
+const checkGenerationButton = document.querySelector('#check-generation');
 const playerHome = document.querySelector('#player-home');
 const diagnostics = window.MehfilMediaDiagnostics || {
   enabled: false,
@@ -397,6 +398,7 @@ function loadSong(source, title, reference) {
 }
 
 function generationError(message, { clear = true } = {}) {
+  checkGenerationButton.hidden = true;
   if (clear) recovery.clear();
   generating = false;
   updateScenePerformance();
@@ -418,6 +420,7 @@ function finalizeGeneration(result, pending) {
   }
   lyricSheet = pending.lyricSheet;
   peek.hidden = false;
+  checkGenerationButton.hidden = true;
   diagnostics.record('generation-recovery-complete', { jobIdPrefix: pending.jobId.slice(0, 6) });
   loadSong(source, lyricSheet.title, result.share_ref || null);
   recovery.clear();
@@ -433,6 +436,7 @@ function finalizeGeneration(result, pending) {
 const recovery = recoveryApi.create({
   storage: sessionStorage,
   onRequest(pending) {
+    checkGenerationButton.hidden = true;
     diagnostics.record('generation-status-request', { jobIdPrefix: pending.jobId.slice(0, 6) });
   },
   onResponse(response, pending) {
@@ -457,9 +461,15 @@ const recovery = recoveryApi.create({
   onRetryable(error, pending) {
     if (pending.run !== generationRun) return;
     diagnostics.record('generation-recovery-failed', { jobIdPrefix: pending.jobId.slice(0, 6), status: error.status });
+    if (error.status === 503 && /cannot recover/i.test(error.message)) {
+      recovery.cancel();
+      generationError(error.message);
+      return;
+    }
     notice.className = 'notice';
     notice.textContent = `${error.message} Your recording checkpoint is safe.`;
     showPerformanceStatus('The recording may still be finishing.');
+    checkGenerationButton.hidden = false;
     diagnostics.setRetryAction?.('Check generation', () => recovery.resume());
   }
 });
@@ -482,6 +492,7 @@ function resumePendingGeneration(reason, pendingRecord = recovery.read()) {
   setBusy(true, ['Checking whether your recording finished…']);
   trackTitle.textContent = 'Your mehfil is recording';
   trackSubtitle.textContent = 'Returning to the same recording';
+  checkGenerationButton.hidden = true;
   diagnostics.record('generation-recovery-started', { reason, jobIdPrefix: pending.jobId.slice(0, 6) });
   diagnostics.setRetryAction?.('Check generation', () => recovery.resume());
   recovery.start(pending, pending.run);
@@ -579,6 +590,12 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') resumePendingGeneration('visibilitychange');
 });
 resumePendingGeneration('page-load');
+checkGenerationButton.addEventListener('click', () => {
+  checkGenerationButton.hidden = true;
+  notice.className = 'notice working';
+  notice.textContent = 'Checking whether your recording finished…';
+  recovery.resume();
+});
 
 performanceClose.addEventListener('click', () => closePerformance('user-close-button'));
 performanceButton.addEventListener('click', () => openPerformance(performanceButton));
