@@ -184,6 +184,24 @@ test('explains when sharing is not configured', async () => {
   }
 });
 
+test('opens a room through the configured Worker without exposing server credentials', async () => {
+  let captured;
+  const mockFetch = async (url, init) => {
+    captured = { url, init };
+    return new Response(JSON.stringify({ roomId:'ABCDEFGH', joinUrl:'https://share.example/r/ABCDEFGH', socketUrl:'wss://share.example/rooms/ABCDEFGH/ws', hostSecret:'a'.repeat(43), expiresAt:Date.now()+60000 }), { status:201 });
+  };
+  await withServer(mockFetch, async base => {
+    const response=await fetch(`${base}/api/rooms`,{method:'POST'});assert.equal(response.status,201);const text=await response.text();const body=JSON.parse(text);assert.equal(body.roomId,'ABCDEFGH');assert.doesNotMatch(body.joinUrl+body.socketUrl,/worker-upload-secret|sk-cp-/);assert.equal(body.hostSecret.length,43);
+  },{shareBaseUrl:'https://share.example',shareSecret:'worker-upload-secret'});
+  assert.equal(captured.url,'https://share.example/rooms');assert.equal(captured.init.headers.Authorization,'Bearer worker-upload-secret');assert.equal(captured.init.body,'{}');
+});
+
+test('room creation requires sharing configuration',async()=>{await withServer(async()=>{throw new Error('not called')},async base=>{const response=await fetch(`${base}/api/rooms`,{method:'POST'});assert.equal(response.status,503);assert.match((await response.json()).error,/not configured/)});});
+
+test('rejects malicious or mismatched room URLs',async()=>{for(const patch of [{joinUrl:'https://evil.example/r/ABCDEFGH'},{socketUrl:'wss://share.example/rooms/ZZZZZZZZ/ws'},{hostSecret:'short'},{expiresAt:1}]){const mockFetch=async()=>new Response(JSON.stringify({roomId:'ABCDEFGH',joinUrl:'https://share.example/r/ABCDEFGH',socketUrl:'wss://share.example/rooms/ABCDEFGH/ws',hostSecret:'a'.repeat(43),expiresAt:Date.now()+60000,...patch}),{status:201});await withServer(mockFetch,async base=>{const response=await fetch(`${base}/api/rooms`,{method:'POST'});assert.equal(response.status,502);assert.doesNotMatch(await response.text(),/worker-upload-secret|sk-cp-never/)},{shareBaseUrl:'https://share.example',shareSecret:'worker-upload-secret'});}});
+
+test('normalizes room Worker errors',async()=>{const mockFetch=async()=>new Response(JSON.stringify({error:'Rooms are resting.'}),{status:503});await withServer(mockFetch,async base=>{const response=await fetch(`${base}/api/rooms`,{method:'POST'});assert.equal(response.status,503);assert.equal((await response.json()).error,'Rooms are resting.')},{shareBaseUrl:'https://share.example',shareSecret:'worker-upload-secret'});});
+
 test('does not issue share references unless URL and secret are both configured', async () => {
   const mockFetch = async () => new Response(JSON.stringify({
     data: { audio: 'https://cdn.minimax.test/song.mp3', status: 2 },
