@@ -1,4 +1,6 @@
 import { playbackPage } from './playback-page.mjs';
+import { roomPage } from './room-page.mjs';
+import { createRoomTransport, sha256 } from './room-transport.mjs';
 
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 const MAX_REQUEST_BYTES = MAX_AUDIO_BYTES + 128 * 1024;
@@ -10,6 +12,7 @@ const JOB_VERSION = 1;
 const MAX_JOB_JSON_BYTES = 64 * 1024;
 const JOB_TTL_MS = 24 * 60 * 60 * 1000;
 const PENDING_JOB_TTL_MS = 5 * 60 * 1000;
+const ROOM_ID_PATTERN = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/;
 const REPOSITORY_URL = 'https://github.com/dhruvkelawala/mini-mehfil';
 
 function json(value, status = 200, headers = {}) {
@@ -425,16 +428,98 @@ export function createShareHandler({ storage, rateLimit = async () => true, idGe
   };
 }
 
+const roomCode = () => {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = new Uint8Array(8); crypto.getRandomValues(bytes);
+  return [...bytes].map(byte => alphabet[byte % alphabet.length]).join('');
+};
+
+export function createWorkerHandler({ shareHandler, rooms, rateLimit = async () => true, uploadSecret = '', roomPageRenderer = roomPage, codeGenerator = roomCode, hostSecretGenerator = () => { const bytes = new Uint8Array(32); crypto.getRandomValues(bytes); return base64Url(bytes); } } = {}) {
+  return async request => {
+    const url = new URL(request.url);
+    if (request.method === 'POST' && url.pathname === '/rooms') {
+      if (!uploadSecret) return json({ error: 'Rooms are not configured.' }, 503);
+      if (!await validBearer(request, uploadSecret)) return json({ error: 'Room credentials are missing or invalid.' }, 401, { 'www-authenticate': 'Bearer' });
+      if (!await rateLimit(request.headers.get('cf-connecting-ip') || 'unknown')) return json({ error: 'Too many rooms are opening at once. Please try again.' }, 429, { 'retry-after': '60' });
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const roomId = codeGenerator();
+        if (!ROOM_ID_PATTERN.test(roomId)) continue;
+        const hostSecret = hostSecretGenerator();
+        const openedAt = Date.now(); const expiresAt = openedAt + 6 * 60 * 60 * 1000;
+        if (!await rooms.initialize(roomId, { hostDigest: await sha256(hostSecret), openedAt, expiresAt })) continue;
+        return json({ roomId, joinUrl: `${url.origin}/r/${roomId}`, socketUrl: `${url.origin.replace(/^http/, 'ws')}/rooms/${roomId}/ws`, hostSecret, expiresAt }, 201);
+      }
+      return json({ error: 'Could not open a room. Please retry.' }, 503);
+    }
+    const join = url.pathname.match(/^\/r\/([ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8})$/);
+    if (join && (request.method === 'GET' || request.method === 'HEAD')) {
+      const nonce = randomId(); const html = roomPageRenderer(join[1], nonce);
+      return new Response(request.method === 'HEAD' ? null : html, { headers: {
+        'content-type':'text/html; charset=utf-8','cache-control':'no-store',
+        'content-security-policy':`default-src 'none'; connect-src 'self'; media-src 'self'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+        'referrer-policy':'no-referrer','x-content-type-options':'nosniff'
+      }});
+    }
+    const socket = url.pathname.match(/^\/rooms\/([ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8})\/ws$/);
+    if (socket && request.method === 'GET') return rooms.websocket(socket[1], request);
+    return shareHandler(request);
+  };
+}
+
+export class MehfilRoom {
+  constructor(state) {
+    this.state = state;
+    const storage = { get:key => state.storage.get(key), put:(key,value) => state.storage.put(key,value) };
+    this.transport = createRoomTransport({
+      storage,
+      randomId: () => randomId(),
+      randomCredential: () => { const bytes=new Uint8Array(32); crypto.getRandomValues(bytes); return base64Url(bytes); },
+      send: (socket, message) => socket?.send(JSON.stringify(message)),
+      broadcast: fn => { for (const socket of state.getWebSockets()) socket.send(JSON.stringify(fn(socket))); },
+      close: (socket, code, reason) => socket?.close(code, reason),
+      setAttachment: (socket, value) => socket.serializeAttachment(value),
+      getAttachment: socket => socket?.deserializeAttachment(),
+      setAlarm: value => state.storage.setAlarm(value)
+    });
+  }
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (request.method === 'POST' && url.pathname === '/initialize') {
+      const data = await request.json();
+      const created = await this.transport.initialize(data);
+      return new Response(null, { status: created ? 201 : 409 });
+    }
+    if (url.pathname !== '/ws' || request.headers.get('upgrade')?.toLowerCase() !== 'websocket') return new Response('Not found', { status: 404 });
+    const pair = new WebSocketPair(); const [client, server] = Object.values(pair);
+    this.state.acceptWebSocket(server); await this.transport.connect(server);
+    setTimeout(() => this.transport.checkAuthenticationTimeout(server), 5_000);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+  webSocketMessage(socket, message) { return this.transport.message(socket, message); }
+  webSocketClose(socket) { return this.transport.disconnect(socket); }
+  alarm() { return this.transport.alarm(); }
+}
+
 export default {
   fetch(request, env) {
     const storage = createR2Storage(env.SHARES);
     const rateLimit = async ip => (await env.UPLOAD_RATE_LIMIT.limit({ key: ip })).success;
-    return createShareHandler({
+    const shareHandler = createShareHandler({
       storage,
       rateLimit,
       uploadSecret: env.MEHFIL_SHARE_SECRET,
       publicBaseUrl: env.MEHFIL_PUBLIC_URL,
       previewImageUrl: env.SHARE_PREVIEW_IMAGE_URL
-    })(request);
+    });
+    const rooms = {
+      async initialize(roomId, data) {
+        const stub = env.ROOMS.get(env.ROOMS.idFromName(roomId));
+        return (await stub.fetch('https://room.internal/initialize', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ roomId, ...data }) })).status === 201;
+      },
+      websocket(roomId, roomRequest) {
+        return env.ROOMS.get(env.ROOMS.idFromName(roomId)).fetch(new Request('https://room.internal/ws', roomRequest));
+      }
+    };
+    return createWorkerHandler({ shareHandler, rooms, rateLimit, uploadSecret: env.MEHFIL_SHARE_SECRET })(request);
   }
 };

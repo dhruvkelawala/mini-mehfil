@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { COURTYARD_SCENE } from '../share/courtyard.mjs';
-import { createR2Storage, createShareHandler } from '../share/worker.mjs';
+import { createR2Storage, createShareHandler, createWorkerHandler } from '../share/worker.mjs';
 
 const ID = 'AbCdEfGhIjKlMnOp';
 const SECRET = 'worker-upload-secret';
@@ -388,3 +388,14 @@ test('R2 storage returns seekable ranges, HEAD metadata, and unsatisfiable range
   assert.equal(unsatisfiable.headers.get('content-range'), 'bytes */5');
   assert.equal((await unsatisfiable.arrayBuffer()).byteLength, 0);
 });
+
+function roomWorker(overrides={}) {
+  const calls=[];
+  const rooms={initialize:async(id,data)=>{calls.push(['initialize',id,data]);return true},websocket:async(id,request)=>{calls.push(['websocket',id,request]);return new Response('upgrade',{status:200})}};
+  const shareHandler=()=>new Response('share',{status:404});
+  return {calls,handle:createWorkerHandler({shareHandler,rooms,uploadSecret:SECRET,rateLimit:async()=>true,codeGenerator:()=> 'ABCDEFGH',hostSecretGenerator:()=> 'a'.repeat(43),...overrides})};
+}
+
+test('room creation authenticates before rate limit and separates secrets from URLs',async()=>{let limited=false;const {handle,calls}=roomWorker({rateLimit:async()=>{limited=true;return true}});const unauthorized=await handle(new Request('https://share.example/rooms',{method:'POST'}));assert.equal(unauthorized.status,401);assert.equal(limited,false);const response=await handle(new Request('https://share.example/rooms',{method:'POST',headers:{authorization:`Bearer ${SECRET}`}}));assert.equal(response.status,201);const body=await response.json();assert.equal(body.roomId,'ABCDEFGH');assert.equal(body.joinUrl,'https://share.example/r/ABCDEFGH');assert.equal(body.socketUrl,'wss://share.example/rooms/ABCDEFGH/ws');assert.doesNotMatch(body.joinUrl+body.socketUrl,/a{20}|worker-upload-secret|sk-cp-/);assert.equal(calls[0][0],'initialize');});
+test('room join page applies strict headers and supports HEAD',async()=>{const {handle}=roomWorker();for(const method of ['GET','HEAD']){const response=await handle(new Request('https://share.example/r/ABCDEFGH',{method}));assert.equal(response.status,200);assert.match(response.headers.get('content-security-policy'),/default-src 'none'/);assert.match(response.headers.get('content-security-policy'),/frame-ancestors 'none'/);assert.equal(response.headers.get('referrer-policy'),'no-referrer');if(method==='HEAD')assert.equal(await response.text(),'');}});
+test('invalid room ids are not forwarded and valid upgrades are',async()=>{const {handle,calls}=roomWorker();assert.equal((await handle(new Request('https://share.example/r/IIIIIIII'))).status,404);const response=await handle(new Request('https://share.example/rooms/ABCDEFGH/ws'));assert.equal(response.status,200);assert.equal(calls.at(-1)[0],'websocket');});
