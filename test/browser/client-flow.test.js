@@ -53,7 +53,7 @@ async function installMediaStub(page) {
         if (rejection) {
           return Promise.reject(new DOMException(rejection.message, rejection.name));
         }
-        this.dispatchEvent(new Event('play'));
+        queueMicrotask(() => this.dispatchEvent(new Event('play')));
         return Promise.resolve();
       }
     });
@@ -126,6 +126,9 @@ test('writes lyrics, records a song, and exposes native and roman presentation',
   await expect(page.locator('#reveal-lines')).toContainText('આ સાંજ ભીની છે');
   await expect(page.locator('#reveal-lines')).toContainText('aa saanj bhini chhe');
   expect(requests.map(request => request.endpoint)).toEqual(['lyrics', 'generate']);
+
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#notice')).toHaveText('Your recording is ready.');
 });
 
 test('returns lyric and generation failures to a clean form state', async ({ page }) => {

@@ -206,10 +206,16 @@ function showPerformanceStatus(message) {
 }
 
 function setPlaybackStatus(stage, message, working = false) {
+  const wasRecovering = performanceView.dataset.stage === 'recovery';
   performanceView.dataset.stage = stage;
   performanceStatus.textContent = message;
-  notice.className = working ? 'notice working' : 'notice';
-  notice.textContent = message;
+  if (message) {
+    notice.className = working ? 'notice working' : 'notice';
+    notice.textContent = message;
+  } else if (wasRecovering) {
+    notice.className = 'notice';
+    notice.textContent = '';
+  }
 }
 
 function renderPlaybackLyrics() {
@@ -371,7 +377,7 @@ async function attemptPlayback(trigger) {
     const message = isPolicyRejection
       ? 'Your song is ready — tap Play.'
       : 'Playback hit a snag — tap Play to try again, or Save your song.';
-    setPlaybackStatus('waiting', message, isPolicyRejection);
+    setPlaybackStatus('recovery', message, isPolicyRejection);
     return false;
   }
 }
@@ -538,7 +544,7 @@ audio.addEventListener('error', () => {
   player.classList.remove('playing');
   scene.classList.remove('is-performing');
   playButton.setAttribute('aria-label', 'Play');
-  setPlaybackStatus('waiting', 'This recording cannot play right now — try Play again or Save your song.');
+  setPlaybackStatus('recovery', 'This recording cannot play right now — try Play again or Save your song.');
 });
 seek.addEventListener('input', () => {
   if (audio.duration) {
