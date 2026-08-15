@@ -64,6 +64,7 @@ let shareReference = null;
 let shareUrl = null;
 let performanceAvailable = false;
 let performanceOpener = null;
+let generationRequestInFlight = false;
 
 function updateClock() {
   document.querySelector('#clock').textContent = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(new Date()).toLowerCase();
@@ -446,6 +447,7 @@ const recovery = recoveryApi.create({
     notice.className = 'notice working';
     notice.textContent = 'Checking whether your recording finished…';
     showPerformanceStatus(notice.textContent);
+    setBusy(false, []);
   },
   onComplete(result, pending) { finalizeGeneration(result, pending); },
   onFailed(result, pending) {
@@ -476,6 +478,7 @@ const recovery = recoveryApi.create({
 });
 
 function resumePendingGeneration(reason, pendingRecord = recovery.read()) {
+  if (generationRequestInFlight) return false;
   if (!pendingRecord) return false;
   const current = recovery.current();
   if (current?.jobId === pendingRecord.jobId) {
@@ -541,12 +544,18 @@ form.addEventListener('submit', async event => {
     diagnostics.record('generation-job-created', { jobIdPrefix: jobId.slice(0, 6) });
 
     // The native script is what gets sung: the music model pronounces it best.
-    const result = await post('/api/generate', {
-      jobId,
-      token: tokenInput.value,
-      prompt: lyricSheet.prompt || vibeInput.value,
-      lyrics: lyricSheet.lyricsNative || lyricSheet.lyricsRoman
-    });
+    let result;
+    generationRequestInFlight = true;
+    try {
+      result = await post('/api/generate', {
+        jobId,
+        token: tokenInput.value,
+        prompt: lyricSheet.prompt || vibeInput.value,
+        lyrics: lyricSheet.lyricsNative || lyricSheet.lyricsRoman
+      });
+    } finally {
+      generationRequestInFlight = false;
+    }
     diagnostics.record('generation-result', {
       traceId: result?.trace_id || result?.traceId || result?.data?.trace_id || null,
       hasDataAudio: typeof result?.data?.audio === 'string',
