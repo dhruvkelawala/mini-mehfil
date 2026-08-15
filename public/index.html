@@ -363,6 +363,25 @@
     <audio id="audio" preload="metadata"></audio>
   </section>
 
+  <button id="media-diagnostics-open" class="media-diagnostics-open" type="button" hidden>Media diagnostics</button>
+  <section id="media-diagnostics" class="media-diagnostics" role="dialog" aria-modal="true" aria-labelledby="media-diagnostics-title" hidden>
+    <div class="media-diagnostics-sheet">
+      <p class="media-diagnostics-kicker">Diagnostic preview · persistent local log</p>
+      <h2 id="media-diagnostics-title">Playback stopped for evidence</h2>
+      <p id="media-diagnostics-headline" class="media-diagnostics-headline">Media diagnostics are recording</p>
+      <p class="media-diagnostics-help">Copy or download this sanitized report and send it back. Tokens, lyrics, request bodies, signed URL paths, and query strings are excluded.</p>
+      <div class="media-diagnostics-actions">
+        <button id="media-diagnostics-retry" type="button">Retry playback</button>
+        <button id="media-diagnostics-copy" type="button">Copy report</button>
+        <button id="media-diagnostics-download" type="button">Download JSON</button>
+        <button id="media-diagnostics-clear" type="button">Clear log</button>
+        <button id="media-diagnostics-close" type="button">Continue testing</button>
+      </div>
+      <pre id="media-diagnostics-output" tabindex="0"></pre>
+    </div>
+  </section>
+
+  <script src="/media-diagnostics.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

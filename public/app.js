@@ -31,6 +31,11 @@ const performanceTiming = document.querySelector('#performance-timing');
 const performanceReplay = document.querySelector('#performance-replay');
 const performanceButton = document.querySelector('#view-performance');
 const playerHome = document.querySelector('#player-home');
+const diagnostics = window.MehfilMediaDiagnostics || {
+  enabled: false,
+  record() {}, fatal() {}, attachMedia() {}, setRetryHandler() {},
+  snapshot() { return null; }, redactUrl() { return '[diagnostics unavailable]'; }
+};
 
 const writingLines = [
   'Listening to your idea…',
@@ -164,6 +169,7 @@ function updateScenePerformance() {
 
 function openPerformance(opener = document.activeElement) {
   if (!performanceAvailable) return;
+  diagnostics.record('performance-open', { hasAudioSource: Boolean(audio.src) });
   performanceOpener = opener;
   performanceView.hidden = false;
   performanceView.append(player);
@@ -179,7 +185,8 @@ function openPerformance(opener = document.activeElement) {
   performanceClose.focus();
 }
 
-function closePerformance() {
+function closePerformance(reason = 'unknown') {
+  diagnostics.record('performance-close', { reason, hasAudioSource: Boolean(audio.src) });
   playerHome.after(player);
   performanceView.hidden = true;
   performanceButton.hidden = !performanceAvailable;
@@ -283,13 +290,39 @@ function decodeHexAudio(hex) {
 }
 
 async function post(url, payload) {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+  const startedAt = performance.now();
+  diagnostics.record('api-request-start', { endpoint: url });
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    diagnostics.record('api-request-rejected', {
+      endpoint: url,
+      elapsedMs: Math.round(performance.now() - startedAt),
+      error
+    });
+    throw error;
+  }
+  diagnostics.record('api-response', {
+    endpoint: url,
+    status: response.status,
+    ok: response.ok,
+    elapsedMs: Math.round(performance.now() - startedAt),
+    contentType: response.headers.get('content-type')
   });
-  const result = await response.json().catch(() => ({ error: 'The server returned an unreadable response.' }));
-  if (!response.ok) throw new Error(result.error || 'Something went wrong.');
+  const result = await response.json().catch(error => {
+    diagnostics.record('api-json-rejected', { endpoint: url, error });
+    return { error: 'The server returned an unreadable response.' };
+  });
+  if (!response.ok) {
+    const error = new Error(result.error || 'Something went wrong.');
+    diagnostics.record('api-http-error', { endpoint: url, status: response.status, error });
+    throw error;
+  }
   return result;
 }
 
@@ -317,11 +350,35 @@ function clearLoadedSong() {
   performanceReplay.hidden = true;
 }
 
+async function attemptPlayback(trigger) {
+  diagnostics.record('play-attempt', {
+    trigger,
+    media: diagnostics.snapshot(audio),
+    userActivation: diagnostics.userActivation?.() || null
+  });
+  try {
+    await audio.play();
+    diagnostics.record('play-resolved', { trigger, media: diagnostics.snapshot(audio) });
+    return true;
+  } catch (error) {
+    diagnostics.fatal('audio.play() rejected', error, audio, { trigger });
+    return false;
+  }
+}
+
+diagnostics.attachMedia(audio);
+diagnostics.setRetryHandler(() => { void attemptPlayback('diagnostic-retry'); });
+
 function loadSong(source, title, reference) {
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   const isUrl = /^https?:\/\//i.test(source);
   objectUrl = isUrl ? null : decodeHexAudio(source);
   audio.src = isUrl ? source : objectUrl;
+  diagnostics.record('audio-source-selected', {
+    sourceType: isUrl ? 'remote-url' : 'inline-hex',
+    source: isUrl ? diagnostics.redactUrl(source) : '[inline audio redacted]',
+    sourceCharacters: source.length
+  });
   trackTitle.textContent = title || 'Your Mehfil recording';
   trackSubtitle.textContent = 'Fresh from MiniMax Music 3';
   shareReference = reference || null;
@@ -335,7 +392,7 @@ function loadSong(source, title, reference) {
   performanceButton.hidden = !performanceView.hidden;
   performanceReplay.hidden = true;
   renderPlaybackLyrics();
-  audio.play().catch(() => {});
+  void attemptPlayback('generation-complete');
 }
 
 form.addEventListener('submit', async event => {
@@ -350,6 +407,7 @@ form.addEventListener('submit', async event => {
   generating = true;
   updateScenePerformance();
   let generationFailed = false;
+  let generationStage = 'write-lyrics';
   trackTitle.textContent = 'Your mehfil is recording';
   trackSubtitle.textContent = 'View the performance while you wait';
 
@@ -365,6 +423,7 @@ form.addEventListener('submit', async event => {
     // The words exist now. Offer the peek, then record whether or not it is taken.
     peek.hidden = false;
     setBusy(true, recordingLines);
+    generationStage = 'generate-music';
 
     // The native script is what gets sung: the music model pronounces it best.
     const result = await post('/api/generate', {
@@ -372,13 +431,21 @@ form.addEventListener('submit', async event => {
       prompt: lyricSheet.prompt || vibeInput.value,
       lyrics: lyricSheet.lyricsNative || lyricSheet.lyricsRoman
     });
+    diagnostics.record('generation-result', {
+      traceId: result?.trace_id || result?.traceId || result?.data?.trace_id || null,
+      hasDataAudio: typeof result?.data?.audio === 'string',
+      hasAudioUrl: typeof result?.audio?.url === 'string',
+      audioValueType: typeof result?.audio
+    });
     const source = result?.data?.audio || result?.audio?.url || result?.audio;
     if (!source || typeof source !== 'string') throw new Error('MiniMax succeeded but did not return an audio file.');
 
+    generationStage = 'load-song';
     loadSong(source, lyricSheet.title, result.share_ref);
     notice.className = 'notice working';
     notice.textContent = 'Your recording is ready.';
   } catch (error) {
+    diagnostics.fatal('Generation flow failed before playback', error, audio, { generationStage });
     notice.className = 'notice';
     notice.textContent = error.message;
     trackTitle.textContent = 'No recording was made';
@@ -389,16 +456,16 @@ form.addEventListener('submit', async event => {
     generating = false;
     updateScenePerformance();
     setBusy(false, []);
-    if (generationFailed) closePerformance();
+    if (generationFailed) closePerformance('generation-failed');
   }
 });
 
-performanceClose.addEventListener('click', closePerformance);
+performanceClose.addEventListener('click', () => closePerformance('user-close-button'));
 performanceButton.addEventListener('click', () => openPerformance(performanceButton));
 document.addEventListener('keydown', event => {
   if (performanceView.hidden) return;
   if (event.key === 'Escape') {
-    closePerformance();
+    closePerformance('escape-key');
     return;
   }
   if (event.key !== 'Tab') return;
@@ -426,11 +493,11 @@ performanceReplay.addEventListener('click', () => {
   delete revealLines.dataset.render;
   audio.currentTime = 0;
   renderPlaybackLyrics();
-  audio.play().catch(() => {});
+  void attemptPlayback('replay-button');
 });
 
 playButton.addEventListener('click', () => {
-  if (audio.paused) audio.play(); else audio.pause();
+  if (audio.paused) void attemptPlayback('play-button'); else audio.pause();
 });
 audio.addEventListener('play', () => {
   player.classList.add('playing');

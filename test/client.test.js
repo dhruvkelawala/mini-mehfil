@@ -50,3 +50,20 @@ test('a new generation clears the previous recording before changing lyric state
   const submitStart = app.slice(app.indexOf("form.addEventListener('submit'"), app.indexOf('\n  try {', app.indexOf("form.addEventListener('submit'")));
   assert.ok(submitStart.indexOf('clearLoadedSong()') < submitStart.indexOf('resetPeek()'), 'old media is cleared before lyrics are reset');
 });
+
+test('all playback attempts surface the real rejection through diagnostics', () => {
+  const attemptPlayback = functionBody('attemptPlayback');
+  assert.match(attemptPlayback, /await audio\.play\(\)/);
+  assert.match(attemptPlayback, /diagnostics\.fatal\(['"]audio\.play\(\) rejected['"],\s*error,\s*audio/);
+  assert.doesNotMatch(app, /audio\.play\(\)\.catch\(\(\) => \{\}\)/);
+  assert.match(app, /attemptPlayback\(['"]generation-complete['"]\)/);
+  assert.match(app, /attemptPlayback\(['"]replay-button['"]\)/);
+  assert.match(app, /attemptPlayback\(['"]play-button['"]\)/);
+});
+
+test('the opt-in diagnostic panel loads before the application', () => {
+  assert.match(html, /id="media-diagnostics"/);
+  assert.match(html, /id="media-diagnostics-copy"/);
+  assert.match(html, /id="media-diagnostics-download"/);
+  assert.ok(html.indexOf('/media-diagnostics.js') < html.indexOf('/app.js'));
+});
