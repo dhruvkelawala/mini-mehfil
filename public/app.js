@@ -285,7 +285,7 @@ function formatTime(seconds) {
 }
 
 function decodeHexAudio(hex) {
-  const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+  const clean = hex.replace(/^0x/i, '');
   const bytes = new Uint8Array(clean.length / 2);
   for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
   return URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }));
@@ -469,6 +469,7 @@ const recovery = recoveryApi.create({
     notice.className = 'notice';
     notice.textContent = `${error.message} Your recording checkpoint is safe.`;
     showPerformanceStatus('The recording may still be finishing.');
+    setBusy(false, []);
     checkGenerationButton.hidden = false;
     diagnostics.setRetryAction?.('Check generation', () => recovery.resume());
   }

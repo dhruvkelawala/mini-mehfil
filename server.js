@@ -82,7 +82,7 @@ async function readLimitedBody(response, limit) {
 
 function decodeAudioSource(source) {
   if (/^https:\/\//i.test(source)) return null;
-  const hex = source.startsWith('0x') ? source.slice(2) : source;
+  const hex = source.replace(/^0x/i, '');
   if (!hex || hex.length % 2 || !/^[0-9a-f]+$/i.test(hex)) throw Object.assign(new Error('The finished recording is unavailable.'), { status: 400 });
   const audio = Buffer.from(hex, 'hex');
   if (audio.length > MAX_SHARE_AUDIO_BYTES) throw Object.assign(new Error('The recording is larger than the 10 MB sharing limit.'), { status: 413 });
@@ -322,7 +322,7 @@ function createServer(options = {}) {
         }
         if (claimedJobId && paidCallStarted && !audioReady) {
           const failure = publicFailure('Generation failed while contacting MiniMax.', 'MINIMAX_UNAVAILABLE');
-          await checkpointFailure(claimedJobId, failure);
+          if (!await checkpointFailure(claimedJobId, failure)) return sendJson(res, 503, { error: 'Generation ended, but recovery could not save its final status. Please check again.' });
           return sendJson(res, 502, { error: failure.message });
         }
         return sendJson(res, error.status || 500, { error: error.message || 'Generation failed.' });

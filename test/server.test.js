@@ -370,6 +370,28 @@ test('a completed paid call is not reported successful when its checkpoint fails
   assert.equal(checkpointCalls, 1);
 });
 
+test('a MiniMax network failure reports retryable storage trouble when failure checkpointing also fails', async () => {
+  let checkpointCalls = 0;
+  const mockFetch = async (url, init = {}) => {
+    if (url.endsWith('/claim')) return new Response(JSON.stringify({ jobId: JOB_ID, status: 'pending' }), { status: 201 });
+    if (url === 'https://mock.minimax.test/v1/music_generation') throw new Error('socket lost at https://signed.example/?secret=yes');
+    if (init.method === 'PUT') {
+      checkpointCalls += 1;
+      return new Response(JSON.stringify({ error: 'Store unavailable.' }), { status: 503 });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  await withServer(mockFetch, async base => {
+    const response = await fetch(`${base}/api/generate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId: JOB_ID, token: 'sk-private', lyrics: 'Network failure' })
+    });
+    const text = await response.text();
+    assert.equal(response.status, 503);
+    assert.doesNotMatch(text, /signed|secret|socket/);
+  }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
+  assert.equal(checkpointCalls, 2);
+});
+
 test('generation status preserves pending and failed contracts and distinguishes missing storage', async () => {
   const pendingId = '111111111111111111111111';
   const failedId = '222222222222222222222222';
@@ -396,18 +418,22 @@ test('generation status preserves pending and failed contracts and distinguishes
 
 test('sharing resolves a completed job after the generating server process is gone', async () => {
   let job;
+  let uploadedAudio;
   const mockFetch = async (url, init = {}) => {
     if (url.endsWith('/claim')) {
       job = { jobId: JOB_ID, status: 'pending' };
       return new Response(JSON.stringify(job), { status: 201 });
     }
-    if (url === 'https://mock.minimax.test/v1/music_generation') return new Response(JSON.stringify({ data: { audio: '494433' }, base_resp: { status_code: 0 } }));
+    if (url === 'https://mock.minimax.test/v1/music_generation') return new Response(JSON.stringify({ data: { audio: '0X494433' }, base_resp: { status_code: 0 } }));
     if (url === `https://share.example/generation-jobs/${JOB_ID}` && init.method === 'PUT') {
       job = { jobId: JOB_ID, ...JSON.parse(init.body) };
       return new Response(JSON.stringify(job));
     }
     if (url === `https://share.example/generation-jobs/${JOB_ID}`) return new Response(JSON.stringify(job));
-    if (url === 'https://share.example/shares') return new Response(JSON.stringify({ url: 'https://share.example/s/AbCdEfGhIjKlMnOp' }), { status: 201 });
+    if (url === 'https://share.example/shares') {
+      uploadedAudio = new Uint8Array(await init.body.get('audio').arrayBuffer());
+      return new Response(JSON.stringify({ url: 'https://share.example/s/AbCdEfGhIjKlMnOp' }), { status: 201 });
+    }
     throw new Error(`Unexpected URL: ${url}`);
   };
   const options = { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' };
@@ -425,6 +451,7 @@ test('sharing resolves a completed job after the generating server process is go
     });
     assert.equal(response.status, 201);
   }, options);
+  assert.deepEqual(uploadedAudio, new Uint8Array([73, 68, 51]));
 });
 
 const SHEET = {

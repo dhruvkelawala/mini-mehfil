@@ -42,6 +42,6 @@ The saloon.wtf-inspired dusk-courtyard identity is **binding**: that stacked wor
 ## Product Principles
 
 1. One room, one loop — everything serves write → record → listen on a single screen.
-2. The user's key, the user's music — never store, log, or phone home with tokens, lyrics, or audio.
+2. The user's key, the user's music — never store or log the token. Keep a pending lyric sheet only in the current tab for lifecycle recovery; keep a private finished source for at most 24 hours, and store the full song/lyrics only after an explicit Share.
 3. Stdlib or nothing — features that require a dependency are features to redesign.
 4. Warmth over utility chrome — the mehfil atmosphere is the product's differentiation; keep it even in error states and edge cases.
