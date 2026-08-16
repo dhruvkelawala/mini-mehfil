@@ -111,6 +111,12 @@ export function roomPage(roomId, nonce) {
       color: var(--ink); background: rgba(8,24,23,.45); box-shadow: inset 0 1px 3px rgba(0,0,0,.2);
       transition: border-color .2s, background .2s, box-shadow .2s;
     }
+    select {
+      padding-right: 34px; cursor: pointer; appearance: none;
+      background-image: linear-gradient(45deg, transparent 50%, var(--amber) 50%), linear-gradient(135deg, var(--amber) 50%, transparent 50%);
+      background-position: calc(100% - 17px) 19px, calc(100% - 12px) 19px; background-size: 5px 5px; background-repeat: no-repeat;
+    }
+    select option { color: #2f2720; background: #f2e3c2; }
     textarea { height: 88px; resize: vertical; line-height: 1.45; }
     input:focus, select:focus, textarea:focus { border-color: var(--amber); background: rgba(8,24,23,.68); box-shadow: 0 0 0 3px rgba(230,166,83,.14); }
     input::placeholder, textarea::placeholder { color: #b3a08a; opacity: 1; }
@@ -229,7 +235,22 @@ export function roomPage(roomId, nonce) {
         <textarea id="idea" maxlength="200" required placeholder="A late-night drive home, monsoon chai…"></textarea>
         <div class="field-row">
           <label class="field" for="vibe"><span>Vibe <em>optional</em></span><input id="vibe" maxlength="120" placeholder="warm, acoustic"></label>
-          <label class="field" for="language"><span>Language <em>optional</em></span><input id="language" maxlength="40" placeholder="Auto-detect"></label>
+          <label class="field" for="language"><span>Language</span><select id="language">
+            <option value="auto" selected>Auto-detect</option>
+            <option value="Gujarati">Gujarati</option>
+            <option value="Hindi">Hindi</option>
+            <option value="Punjabi">Punjabi</option>
+            <option value="Tamil">Tamil</option>
+            <option value="Bengali">Bengali</option>
+            <option value="Marathi">Marathi</option>
+            <option value="Urdu">Urdu</option>
+            <option value="English">English</option>
+            <option value="Spanish">Spanish</option>
+            <option value="French">French</option>
+            <option value="Arabic">Arabic</option>
+            <option value="Japanese">Japanese</option>
+            <option value="Korean">Korean</option>
+          </select></label>
         </div>
         <button class="generate"><span>Request a song</span><span aria-hidden="true">→</span></button>
       </form>
