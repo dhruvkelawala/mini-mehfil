@@ -355,4 +355,23 @@ test('host room treats auth close as terminal and waits for expiry acknowledgeme
 test('host reorder targets use full queue indices when terminal rows are hidden',()=>{const targets=Function(`return (${functionSource('roomReorderTargets')})`)();const queue=[{id:'done',status:'ready'},{id:'a',status:'pending'},{id:'declined',status:'declined'},{id:'b',status:'accepted'}];assert.deepEqual(targets(queue,'a'),{up:1,down:3});assert.deepEqual(targets(queue,'b'),{up:1,down:3});});
 test('host view covers every participant, requester names, and Worker-origin setlist links',()=>{const view=Function(`return (${functionSource('hostRoomView')})`)();const state={participants:[{id:'p1',name:'Ada'},{id:'p2',name:''}],queue:[{id:'q1',participantId:'p1',idea:'Rain',status:'ready'},{id:'q2',participantId:'p2',idea:'Sun',status:'declined'}],setlist:[{shareId:'AbCdEfGhIjKlMnOp',title:'Rain'}]};assert.deepEqual(view(state,'https://worker.example/r/ABCDEFGH'),{participants:[{id:'p1',name:'Ada'},{id:'p2',name:'Listener'}],queue:[{...state.queue[0],requesterName:'Ada'},{...state.queue[1],requesterName:'Listener'}],setlist:[{...state.setlist[0],url:'https://worker.example/s/AbCdEfGhIjKlMnOp'}]});const render=functionBody('renderHostRoom');const participant=functionBody('participantRow');const queue=functionBody('queueRow');assert.match(render,/hostParticipants\.replaceChildren/);assert.match(participant,/participant\.name/);assert.match(queue,/requesterName/);assert.match(render,/hostSetlist\.replaceChildren/);});
 test('host close keeps its session when disconnected',()=>{const closeHandler=app.slice(app.indexOf("document.querySelector('#close-room')"));assert.match(closeHandler,/if \(!roomSend\(\{ type: 'room-expired' \}\)\)[\s\S]*Wait for it to reconnect[\s\S]*return/);const send=functionBody('roomSend');assert.match(send,/return false/);assert.match(send,/roomAuthenticated/);assert.match(send,/return true/);});
-test('host panel exposes gathering and queue controls',()=>{for(const id of ['open-room','room-panel','room-link','host-participants','host-queue','host-setlist','close-room'])assert.match(html,new RegExp(`id="${id}"`));for(const label of ['Accept','Decline','Record','Kick'])assert.ok(app.includes(`'${label}'`));});
+test('host panel is a global utility that does not displace the song composer', () => {
+  for (const id of [
+    'open-room', 'room-panel', 'room-link', 'host-participants',
+    'host-queue', 'host-setlist', 'dismiss-room', 'close-room'
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+
+  const topbar = html.slice(html.indexOf('<header class="topbar">'), html.indexOf('</header>'));
+  const identityStart = html.indexOf('<section class="identity"');
+  const identity = html.slice(identityStart, html.indexOf('</section>', identityStart));
+  assert.match(topbar, /id="open-room"/);
+  assert.doesNotMatch(identity, /id="open-room"|id="room-panel"/);
+  assert.ok(html.indexOf('id="room-panel"') > html.indexOf('</main>'));
+  assert.match(app, /setRoomPanelOpen\(roomPanel\.hidden/);
+  assert.match(app, /document\.querySelector\('#dismiss-room'\)/);
+  for (const label of ['Accept', 'Decline', 'Record', 'Kick']) {
+    assert.ok(app.includes(`'${label}'`));
+  }
+});

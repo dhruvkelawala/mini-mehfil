@@ -39,6 +39,9 @@ const diagnostics = window.MehfilMediaDiagnostics || {
 };
 const recoveryApi = window.MehfilGenerationRecovery;
 const openRoomButton = document.querySelector('#open-room');
+const openRoomLabel = document.querySelector('#room-open-label');
+const openRoomWideLabel = openRoomLabel.querySelector('.room-open-wide');
+const openRoomCompactLabel = openRoomLabel.querySelector('.room-open-compact');
 const roomPanel = document.querySelector('#room-panel');
 const roomStateLabel = document.querySelector('#room-state');
 const roomCode = document.querySelector('#room-code');
@@ -826,6 +829,11 @@ function roomSession() {
   }
 }
 
+function setRoomButtonLabel(wide, compact = wide) {
+  openRoomWideLabel.textContent = wide;
+  openRoomCompactLabel.textContent = compact;
+}
+
 function clearRoomSession() {
   roomClosing = false;
   roomTerminal = true;
@@ -836,7 +844,16 @@ function clearRoomSession() {
   roomAuthenticated = false;
   activeRoomDetails = null;
   roomPanel.hidden = true;
-  openRoomButton.hidden = false;
+  openRoomButton.classList.remove('is-live');
+  openRoomButton.setAttribute('aria-expanded', 'false');
+  openRoomButton.setAttribute('aria-label', 'Open this mehfil to friends');
+  setRoomButtonLabel('Invite friends', 'Invite');
+}
+
+function setRoomPanelOpen(open, { focus = false } = {}) {
+  roomPanel.hidden = !open;
+  openRoomButton.setAttribute('aria-expanded', String(open));
+  if (open && focus) document.querySelector('#room-heading').focus();
 }
 
 function roomButton(label, action, value) {
@@ -960,6 +977,8 @@ function renderHostRoom(state) {
   const view = hostRoomView(state, activeRoomDetails.joinUrl);
   roomStateLabel.textContent = state.expiredAt ? 'expired' : 'connected';
   roomPresence.textContent = `${state.listenerCount} listener${state.listenerCount === 1 ? '' : 's'}`;
+  setRoomButtonLabel(`Live · ${state.listenerCount}`);
+  openRoomButton.setAttribute('aria-label', `Manage live mehfil, ${state.listenerCount} listener${state.listenerCount === 1 ? '' : 's'}`);
   hostParticipants.replaceChildren(...view.participants.map(participantRow));
   hostSetlist.replaceChildren(...view.setlist.map(setlistRow));
 
@@ -974,8 +993,9 @@ function connectHostRoom(details) {
   roomTerminal = false;
   roomAuthenticated = false;
   activeRoomDetails = details;
-  roomPanel.hidden = false;
-  openRoomButton.hidden = true;
+  setRoomPanelOpen(true, { focus: true });
+  openRoomButton.classList.add('is-live');
+  setRoomButtonLabel(roomRetry ? 'Reconnecting…' : 'Opening…', roomRetry ? 'Retrying…' : 'Opening…');
   roomCode.textContent = details.roomId;
   roomLink.value = details.joinUrl;
   roomStateLabel.textContent = roomRetry ? 'reconnecting' : 'connecting';
@@ -1022,6 +1042,7 @@ function connectHostRoom(details) {
     if (roomClosing) return;
 
     roomStateLabel.textContent = 'reconnecting';
+    setRoomButtonLabel('Reconnecting…', 'Retrying…');
     const delay = Math.min(1_000 * 2 ** roomRetry, 30_000);
     roomRetry = Math.min(roomRetry + 1, 6);
     setTimeout(() => {
@@ -1106,7 +1127,12 @@ async function recordRoomRequest(requestId) {
 }
 
 openRoomButton.addEventListener('click', async () => {
+  if (activeRoomDetails) {
+    setRoomPanelOpen(roomPanel.hidden, { focus: roomPanel.hidden });
+    return;
+  }
   openRoomButton.disabled = true;
+  setRoomButtonLabel('Opening…');
   try {
     const details = await post('/api/rooms', {});
     sessionStorage.setItem(ROOM_SESSION_KEY, JSON.stringify({
@@ -1121,7 +1147,13 @@ openRoomButton.addEventListener('click', async () => {
     notice.textContent = error.message;
   } finally {
     openRoomButton.disabled = false;
+    if (!activeRoomDetails) setRoomButtonLabel('Invite friends', 'Invite');
   }
+});
+
+document.querySelector('#dismiss-room').addEventListener('click', () => {
+  setRoomPanelOpen(false);
+  openRoomButton.focus();
 });
 
 document.querySelector('#copy-room').addEventListener('click', () => {
@@ -1139,6 +1171,7 @@ document.querySelector('#close-room').addEventListener('click', () => {
 
   roomClosing = true;
   roomStateLabel.textContent = 'closing';
+  setRoomButtonLabel('Closing…');
   setTimeout(() => {
     if (roomClosing) clearRoomSession();
   }, 1_500);
