@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#1f4238">
-  <meta name="description" content="Mini Mehfil — a private local song room powered by MiniMax Music 3.">
-  <title>Mini Mehfil — MiniMax Music 3</title>
+  <meta name="description" content="Mini Mehfil, a private local song room powered by MiniMax Music 3.">
+  <title>Mini Mehfil | MiniMax Music 3</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -317,6 +317,10 @@
     </button>
     <div class="performance-content">
       <div class="performance-status" id="performance-status" role="status" aria-live="polite"></div>
+      <button class="performance-replay" id="check-generation" type="button" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8V4m0 0h4M5 4l3.1 3.1a7 7 0 1 1-1.4 7.2"/></svg>
+        <span>Check generation</span>
+      </button>
       <!-- The words are written before the song records. Peeking is opt-in. -->
       <div class="peek" id="peek" hidden>
         <button type="button" class="peek-toggle" id="peek-toggle" aria-expanded="false" aria-controls="lyric-reveal">
@@ -363,6 +367,26 @@
     <audio id="audio" preload="metadata"></audio>
   </section>
 
+  <button id="media-diagnostics-open" class="media-diagnostics-open" type="button" hidden>Media diagnostics</button>
+  <section id="media-diagnostics" class="media-diagnostics" role="dialog" aria-modal="true" aria-labelledby="media-diagnostics-title" hidden>
+    <div class="media-diagnostics-sheet">
+      <p class="media-diagnostics-kicker">Diagnostic preview · persistent local log</p>
+      <h2 id="media-diagnostics-title">Playback stopped for evidence</h2>
+      <p id="media-diagnostics-headline" class="media-diagnostics-headline">Media diagnostics are recording</p>
+      <p class="media-diagnostics-help">Copy or download this sanitized report and send it back. Tokens, lyrics, request bodies, signed URL paths, and query strings are excluded.</p>
+      <div class="media-diagnostics-actions">
+        <button id="media-diagnostics-retry" type="button">Retry</button>
+        <button id="media-diagnostics-copy" type="button">Copy report</button>
+        <button id="media-diagnostics-download" type="button">Download JSON</button>
+        <button id="media-diagnostics-clear" type="button">Clear log</button>
+        <button id="media-diagnostics-close" type="button">Continue testing</button>
+      </div>
+      <pre id="media-diagnostics-output" tabindex="0"></pre>
+    </div>
+  </section>
+
+  <script src="/media-diagnostics.js"></script>
+  <script src="/generation-recovery.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

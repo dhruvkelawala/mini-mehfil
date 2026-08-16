@@ -50,7 +50,7 @@ h1 {
   margin: 0; font-family: "Noto Serif Devanagari", "Kohinoor Devanagari", serif; font-size: clamp(88px, 11vw, 172px); line-height: 1.04;
   letter-spacing: -.01em; font-weight: 800; filter: drop-shadow(0 7px 0 rgba(110,32,29,.22));
 }
-/* "Mini" rides above the shirorekha — the pun on MiniMax, said quietly. */
+/* "Mini" rides above the shirorekha, with the pun on MiniMax said quietly. */
 .mini {
   /* Devanagari ink sits high in its line box, so "Mini" needs real clearance
      above the shirorekha or the two collide. Measured, not guessed. */
@@ -215,6 +215,25 @@ input::placeholder { color: #b3a08a; opacity: 1; }
 .performance[data-stage="playing"] .performance-status { display: none; }
 .performance-open main, .performance-open .topbar { opacity: 0; pointer-events: none; transition: opacity .35s; }
 .performance-open .scene { transform: scale(1.018); }
+.media-diagnostics-open {
+  position: fixed; z-index: 20; top: 76px; right: 14px; padding: 7px 10px; border: 1px solid #f0bf64; border-radius: 999px;
+  color: #17120b; background: #f0bf64; box-shadow: 0 6px 20px rgba(0,0,0,.3); cursor: pointer; font-size: 10px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase;
+}
+.media-diagnostics {
+  position: fixed; z-index: 1000; inset: 0; padding: max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
+  overflow: auto; color: #f7f1e7; background: rgba(5,10,10,.96); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.media-diagnostics[hidden] { display: none; }
+.media-diagnostics-sheet { width: min(840px, 100%); margin: 0 auto; }
+.media-diagnostics-kicker { margin: 0 0 8px; color: #f0bf64; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.media-diagnostics h2 { color: #fff; font: 800 clamp(25px, 6vw, 42px)/1.1 "Avenir Next", sans-serif; letter-spacing: -.03em; }
+.media-diagnostics-headline { margin: 14px 0 0; padding: 12px; border: 1px solid #7a6a50; border-radius: 6px; color: #f8dda8; background: #211d16; font: 700 14px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.media-diagnostics.is-fatal .media-diagnostics-headline { border-color: #ff725e; color: #fff; background: #481a16; }
+.media-diagnostics-help { color: #c9c0b3; font-size: 12px; line-height: 1.5; }
+.media-diagnostics-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.media-diagnostics-actions button { min-height: 42px; padding: 8px 12px; border: 1px solid #907f65; border-radius: 5px; color: #fff; background: #29251f; cursor: pointer; font-size: 12px; font-weight: 750; }
+.media-diagnostics-actions button:first-child { border-color: #f0bf64; color: #21170a; background: #f0bf64; }
+.media-diagnostics pre { margin: 0; padding: 14px; max-height: 58svh; overflow: auto; border: 1px solid #403b34; border-radius: 6px; color: #d6e4dc; background: #0b1110; font-size: 10px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* While a song is being written or played, the courtyard lamps breathe. */
 .scene.is-performing svg { animation: settle 1.4s cubic-bezier(.2,.75,.2,1) both, breathe 3.6s 1.4s ease-in-out infinite; }
 @keyframes breathe { 50% { filter: brightness(1.11) saturate(1.06); } }

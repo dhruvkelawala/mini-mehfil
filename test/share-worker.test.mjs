@@ -18,6 +18,8 @@ const SONG = {
 
 function memoryStorage() {
   const shares = new Map();
+  const jobs = new Map();
+  let revision = 0;
   return {
     async put(id, value) { shares.set(id, value); },
     async getMetadata(id) { return shares.get(id)?.metadata || null; },
@@ -25,8 +27,32 @@ function memoryStorage() {
       const share = shares.get(id);
       if (!share) return null;
       return { body: share.audio, size: share.audio.byteLength, contentType: share.contentType };
+    },
+    async claimJob(id, record) {
+      if (jobs.has(id)) return { created: false, ...jobs.get(id) };
+      const entry = { record, etag: `memory-${++revision}` };
+      jobs.set(id, entry);
+      return { created: true, ...entry };
+    },
+    async getJob(id) { return jobs.get(id) || null; },
+    async transitionJob(id, record, etag) {
+      const current = jobs.get(id);
+      if (!current || current.etag !== etag) return { conflict: true };
+      const entry = { record, etag: `memory-${++revision}` };
+      jobs.set(id, entry);
+      return { conflict: false, ...entry };
     }
   };
+}
+
+function jobRequest(path, { method = 'GET', body, authorized = true } = {}) {
+  const headers = authorized ? { authorization: `Bearer ${SECRET}` } : {};
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  return new Request(`https://share.example${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
 }
 
 function uploadFormRequest(form, headers = {}) {
@@ -184,6 +210,131 @@ test('stored metadata is whitelisted and never includes credentials', async () =
   assert.equal(stored.metadata.token, undefined);
   assert.equal(stored.metadata.apiKey, undefined);
   assert.doesNotMatch(JSON.stringify(stored.metadata), /secret/);
+});
+
+test('generation jobs are claimed once and duplicate claims return the original pending record', async () => {
+  const storage = memoryStorage();
+  const handle = createShareHandler({ storage, uploadSecret: SECRET, now: () => Date.parse('2026-08-15T12:00:00Z') });
+  const first = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST' }));
+  const duplicate = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST' }));
+  assert.equal(first.status, 201);
+  assert.equal(duplicate.status, 200);
+  assert.deepEqual(await duplicate.json(), await first.json());
+  const record = (await storage.getJob(IDEMPOTENCY_KEY)).record;
+  assert.equal(record.status, 'pending');
+  assert.equal(record.createdAt, '2026-08-15T12:00:00.000Z');
+  assert.equal(record.expiresAt, '2026-08-16T12:00:00.000Z');
+});
+
+test('an abandoned generation becomes a durable failure instead of staying pending forever', async () => {
+  const storage = memoryStorage();
+  let current = Date.parse('2026-08-15T12:00:00Z');
+  const handle = createShareHandler({ storage, uploadSecret: SECRET, now: () => current });
+  await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST' }));
+
+  current += 5 * 60 * 1000 + 1;
+  const status = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`));
+  assert.equal(status.status, 200);
+  assert.deepEqual(await status.json(), {
+    version: 1,
+    jobId: IDEMPOTENCY_KEY,
+    status: 'failed',
+    createdAt: '2026-08-15T12:00:00.000Z',
+    updatedAt: '2026-08-15T12:05:00.001Z',
+    expiresAt: '2026-08-16T12:00:00.000Z',
+    error: {
+      code: 'GENERATION_INTERRUPTED',
+      message: 'The recording stopped before it could finish. Try the mehfil again.'
+    }
+  });
+
+  const duplicate = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST' }));
+  assert.equal(duplicate.status, 200);
+  assert.equal((await duplicate.json()).status, 'failed');
+  const lateCompletion = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, {
+    method: 'PUT',
+    body: { status: 'complete', source: 'https://cdn.example/song.mp3' }
+  }));
+  assert.equal(lateCompletion.status, 409);
+});
+
+test('generation job completion is whitelisted, conditional, and idempotent', async () => {
+  const storage = memoryStorage();
+  const handle = createShareHandler({ storage, uploadSecret: SECRET, now: () => Date.parse('2026-08-15T12:00:00Z') });
+  await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST' }));
+  const body = { status: 'complete', source: 'https://cdn.example/song.mp3?signature=private', traceId: 'trace-safe', token: 'secret', lyrics: 'private', prompt: 'private' };
+  const completed = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body }));
+  assert.equal(completed.status, 200);
+  const value = await completed.json();
+  assert.equal(value.createdAt, '2026-08-15T12:00:00.000Z');
+  assert.equal(value.source, body.source);
+  assert.equal(value.traceId, 'trace-safe');
+  assert.equal(value.token, undefined);
+  assert.equal(value.lyrics, undefined);
+  assert.equal(value.prompt, undefined);
+  assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body }))).status, 200);
+  assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body: { status: 'failed', error: { code: 'GENERATION_FAILED', message: 'No song.' } } }))).status, 409);
+});
+
+test('generation jobs reject non-HTTPS and malformed audio sources', async () => {
+  for (const source of ['http://cdn.example/song.mp3', 'not-a-url-or-hex', 'abc']) {
+    const handle = createShareHandler({ storage: memoryStorage(), uploadSecret: SECRET });
+    await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST' }));
+    const response = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body: { status: 'complete', source } }));
+    assert.equal(response.status, 400);
+  }
+});
+
+test('generation job routes reject invalid, expired, oversized, and unauthenticated requests without mutation', async () => {
+  const storage = memoryStorage();
+  let current = Date.parse('2026-08-15T12:00:00Z');
+  const handle = createShareHandler({ storage, uploadSecret: SECRET, now: () => current });
+  assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST', authorized: false }))).status, 401);
+  assert.equal((await handle(jobRequest('/generation-jobs/bad/claim', { method: 'POST' }))).status, 400);
+  await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST' }));
+  const malformed = await handle(new Request(`https://share.example/generation-jobs/${IDEMPOTENCY_KEY}`, {
+    method: 'PUT', headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' }, body: '{'
+  }));
+  assert.equal(malformed.status, 400);
+  assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body: { status: 'complete', source: 'x'.repeat(70 * 1024) } }))).status, 413);
+  current += 24 * 60 * 60 * 1000 + 1;
+  assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`))).status, 404);
+  assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body: { status: 'failed', error: { code: 'FAILED', message: 'Failed.' } } }))).status, 404);
+});
+
+test('R2 generation storage uses atomic create and handles conditional conflicts', async () => {
+  const puts = [];
+  let getResult = null;
+  const bucket = {
+    async put(key, value, options) { puts.push({ key, value: JSON.parse(value), options }); return null; },
+    async get() { return getResult; }
+  };
+  const storage = createR2Storage(bucket);
+  const record = { version: 1, jobId: IDEMPOTENCY_KEY, status: 'pending' };
+  const claim = await storage.claimJob(IDEMPOTENCY_KEY, record);
+  assert.equal(claim.created, false);
+  assert.deepEqual(puts[0].options.onlyIf, { etagDoesNotMatch: '*' });
+  getResult = { httpEtag: '"etag-1"', async text() { return JSON.stringify(record); } };
+  assert.deepEqual(await storage.getJob(IDEMPOTENCY_KEY), { record, etag: 'etag-1' });
+  const transition = await storage.transitionJob(IDEMPOTENCY_KEY, { ...record, status: 'failed' }, 'etag-1');
+  assert.equal(transition.conflict, true);
+  assert.deepEqual(puts[1].options.onlyIf, { etagMatches: 'etag-1' });
+});
+
+test('an identical terminal transition that loses an ETag race is idempotent success', async () => {
+  const createdAt = '2026-08-15T12:00:00.000Z';
+  const pending = { version: 1, jobId: IDEMPOTENCY_KEY, status: 'pending', createdAt, updatedAt: createdAt, expiresAt: '2026-08-16T12:00:00.000Z' };
+  const complete = { ...pending, status: 'complete', source: 'https://cdn.example/song.mp3' };
+  let reads = 0;
+  const storage = {
+    async getJob() { reads += 1; return { record: reads === 1 ? pending : complete, etag: `etag-${reads}` }; },
+    async transitionJob() { return { conflict: true }; },
+    async claimJob() { throw new Error('not used'); }
+  };
+  const handle = createShareHandler({ storage, uploadSecret: SECRET, now: () => Date.parse(createdAt) });
+  const response = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body: { status: 'complete', source: complete.source } }));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).source, complete.source);
 });
 
 test('R2 storage returns seekable ranges, HEAD metadata, and unsatisfiable range responses', async () => {

@@ -30,7 +30,14 @@ const performanceStatus = document.querySelector('#performance-status');
 const performanceTiming = document.querySelector('#performance-timing');
 const performanceReplay = document.querySelector('#performance-replay');
 const performanceButton = document.querySelector('#view-performance');
+const checkGenerationButton = document.querySelector('#check-generation');
 const playerHome = document.querySelector('#player-home');
+const diagnostics = window.MehfilMediaDiagnostics || {
+  enabled: false,
+  record() {}, fatal() {}, attachMedia() {}, setRetryHandler() {}, setRetryAction() {},
+  snapshot() { return null; }, redactUrl() { return '[diagnostics unavailable]'; }
+};
+const recoveryApi = window.MehfilGenerationRecovery;
 
 const writingLines = [
   'Listening to your idea…',
@@ -43,7 +50,7 @@ const recordingLines = [
   'Tabla finds the taal…',
   'The singer clears their throat…',
   'First take, everyone quiet…',
-  'Almost there — good songs take a moment…'
+  'Almost there. Good songs take a moment…'
 ];
 
 let waitingTimer;
@@ -57,9 +64,37 @@ let shareReference = null;
 let shareUrl = null;
 let performanceAvailable = false;
 let performanceOpener = null;
+let generationRequestInFlight = false;
+let lifecycleBackgroundVersion = 0;
+const foregroundWaiters = [];
 
 function updateClock() {
   document.querySelector('#clock').textContent = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(new Date()).toLowerCase();
+}
+
+function waitForForeground() {
+  if (document.visibilityState === 'visible') return Promise.resolve();
+  return new Promise(resolve => foregroundWaiters.push(resolve));
+}
+
+function notifyForeground() {
+  foregroundWaiters.splice(0).forEach(resolve => resolve());
+}
+
+async function writeLyricsAcrossLifecycle(payload) {
+  let observedBackgroundVersion = lifecycleBackgroundVersion;
+  while (true) {
+    try {
+      return await post('/api/write-lyrics', payload);
+    } catch (error) {
+      const interruptedByBackground = !Number.isInteger(error.httpStatus)
+        && lifecycleBackgroundVersion !== observedBackgroundVersion;
+      if (!interruptedByBackground) throw error;
+      diagnostics.record('lyrics-request-retrying-after-background');
+      observedBackgroundVersion = lifecycleBackgroundVersion;
+      await waitForForeground();
+    }
+  }
 }
 updateClock();
 setInterval(updateClock, 30000);
@@ -164,6 +199,7 @@ function updateScenePerformance() {
 
 function openPerformance(opener = document.activeElement) {
   if (!performanceAvailable) return;
+  diagnostics.record('performance-open', { hasAudioSource: Boolean(audio.src) });
   performanceOpener = opener;
   performanceView.hidden = false;
   performanceView.append(player);
@@ -179,7 +215,8 @@ function openPerformance(opener = document.activeElement) {
   performanceClose.focus();
 }
 
-function closePerformance() {
+function closePerformance(reason = 'unknown') {
+  diagnostics.record('performance-close', { reason, hasAudioSource: Boolean(audio.src) });
   playerHome.after(player);
   performanceView.hidden = true;
   performanceButton.hidden = !performanceAvailable;
@@ -263,7 +300,7 @@ function setBusy(busy, lines) {
   notice.textContent = lines[index];
   showPerformanceStatus(lines[index]);
   waitingTimer = setInterval(() => {
-    index = Math.min(index + 1, lines.length - 1);
+    index = (index + 1) % lines.length;
     notice.textContent = lines[index];
     showPerformanceStatus(lines[index]);
   }, 6000);
@@ -276,20 +313,47 @@ function formatTime(seconds) {
 }
 
 function decodeHexAudio(hex) {
-  const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+  const clean = hex.replace(/^0x/i, '');
   const bytes = new Uint8Array(clean.length / 2);
   for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
   return URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }));
 }
 
 async function post(url, payload) {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+  const startedAt = performance.now();
+  diagnostics.record('api-request-start', { endpoint: url });
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    diagnostics.record('api-request-rejected', {
+      endpoint: url,
+      elapsedMs: Math.round(performance.now() - startedAt),
+      error
+    });
+    throw error;
+  }
+  diagnostics.record('api-response', {
+    endpoint: url,
+    status: response.status,
+    ok: response.ok,
+    elapsedMs: Math.round(performance.now() - startedAt),
+    contentType: response.headers.get('content-type')
   });
-  const result = await response.json().catch(() => ({ error: 'The server returned an unreadable response.' }));
-  if (!response.ok) throw new Error(result.error || 'Something went wrong.');
+  const result = await response.json().catch(error => {
+    diagnostics.record('api-json-rejected', { endpoint: url, error });
+    return { error: 'The server returned an unreadable response.' };
+  });
+  if (!response.ok) {
+    const error = new Error(result.error || 'Something went wrong.');
+    error.httpStatus = response.status;
+    diagnostics.record('api-http-error', { endpoint: url, status: response.status, error });
+    throw error;
+  }
   return result;
 }
 
@@ -317,11 +381,35 @@ function clearLoadedSong() {
   performanceReplay.hidden = true;
 }
 
+async function attemptPlayback(trigger) {
+  diagnostics.record('play-attempt', {
+    trigger,
+    media: diagnostics.snapshot(audio),
+    userActivation: diagnostics.userActivation?.() || null
+  });
+  try {
+    await audio.play();
+    diagnostics.record('play-resolved', { trigger, media: diagnostics.snapshot(audio) });
+    return true;
+  } catch (error) {
+    diagnostics.fatal('audio.play() rejected', error, audio, { trigger });
+    return false;
+  }
+}
+
+diagnostics.attachMedia(audio);
+diagnostics.setRetryHandler(() => { void attemptPlayback('diagnostic-retry'); });
+
 function loadSong(source, title, reference) {
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   const isUrl = /^https?:\/\//i.test(source);
   objectUrl = isUrl ? null : decodeHexAudio(source);
   audio.src = isUrl ? source : objectUrl;
+  diagnostics.record('audio-source-selected', {
+    sourceType: isUrl ? 'remote-url' : 'inline-hex',
+    source: isUrl ? diagnostics.redactUrl(source) : '[inline audio redacted]',
+    sourceCharacters: source.length
+  });
   trackTitle.textContent = title || 'Your Mehfil recording';
   trackSubtitle.textContent = 'Fresh from MiniMax Music 3';
   shareReference = reference || null;
@@ -335,13 +423,118 @@ function loadSong(source, title, reference) {
   performanceButton.hidden = !performanceView.hidden;
   performanceReplay.hidden = true;
   renderPlaybackLyrics();
-  audio.play().catch(() => {});
+  void attemptPlayback('generation-complete');
+}
+
+function generationError(message, { clear = true } = {}) {
+  checkGenerationButton.hidden = true;
+  if (clear) recovery.clear();
+  generating = false;
+  updateScenePerformance();
+  setBusy(false, []);
+  notice.className = 'notice';
+  notice.textContent = message;
+  trackTitle.textContent = 'No recording was made';
+  trackSubtitle.textContent = 'Try the mehfil again';
+  performanceAvailable = false;
+  closePerformance('generation-failed');
+}
+
+function finalizeGeneration(result, pending) {
+  if (!pending || pending.run !== generationRun || pending.jobId !== result?.jobId) return false;
+  const source = result?.data?.audio || result?.audio?.url || result?.audio;
+  if (!source || typeof source !== 'string') {
+    generationError('MiniMax succeeded but did not return an audio file.');
+    return false;
+  }
+  lyricSheet = pending.lyricSheet;
+  peek.hidden = false;
+  checkGenerationButton.hidden = true;
+  diagnostics.record('generation-recovery-complete', { jobIdPrefix: pending.jobId.slice(0, 6) });
+  loadSong(source, lyricSheet.title, result.share_ref || null);
+  recovery.clear();
+  generating = false;
+  updateScenePerformance();
+  setBusy(false, []);
+  notice.className = 'notice working';
+  notice.textContent = 'Your recording is ready.';
+  diagnostics.setRetryAction?.('Retry playback', () => { void attemptPlayback('diagnostic-retry'); });
+  return true;
+}
+
+const recovery = recoveryApi.create({
+  storage: sessionStorage,
+  onRequest(pending) {
+    checkGenerationButton.hidden = true;
+    diagnostics.record('generation-status-request', { jobIdPrefix: pending.jobId.slice(0, 6) });
+  },
+  onResponse(response, pending) {
+    diagnostics.record('generation-status-response', { jobIdPrefix: pending.jobId.slice(0, 6), status: response.status, jobStatus: response.value?.status });
+  },
+  onPending() {
+    setBusy(false, []);
+  },
+  onComplete(result, pending) { finalizeGeneration(result, pending); },
+  onFailed(result, pending) {
+    if (pending.run !== generationRun) return;
+    diagnostics.record('generation-recovery-failed', { jobIdPrefix: pending.jobId.slice(0, 6), status: 'failed' });
+    generationError(result.error || 'Generation failed.');
+  },
+  onExpired(result, pending) {
+    if (pending.run !== generationRun) return;
+    diagnostics.record('generation-recovery-failed', { jobIdPrefix: pending.jobId.slice(0, 6), status: 404 });
+    generationError(result?.error || 'That recording can no longer be recovered.');
+  },
+  onRetryable(error, pending) {
+    if (pending.run !== generationRun) return;
+    diagnostics.record('generation-recovery-failed', { jobIdPrefix: pending.jobId.slice(0, 6), status: error.status });
+    if (error.status === 503 && /cannot recover/i.test(error.message)) {
+      recovery.cancel();
+      generationError(error.message);
+      return;
+    }
+    notice.className = 'notice';
+    notice.textContent = 'We’re having trouble checking your recording. It may still be finishing.';
+    showPerformanceStatus(notice.textContent);
+    setBusy(false, []);
+    checkGenerationButton.hidden = false;
+    diagnostics.setRetryAction?.('Check generation', () => recovery.resume());
+  }
+});
+
+function resumePendingGeneration(reason, pendingRecord = recovery.read()) {
+  if (generationRequestInFlight) return false;
+  if (!pendingRecord) return false;
+  const current = recovery.current();
+  if (current?.jobId === pendingRecord.jobId) {
+    recovery.resume();
+    return true;
+  }
+  generationRun += 1;
+  const pending = { ...pendingRecord, run: generationRun };
+  lyricSheet = pending.lyricSheet;
+  performanceAvailable = true;
+  generating = true;
+  peek.hidden = false;
+  openPerformance(generateButton);
+  updateScenePerformance();
+  setBusy(true, recordingLines);
+  trackTitle.textContent = 'Your mehfil is recording';
+  trackSubtitle.textContent = 'View the performance while you wait';
+  checkGenerationButton.hidden = true;
+  diagnostics.record('generation-recovery-started', { reason, jobIdPrefix: pending.jobId.slice(0, 6) });
+  recovery.start(pending, pending.run);
+  return true;
 }
 
 form.addEventListener('submit', async event => {
   event.preventDefault();
   notice.textContent = '';
   if (!form.reportValidity()) return;
+  const previousPending = recovery.read();
+  if (previousPending && !window.confirm('A recording is still being followed in this tab. Start a new song and stop checking it?')) return;
+  recovery.cancel();
+  recovery.clear();
   clearLoadedSong();
   resetPeek();
   performanceAvailable = true;
@@ -350,12 +543,15 @@ form.addEventListener('submit', async event => {
   generating = true;
   updateScenePerformance();
   let generationFailed = false;
+  let awaitingRecovery = false;
+  let generationStage = 'write-lyrics';
+  let pending;
   trackTitle.textContent = 'Your mehfil is recording';
   trackSubtitle.textContent = 'View the performance while you wait';
 
   try {
     setBusy(true, writingLines);
-    lyricSheet = await post('/api/write-lyrics', {
+    lyricSheet = await writeLyricsAcrossLifecycle({
       token: tokenInput.value,
       idea: ideaInput.value,
       vibe: vibeInput.value,
@@ -365,20 +561,47 @@ form.addEventListener('submit', async event => {
     // The words exist now. Offer the peek, then record whether or not it is taken.
     peek.hidden = false;
     setBusy(true, recordingLines);
+    generationStage = 'generate-music';
+
+    const jobId = recovery.createJobId();
+    pending = { ...recovery.save({ jobId, lyricSheet }), run: generationRun };
+    diagnostics.record('generation-job-created', { jobIdPrefix: jobId.slice(0, 6) });
 
     // The native script is what gets sung: the music model pronounces it best.
-    const result = await post('/api/generate', {
-      token: tokenInput.value,
-      prompt: lyricSheet.prompt || vibeInput.value,
-      lyrics: lyricSheet.lyricsNative || lyricSheet.lyricsRoman
+    let result;
+    generationRequestInFlight = true;
+    try {
+      result = await post('/api/generate', {
+        jobId,
+        token: tokenInput.value,
+        prompt: lyricSheet.prompt || vibeInput.value,
+        lyrics: lyricSheet.lyricsNative || lyricSheet.lyricsRoman
+      });
+    } finally {
+      generationRequestInFlight = false;
+    }
+    diagnostics.record('generation-result', {
+      traceId: result?.trace_id || result?.traceId || result?.data?.trace_id || null,
+      hasDataAudio: typeof result?.data?.audio === 'string',
+      hasAudioUrl: typeof result?.audio?.url === 'string',
+      audioValueType: typeof result?.audio
     });
-    const source = result?.data?.audio || result?.audio?.url || result?.audio;
-    if (!source || typeof source !== 'string') throw new Error('MiniMax succeeded but did not return an audio file.');
-
-    loadSong(source, lyricSheet.title, result.share_ref);
-    notice.className = 'notice working';
-    notice.textContent = 'Your recording is ready.';
+    if (result.status === 'pending') {
+      awaitingRecovery = true;
+      resumePendingGeneration('pending-response', pending);
+    } else {
+      generationStage = 'load-song';
+      finalizeGeneration({ ...result, jobId: result.jobId || jobId }, pending);
+    }
   } catch (error) {
+    if (generationStage === 'generate-music' && pending && !Number.isInteger(error.httpStatus)) {
+      awaitingRecovery = true;
+      diagnostics.record('generation-recovery-started', { reason: 'generate-request-rejected', jobIdPrefix: pending.jobId.slice(0, 6) });
+      recovery.start(pending, pending.run);
+      return;
+    }
+    diagnostics.fatal('Generation flow failed before playback', error, audio, { generationStage });
+    if (pending) recovery.clear();
     notice.className = 'notice';
     notice.textContent = error.message;
     trackTitle.textContent = 'No recording was made';
@@ -386,19 +609,41 @@ form.addEventListener('submit', async event => {
     performanceAvailable = false;
     generationFailed = true;
   } finally {
+    if (awaitingRecovery) return;
     generating = false;
     updateScenePerformance();
     setBusy(false, []);
-    if (generationFailed) closePerformance();
+    if (generationFailed) closePerformance('generation-failed');
   }
 });
 
-performanceClose.addEventListener('click', closePerformance);
+window.addEventListener('pagehide', () => { lifecycleBackgroundVersion += 1; });
+window.addEventListener('pageshow', () => {
+  notifyForeground();
+  resumePendingGeneration('pageshow');
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    lifecycleBackgroundVersion += 1;
+    return;
+  }
+  notifyForeground();
+  resumePendingGeneration('visibilitychange');
+});
+resumePendingGeneration('page-load');
+checkGenerationButton.addEventListener('click', () => {
+  checkGenerationButton.hidden = true;
+  notice.className = 'notice working';
+  notice.textContent = 'Checking whether your recording finished…';
+  recovery.resume();
+});
+
+performanceClose.addEventListener('click', () => closePerformance('user-close-button'));
 performanceButton.addEventListener('click', () => openPerformance(performanceButton));
 document.addEventListener('keydown', event => {
   if (performanceView.hidden) return;
   if (event.key === 'Escape') {
-    closePerformance();
+    closePerformance('escape-key');
     return;
   }
   if (event.key !== 'Tab') return;
@@ -426,11 +671,11 @@ performanceReplay.addEventListener('click', () => {
   delete revealLines.dataset.render;
   audio.currentTime = 0;
   renderPlaybackLyrics();
-  audio.play().catch(() => {});
+  void attemptPlayback('replay-button');
 });
 
 playButton.addEventListener('click', () => {
-  if (audio.paused) audio.play(); else audio.pause();
+  if (audio.paused) void attemptPlayback('play-button'); else audio.pause();
 });
 audio.addEventListener('play', () => {
   player.classList.add('playing');
