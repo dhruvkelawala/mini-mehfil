@@ -125,7 +125,7 @@ function publicFailure(message, code = 'GENERATION_FAILED') {
   return { code, message: safe };
 }
 
-function staticFile(req, res) {
+function staticFile(req, res, shareBaseUrl = '') {
   const pathname = new URL(req.url, 'http://localhost').pathname;
   const requestPath = pathname === '/' ? '/index.html' : pathname;
   const filePath = path.resolve(PUBLIC_DIR, `.${requestPath}`);
@@ -138,12 +138,15 @@ function staticFile(req, res) {
       res.writeHead(error.code === 'ENOENT' ? 404 : 500).end('Not found');
       return;
     }
+    const roomSources = shareBaseUrl
+      ? `${shareBaseUrl} ${shareBaseUrl.replace(/^https:/, 'wss:')}`
+      : '';
     res.writeHead(200, {
       'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream',
       'Cache-Control': 'no-cache',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
-      'Content-Security-Policy': "default-src 'self'; connect-src 'self' https://*.minimax.io; media-src 'self' https: blob:; img-src 'self' data: https:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'"
+      'Content-Security-Policy': `default-src 'self'; connect-src 'self' https://*.minimax.io${roomSources ? ` ${roomSources}` : ''}; media-src 'self' https: blob:; img-src 'self' data: https:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'`
     });
     res.end(data);
   });
@@ -469,7 +472,7 @@ function createServer(options = {}) {
       }
     }
 
-    if (req.method === 'GET' || req.method === 'HEAD') return staticFile(req, res);
+    if (req.method === 'GET' || req.method === 'HEAD') return staticFile(req, res, shareBaseUrl);
     res.writeHead(405, { Allow: 'GET, HEAD, POST' }).end('Method not allowed');
   });
 }

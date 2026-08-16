@@ -6,7 +6,10 @@
 export function installRoomClient({ roomId }) {
   const credentialKey = `mini-mehfil-room:${roomId}`;
   const status = document.querySelector('#status');
+  const joinForm = document.querySelector('#join-panel');
   const joinPanel = document.querySelector('#join-panel');
+  const joinButton = document.querySelector('#join');
+  const joinLabel = document.querySelector('#join-label');
   const room = document.querySelector('#room');
   const queue = document.querySelector('#queue');
   const audio = document.querySelector('#audio');
@@ -22,6 +25,13 @@ export function installRoomClient({ roomId }) {
   let songLines = [];
   let silentAudioUrl = null;
 
+  function setJoinBusy(busy) {
+    joinButton.disabled = busy;
+    joinButton.classList[busy ? 'add' : 'remove']('is-loading');
+    joinButton.setAttribute('aria-busy', String(busy));
+    joinLabel.textContent = busy ? 'Taking your seat…' : 'Join the mehfil';
+  }
+
   function webSocketUrl() {
     return location.origin.replace(/^http/, 'ws') + `/rooms/${roomId}/ws`;
   }
@@ -31,6 +41,7 @@ export function installRoomClient({ roomId }) {
     allowFreshJoin = false
   } = {}) {
     terminal = true;
+    setJoinBusy(false);
     if (clearCredential) sessionStorage.removeItem(credentialKey);
     status.textContent = message;
     socket?.close();
@@ -72,6 +83,7 @@ export function installRoomClient({ roomId }) {
 
   function connect(name) {
     terminal = false;
+    setJoinBusy(true);
     status.textContent = retryCount ? 'Reconnecting…' : 'Joining…';
     socket = new WebSocket(webSocketUrl());
 
@@ -271,6 +283,7 @@ export function installRoomClient({ roomId }) {
   }
 
   function render(state) {
+    setJoinBusy(false);
     joinPanel.hidden = true;
     room.hidden = false;
     status.textContent = state.hostPresent
@@ -285,8 +298,11 @@ export function installRoomClient({ roomId }) {
     renderSetlist(state.setlist);
   }
 
-  document.querySelector('#join').addEventListener('click', async () => {
+  joinForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (joinButton.disabled) return;
     terminal = false;
+    setJoinBusy(true);
     play.hidden = false;
     prepareAudioUnlock();
     try {

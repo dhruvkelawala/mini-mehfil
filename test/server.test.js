@@ -34,6 +34,15 @@ test('serves the app root when diagnostics use a query string', async () => {
   });
 });
 
+test('allows the configured live room origin through the app CSP', async () => {
+  await withServer(global.fetch, async base => {
+    const response = await fetch(base);
+    const policy = response.headers.get('content-security-policy');
+    assert.match(policy, /connect-src[^;]*https:\/\/share\.example/);
+    assert.match(policy, /connect-src[^;]*wss:\/\/share\.example/);
+  }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
+});
+
 test('rejects an empty token without contacting MiniMax', async () => {
   let contacted = false;
   await withServer(async () => { contacted = true; }, async base => {

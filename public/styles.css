@@ -89,6 +89,7 @@ h1 {
 .room-panel h2 { font-size: 26px; }
 .room-panel h3 { margin: 22px 0 7px; color: #dfc39a; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
 .room-panel p { margin: 9px 0 14px; color: var(--muted); font-size: 12px; }
+.room-panel .room-message { min-height: 18px; margin: 10px 0 0; color: #f1b99f; }
 .room-panel input { min-width: 0; }
 .room-panel-tools { justify-content: flex-end; }
 #room-state { padding: 5px 8px; border: 1px solid rgba(249,237,218,.18); border-radius: 20px; color: #a9d8bd; font-size: 9px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }

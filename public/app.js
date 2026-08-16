@@ -47,6 +47,7 @@ const roomStateLabel = document.querySelector('#room-state');
 const roomCode = document.querySelector('#room-code');
 const roomLink = document.querySelector('#room-link');
 const roomPresence = document.querySelector('#room-presence');
+const roomMessage = document.querySelector('#room-message');
 const hostQueue = document.querySelector('#host-queue');
 const hostParticipants = document.querySelector('#host-participants');
 const hostSetlist = document.querySelector('#host-setlist');
@@ -85,6 +86,7 @@ let roomRetry = 0;
 let roomClosing = false;
 let roomTerminal = false;
 let roomAuthenticated = false;
+let roomConnectTimer = null;
 let activeRoomDetails = null;
 const ROOM_SESSION_KEY = 'mini-mehfil-host-room';
 
@@ -835,6 +837,8 @@ function setRoomButtonLabel(wide, compact = wide) {
 }
 
 function clearRoomSession() {
+  clearTimeout(roomConnectTimer);
+  roomConnectTimer = null;
   roomClosing = false;
   roomTerminal = true;
   sessionStorage.removeItem(ROOM_SESSION_KEY);
@@ -843,6 +847,7 @@ function clearRoomSession() {
   roomSnapshot = null;
   roomAuthenticated = false;
   activeRoomDetails = null;
+  roomMessage.textContent = '';
   roomPanel.hidden = true;
   openRoomButton.classList.remove('is-live');
   openRoomButton.setAttribute('aria-expanded', 'false');
@@ -990,6 +995,7 @@ function renderHostRoom(state) {
 }
 
 function connectHostRoom(details) {
+  clearTimeout(roomConnectTimer);
   roomTerminal = false;
   roomAuthenticated = false;
   activeRoomDetails = details;
@@ -999,17 +1005,30 @@ function connectHostRoom(details) {
   roomCode.textContent = details.roomId;
   roomLink.value = details.joinUrl;
   roomStateLabel.textContent = roomRetry ? 'reconnecting' : 'connecting';
-  roomSocket = new WebSocket(details.socketUrl);
+  roomMessage.textContent = roomRetry
+    ? 'Trying to bring the room back…'
+    : 'Preparing a place for your listeners…';
+  const socket = new WebSocket(details.socketUrl);
+  roomSocket = socket;
+  roomConnectTimer = setTimeout(() => {
+    if (socket !== roomSocket || roomAuthenticated) return;
+    roomStateLabel.textContent = 'offline';
+    roomMessage.textContent = 'The live room did not answer. Retrying…';
+    setRoomButtonLabel('Room offline', 'Offline');
+    socket.close();
+  }, 8_000);
 
-  roomSocket.addEventListener('open', () => {
+  socket.addEventListener('open', () => {
+    clearTimeout(roomConnectTimer);
+    roomConnectTimer = null;
     roomRetry = 0;
-    roomSocket.send(JSON.stringify({
+    socket.send(JSON.stringify({
       type: 'auth-host',
       secret: details.hostSecret
     }));
   });
 
-  roomSocket.addEventListener('message', event => {
+  socket.addEventListener('message', event => {
     let message;
     try {
       message = JSON.parse(event.data);
@@ -1019,6 +1038,7 @@ function connectHostRoom(details) {
 
     if (message.type === 'snapshot') {
       roomAuthenticated = true;
+      roomMessage.textContent = '';
       renderHostRoom(message.state);
     }
     if (message.type === 'error') {
@@ -1029,7 +1049,17 @@ function connectHostRoom(details) {
     }
   });
 
-  roomSocket.addEventListener('close', event => {
+  socket.addEventListener('error', () => {
+    if (socket !== roomSocket || roomTerminal) return;
+    roomStateLabel.textContent = 'offline';
+    roomMessage.textContent = 'The live room lost its connection. Retrying…';
+    setRoomButtonLabel('Room offline', 'Offline');
+  });
+
+  socket.addEventListener('close', event => {
+    clearTimeout(roomConnectTimer);
+    roomConnectTimer = null;
+    if (socket !== roomSocket) return;
     roomAuthenticated = false;
     if (roomTerminal) return;
     const roomUnavailable = event.code === 4001
@@ -1164,8 +1194,8 @@ document.querySelector('#close-room').addEventListener('click', () => {
   if (roomClosing) return;
   if (!roomSend({ type: 'room-expired' })) {
     notice.className = 'notice';
-    notice.textContent = 'The room is reconnecting. Wait for it to reconnect, then close it again.';
-    roomStateLabel.textContent = 'reconnecting';
+    notice.textContent = 'The room was removed from this device. Its public link will expire automatically.';
+    clearRoomSession();
     return;
   }
 
