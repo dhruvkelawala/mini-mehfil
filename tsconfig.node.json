@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "target": "ES2024",
+    "lib": ["ES2024"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"]
+  },
+  "include": [
+    "server.js",
+    "api/index.js",
+    "lyricist.mjs",
+    "share-ticket.js",
+    "types/contracts.d.ts"
+  ],
+  "exclude": ["public", "share"]
+}

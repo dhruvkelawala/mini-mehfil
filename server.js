@@ -7,6 +7,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_SHARE_AUDIO_BYTES = 10 * 1024 * 1024;
 const SHARE_REFERENCE_TTL_MS = 30 * 60 * 1000;
+/** @type {Record<string, string>} */
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -16,6 +17,7 @@ const MIME = {
   '.ico': 'image/x-icon'
 };
 
+/** @param {import('node:http').ServerResponse} res @param {number} status @param {unknown} value */
 function sendJson(res, status, value) {
   const body = JSON.stringify(value);
   res.writeHead(status, {
@@ -26,10 +28,17 @@ function sendJson(res, status, value) {
   res.end(body);
 }
 
+/**
+ * @param {import('node:http').IncomingMessage} req
+ * @param {number} [limit]
+ * @returns {Promise<unknown>}
+ */
 function readJson(req, limit = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     let size = 0;
+    /** @type {Buffer[]} */
     const chunks = [];
+    /** @param {Buffer} chunk */
     req.on('data', chunk => {
       size += chunk.length;
       if (size > limit) {
@@ -50,11 +59,41 @@ function readJson(req, limit = MAX_BODY_BYTES) {
   });
 }
 
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isRecord(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** @param {unknown} value @param {string} key @returns {unknown} */
+function property(value, key) {
+  return isRecord(value) ? value[key] : undefined;
+}
+
+/** @param {unknown} error @returns {boolean} */
+function isAbortError(error) {
+  return property(error, 'name') === 'AbortError';
+}
+
+/** @param {unknown} error @param {number} fallback @returns {number} */
+function errorStatus(error, fallback) {
+  const status = property(error, 'status');
+  return typeof status === 'number' ? status : fallback;
+}
+
+/** @param {unknown} error @param {string} fallback @returns {string} */
+function errorMessage(error, fallback) {
+  const message = property(error, 'message');
+  return typeof message === 'string' && message ? message : fallback;
+}
+
+/** @param {unknown} result @returns {string | null} */
 function audioSource(result) {
-  const source = result?.data?.audio || result?.audio?.url || result?.audio;
+  const audio = property(result, 'audio');
+  const source = property(property(result, 'data'), 'audio') || property(audio, 'url') || audio;
   return typeof source === 'string' && source ? source : null;
 }
 
+/** @param {Response} response @param {number} limit @returns {Promise<Buffer>} */
 async function readLimitedBody(response, limit) {
   const declaredSize = Number(response.headers.get('content-length'));
   if (Number.isFinite(declaredSize) && declaredSize > limit) throw Object.assign(new Error('The recording is larger than the 10 MB sharing limit.'), { status: 413 });
@@ -75,8 +114,9 @@ async function readLimitedBody(response, limit) {
   return Buffer.concat(chunks, size);
 }
 
+/** @param {unknown} value @returns {string} */
 function normalizeShareBaseUrl(value) {
-  if (!value) return '';
+  if (typeof value !== 'string' || !value) return '';
   try {
     const url = new URL(value);
     const localHttp = url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === 'localhost');
@@ -88,8 +128,9 @@ function normalizeShareBaseUrl(value) {
   }
 }
 
+/** @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res */
 function staticFile(req, res) {
-  const pathname = new URL(req.url, 'http://localhost').pathname;
+  const pathname = new URL(req.url || '', 'http://localhost').pathname;
   const requestPath = pathname === '/' ? '/index.html' : pathname;
   const filePath = path.resolve(PUBLIC_DIR, `.${requestPath}`);
   if (!filePath.startsWith(`${PUBLIC_DIR}${path.sep}`)) {
@@ -114,12 +155,15 @@ function staticFile(req, res) {
 
 // pi-ai is ESM-only and this server is CommonJS, so the lyricist loads on first use.
 // It also keeps startup fast and lets the music path work even if the lyricist fails.
+/** @type {Promise<typeof import('./lyricist.mjs')> | undefined} */
 let lyricistPromise;
+/** @returns {Promise<typeof import('./lyricist.mjs')>} */
 function loadLyricist() {
   lyricistPromise = lyricistPromise || import('./lyricist.mjs');
   return lyricistPromise;
 }
 
+/** @param {import('./types/contracts').CreateServerOptions} [options] */
 function createServer(options = {}) {
   const apiBase = options.apiBase || process.env.MINIMAX_API_BASE || 'https://api.minimax.io';
   const fetchImpl = options.fetchImpl || global.fetch;
@@ -130,7 +174,8 @@ function createServer(options = {}) {
   return http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/write-lyrics') {
       try {
-        const body = await readJson(req);
+        const parsedBody = await readJson(req);
+        const body = isRecord(parsedBody) ? parsedBody : {};
         const token = typeof body.token === 'string' ? body.token.trim() : '';
         const idea = typeof body.idea === 'string' ? body.idea.trim() : '';
         const vibe = typeof body.vibe === 'string' ? body.vibe.trim() : '';
@@ -151,14 +196,15 @@ function createServer(options = {}) {
           clearTimeout(timeout);
         }
       } catch (error) {
-        if (error.name === 'AbortError') return sendJson(res, 504, { error: 'The lyricist took too long. Try again.' });
-        return sendJson(res, error.status || 502, { error: error.message || 'Could not write lyrics.' });
+        if (isAbortError(error)) return sendJson(res, 504, { error: 'The lyricist took too long. Try again.' });
+        return sendJson(res, errorStatus(error, 502), { error: errorMessage(error, 'Could not write lyrics.') });
       }
     }
 
     if (req.method === 'POST' && req.url === '/api/generate') {
       try {
-        const body = await readJson(req);
+        const parsedBody = await readJson(req);
+        const body = isRecord(parsedBody) ? parsedBody : {};
         const token = typeof body.token === 'string' ? body.token.trim() : '';
         const lyrics = typeof body.lyrics === 'string' ? body.lyrics.trim() : '';
         const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
@@ -197,15 +243,17 @@ function createServer(options = {}) {
         }
 
         const text = await upstream.text();
+        /** @type {unknown} */
         let result;
         try { result = JSON.parse(text); } catch { result = { error: text || 'MiniMax returned an unreadable response.' }; }
 
-        if (!upstream.ok || result?.base_resp?.status_code) {
-          const message = result?.base_resp?.status_msg || result?.error?.message || result?.error || `MiniMax request failed (${upstream.status})`;
+        if (!upstream.ok || property(property(result, 'base_resp'), 'status_code')) {
+          const resultError = property(result, 'error');
+          const message = property(property(result, 'base_resp'), 'status_msg') || property(resultError, 'message') || resultError || `MiniMax request failed (${upstream.status})`;
           return sendJson(res, upstream.ok ? 400 : upstream.status, { error: String(message), details: result });
         }
         const source = audioSource(result);
-        if (source && sharingConfigured) {
+        if (source && sharingConfigured && isRecord(result)) {
           try {
             result.share_ref = issueShareTicket({
               source,
@@ -219,15 +267,16 @@ function createServer(options = {}) {
         }
         return sendJson(res, 200, result);
       } catch (error) {
-        if (error.name === 'AbortError') return sendJson(res, 504, { error: 'Generation timed out after seven minutes.' });
-        return sendJson(res, error.status || 500, { error: error.message || 'Generation failed.' });
+        if (isAbortError(error)) return sendJson(res, 504, { error: 'Generation timed out after seven minutes.' });
+        return sendJson(res, errorStatus(error, 500), { error: errorMessage(error, 'Generation failed.') });
       }
     }
 
     if (req.method === 'POST' && req.url === '/api/share') {
       try {
         if (!sharingConfigured) return sendJson(res, 503, { error: 'Sharing is not configured on this mehfil.' });
-        const body = await readJson(req);
+        const parsedBody = await readJson(req);
+        const body = isRecord(parsedBody) ? parsedBody : {};
         const shareReference = typeof body.shareRef === 'string' ? body.shareRef : '';
         let ticket;
         try {
@@ -236,6 +285,7 @@ function createServer(options = {}) {
           return sendJson(res, 404, { error: 'That recording is no longer ready to share. Make it again and retry.' });
         }
 
+        /** @type {import('./types/contracts').SharedSongMetadata} */
         const metadata = {
           title: typeof body.title === 'string' ? body.title : '',
           language: typeof body.language === 'string' ? body.language : '',
@@ -258,7 +308,7 @@ function createServer(options = {}) {
         if (!audio.length) throw Object.assign(new Error('The finished recording is empty.'), { status: 502 });
 
         const form = new FormData();
-        form.set('audio', new Blob([audio], { type: 'audio/mpeg' }), 'mehfil-song.mp3');
+        form.set('audio', new Blob([new Uint8Array(audio)], { type: 'audio/mpeg' }), 'mehfil-song.mp3');
         form.set('metadata', JSON.stringify(metadata));
         // This endpoint stays stateless across serverless instances. A retry may
         // repeat the transfer; the stable Worker key deduplicates share creation.
@@ -279,19 +329,20 @@ function createServer(options = {}) {
           clearTimeout(timeout);
         }
         const text = await response.text();
+        /** @type {unknown} */
         let result;
         try { result = JSON.parse(text); } catch { result = { error: 'The share service returned an unreadable response.' }; }
-        if (!response.ok) return sendJson(res, response.status, { error: result.error || 'The song could not be shared.' });
+        if (!response.ok) return sendJson(res, response.status, { error: property(result, 'error') || 'The song could not be shared.' });
         let publicUrl;
-        try { publicUrl = new URL(result.url); } catch { throw Object.assign(new Error('The share service returned an invalid link.'), { status: 502 }); }
+        try { publicUrl = new URL(String(property(result, 'url') || '')); } catch { throw Object.assign(new Error('The share service returned an invalid link.'), { status: 502 }); }
         const configuredOrigin = new URL(shareBaseUrl).origin;
         if (publicUrl.origin !== configuredOrigin || !/^\/s\/[A-Za-z0-9_-]{16}$/.test(publicUrl.pathname)) {
           throw Object.assign(new Error('The share service returned an invalid link.'), { status: 502 });
         }
         return sendJson(res, 201, { url: publicUrl.href });
       } catch (error) {
-        if (error.name === 'AbortError') return sendJson(res, 504, { error: 'Sharing took too long. Please retry.' });
-        return sendJson(res, error.status || 502, { error: error.message || 'The song could not be shared. Please retry.' });
+        if (isAbortError(error)) return sendJson(res, 504, { error: 'Sharing took too long. Please retry.' });
+        return sendJson(res, errorStatus(error, 502), { error: errorMessage(error, 'The song could not be shared. Please retry.') });
       }
     }
 
@@ -300,7 +351,7 @@ function createServer(options = {}) {
   });
 }
 
-const server = createServer();
+const server = Object.assign(createServer(), { createServer });
 
 if (require.main === module) {
   const port = Number(process.env.PORT) || 4173;
@@ -312,4 +363,3 @@ if (require.main === module) {
 // Vercel's Node runtime requires the CommonJS default export to be a request
 // handler or HTTP server. Keep createServer attached for isolated tests.
 module.exports = server;
-module.exports.createServer = createServer;

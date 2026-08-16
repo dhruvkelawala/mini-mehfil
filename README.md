@@ -45,9 +45,12 @@ Sharing is opt-in for each finished song and remains unavailable unless both var
 ```bash
 npm install
 npx playwright install chromium
+npm run typecheck
 npm test
 npm run test:browser
 ```
 
 `npm test` is the fast standard-library Node suite. Browser verification uses
-the development-only Playwright dependency; `npm run test:all` runs both gates.
+the development-only Playwright dependency; `npm run test:all` runs both test
+suites. `npm run typecheck` strictly checks the Node/API JavaScript without
+emitting files; it is a development verification gate, not a production build.

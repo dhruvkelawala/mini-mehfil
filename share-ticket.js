@@ -4,14 +4,17 @@ const VERSION = 1;
 const MAX_TICKET_LENGTH = 8192;
 const INVALID_TICKET = 'Invalid share ticket.';
 
+/** @returns {Error} */
 function invalidTicket() {
   return new Error(INVALID_TICKET);
 }
 
+/** @param {unknown} secret @returns {secret is string} */
 function validSecret(secret) {
   return typeof secret === 'string' && secret.length > 0;
 }
 
+/** @param {unknown} source @returns {source is string} */
 function validSource(source) {
   if (typeof source !== 'string' || !source) return false;
   try {
@@ -26,8 +29,17 @@ function validSource(source) {
   }
 }
 
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isRecord(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * @param {unknown} payload
+ * @returns {payload is import('./types/contracts').ShareTicketPayload}
+ */
 function validPayload(payload) {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  if (!isRecord(payload)) return false;
   const keys = Object.keys(payload).sort();
   return keys.length === 3
     && keys[0] === 'expiresAt'
@@ -38,10 +50,15 @@ function validPayload(payload) {
     && validSource(payload.source);
 }
 
+/** @param {string} encodedPayload @param {string} secret */
 function signatureFor(encodedPayload, secret) {
   return crypto.createHmac('sha256', secret).update(encodedPayload).digest();
 }
 
+/**
+ * @param {import('./types/contracts').IssueShareTicketOptions} [options]
+ * @returns {string}
+ */
 function issueShareTicket({ source, expiresAt, secret } = {}) {
   const payload = { v: VERSION, source, expiresAt };
   if (!validSecret(secret) || !validPayload(payload)) throw invalidTicket();
@@ -53,8 +70,13 @@ function issueShareTicket({ source, expiresAt, secret } = {}) {
   return ticket;
 }
 
+/**
+ * @param {unknown} ticket
+ * @param {import('./types/contracts').VerifyShareTicketOptions} [options]
+ * @returns {import('./types/contracts').VerifiedShareTicket}
+ */
 function verifyShareTicket(ticket, { now, secret } = {}) {
-  if (typeof ticket !== 'string' || !ticket || ticket.length > MAX_TICKET_LENGTH || !validSecret(secret) || !Number.isSafeInteger(now)) {
+  if (typeof ticket !== 'string' || !ticket || ticket.length > MAX_TICKET_LENGTH || !validSecret(secret) || typeof now !== 'number' || !Number.isSafeInteger(now)) {
     throw invalidTicket();
   }
 
@@ -75,6 +97,7 @@ function verifyShareTicket(ticket, { now, secret } = {}) {
   }
   if (suppliedSignature.toString('base64url') !== encodedSignature) throw invalidTicket();
 
+  /** @type {unknown} */
   let payload;
   try {
     const payloadBytes = Buffer.from(encodedPayload, 'base64url');
