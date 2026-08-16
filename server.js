@@ -162,6 +162,11 @@ function createServer(options = {}) {
   const fetchImpl = options.fetchImpl || global.fetch;
   const writeLyricsImpl = options.writeLyrics;
   const shareBaseUrl = normalizeShareBaseUrl(options.shareBaseUrl ?? process.env.MEHFIL_SHARE_URL ?? '');
+  const vercelProductionHostname = options.vercelProjectProductionUrl ?? process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  const vercelProductionUrl = vercelProductionHostname
+    ? `https://${vercelProductionHostname}`
+    : '';
+  const publicBaseUrl = normalizeShareBaseUrl(options.publicBaseUrl ?? process.env.MEHFIL_PUBLIC_URL ?? vercelProductionUrl);
   const shareSecret = String(options.shareSecret ?? process.env.MEHFIL_SHARE_SECRET ?? '').trim();
   const sharingConfigured = Boolean(shareBaseUrl && shareSecret);
   const generationTimeoutMs = options.generationTimeoutMs ?? GENERATION_TIMEOUT_MS;
@@ -419,8 +424,9 @@ function createServer(options = {}) {
         if (publicUrl.origin !== configuredOrigin || !/^\/s\/[A-Za-z0-9_-]{16}$/.test(publicUrl.pathname)) {
           throw Object.assign(new Error('The share service returned an invalid link.'), { status: 502 });
         }
-        sharedUrls.set(shareReference, publicUrl.href);
-        return sendJson(res, 201, { url: publicUrl.href });
+        const cleanUrl = `${publicBaseUrl || publicUrl.origin}${publicUrl.pathname}`;
+        sharedUrls.set(shareReference, cleanUrl);
+        return sendJson(res, 201, { url: cleanUrl });
       } catch (error) {
         if (error.name === 'AbortError') return sendJson(res, 504, { error: 'Sharing took too long. Please retry.' });
         return sendJson(res, error.status || 502, { error: error.message || 'The song could not be shared. Please retry.' });

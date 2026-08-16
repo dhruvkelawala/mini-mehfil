@@ -292,7 +292,7 @@ export function createR2Storage(bucket) {
   };
 }
 
-export function createShareHandler({ storage, rateLimit = async () => true, idGenerator = deriveShareId, uploadSecret = '', previewImageUrl = '', now = Date.now } = {}) {
+export function createShareHandler({ storage, rateLimit = async () => true, idGenerator = deriveShareId, uploadSecret = '', publicBaseUrl = '', previewImageUrl = '', now = Date.now } = {}) {
   if (!storage) throw new Error('Share storage is required.');
 
   return async function handle(request) {
@@ -411,7 +411,7 @@ export function createShareHandler({ storage, rateLimit = async () => true, idGe
       const song = await storage.getMetadata(id);
       if (!song) return new Response(request.method === 'HEAD' ? null : notFoundPage(), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       const nonce = randomId();
-      const html = playbackPage(id, song, nonce, url.origin, previewImageUrl);
+      const html = playbackPage(id, song, nonce, publicBaseUrl || url.origin, previewImageUrl);
       return new Response(request.method === 'HEAD' ? null : html, { headers: {
         'content-type': 'text/html; charset=utf-8',
         'cache-control': 'public, max-age=300',
@@ -433,6 +433,7 @@ export default {
       storage,
       rateLimit,
       uploadSecret: env.MEHFIL_SHARE_SECRET,
+      publicBaseUrl: env.MEHFIL_PUBLIC_URL,
       previewImageUrl: env.SHARE_PREVIEW_IMAGE_URL
     })(request);
   }
