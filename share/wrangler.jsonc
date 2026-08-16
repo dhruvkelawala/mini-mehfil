@@ -4,7 +4,7 @@
   "main": "worker.mjs",
   "compatibility_date": "2026-08-14",
   "vars": {
-    "MEHFIL_PUBLIC_URL": "https://mini-mehfil.vercel.app"
+    "MEHFIL_PUBLIC_URL": "https://minimehfil.wtf"
   },
   "r2_buckets": [
     {

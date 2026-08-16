@@ -66,7 +66,7 @@ npm start
      --header 'Range: bytes=0-1023' \
      --dump-header - \
      --output /dev/null \
-     https://mini-mehfil.vercel.app/s/SHARE_ID/audio
+     https://minimehfil.wtf/s/SHARE_ID/audio
    ```
 
    Expect `206 Partial Content`, `Accept-Ranges: bytes`, and a matching

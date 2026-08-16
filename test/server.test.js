@@ -139,9 +139,10 @@ test('shares only server-issued recordings and forwards no token', async () => {
       })
     });
     assert.equal(shared.status, 201);
-    assert.equal((await shared.json()).url, 'https://mini-mehfil.vercel.app/s/AbCdEfGhIjKlMnOp');
+    assert.equal((await shared.json()).url, 'https://minimehfil.wtf/s/AbCdEfGhIjKlMnOp');
   }, {
     shareBaseUrl: 'https://share.example',
+    publicBaseUrl: 'https://minimehfil.wtf',
     vercelProjectProductionUrl: 'mini-mehfil.vercel.app',
     shareSecret: 'worker-upload-secret'
   });
