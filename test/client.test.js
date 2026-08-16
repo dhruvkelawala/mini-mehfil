@@ -21,7 +21,7 @@ function functionBody(name) {
   assert.fail(`${name} should have a complete body`);
 }
 
-function browserHarness() {
+function browserHarness({ deferFirstLyrics = false } = {}) {
   class FakeElement {
     constructor(selector = '') {
       this.selector = selector;
@@ -79,8 +79,10 @@ function browserHarness() {
     pending: null,
     recoveryOptions: null,
     recoveryStarts: 0,
+    writeLyricsPosts: 0,
     generatePosts: 0,
     diagnosticRetryLabel: null,
+    rejectLyrics: null,
     resolveGenerate: null
   };
   const coordinator = {
@@ -119,10 +121,16 @@ function browserHarness() {
   });
   vm.runInNewContext(app, {
     Blob, console, document, fetch: async url => {
-      if (url === '/api/write-lyrics') return response({
-        title: 'Monsoon Song', language: 'Gujarati', languageCode: 'gu', nativeScriptName: 'Gujarati',
-        isLatinScript: false, lyricsNative: 'વરસાદ', lyricsRoman: 'varsaad', prompt: 'Warm monsoon folk'
-      });
+      if (url === '/api/write-lyrics') {
+        state.writeLyricsPosts += 1;
+        if (deferFirstLyrics && state.writeLyricsPosts === 1) {
+          return new Promise((resolve, reject) => { state.rejectLyrics = reject; });
+        }
+        return response({
+          title: 'Monsoon Song', language: 'Gujarati', languageCode: 'gu', nativeScriptName: 'Gujarati',
+          isLatinScript: false, lyricsNative: 'વરસાદ', lyricsRoman: 'varsaad', prompt: 'Warm monsoon folk'
+        });
+      }
       if (url === '/api/generate') {
         state.generatePosts += 1;
         return new Promise(resolve => { state.resolveGenerate = value => resolve(response(value)); });
@@ -244,6 +252,45 @@ test('background, foreground, and pageshow preserve the ordinary recording UI wi
   assert.equal(browser.element('#track-title').textContent, 'Your mehfil is recording');
   assert.equal(browser.element('#track-subtitle').textContent, 'View the performance while you wait');
   assert.equal(browser.state.diagnosticRetryLabel, null);
+});
+
+test('a lyric request lost across background and foreground retries silently before the paid request', async () => {
+  const browser = browserHarness({ deferFirstLyrics: true });
+  browser.element('#token').value = 'sk-test';
+  browser.element('#idea').value = 'Dhruv is King';
+  browser.element('#vibe').value = 'Hip hop';
+
+  const submission = browser.submit();
+  await new Promise(setImmediate);
+  browser.background();
+  browser.foreground();
+  browser.state.rejectLyrics(new TypeError('Load failed'));
+  await new Promise(setImmediate);
+
+  assert.equal(browser.state.writeLyricsPosts, 2);
+  assert.equal(browser.state.generatePosts, 1);
+  assert.equal(browser.element('#track-title').textContent, 'Your mehfil is recording');
+  assert.equal(browser.element('#track-subtitle').textContent, 'View the performance while you wait');
+  assert.notEqual(browser.element('#notice').textContent, 'Load failed');
+
+  browser.state.resolveGenerate({ status: 'pending', jobId: 'AbCdEfGhIjKlMnOpQrStUvWx' });
+  await submission;
+});
+
+test('a lyric network failure without a lifecycle interruption remains actionable', async () => {
+  const browser = browserHarness({ deferFirstLyrics: true });
+  browser.element('#token').value = 'sk-test';
+  browser.element('#idea').value = 'Dhruv is King';
+
+  const submission = browser.submit();
+  await new Promise(setImmediate);
+  browser.state.rejectLyrics(new TypeError('Load failed'));
+  await submission;
+
+  assert.equal(browser.state.writeLyricsPosts, 1);
+  assert.equal(browser.state.generatePosts, 0);
+  assert.equal(browser.element('#notice').textContent, 'Load failed');
+  assert.equal(browser.element('#track-title').textContent, 'No recording was made');
 });
 
 test('only a genuine status outage reveals a neutral Check generation action', () => {

@@ -65,9 +65,36 @@ let shareUrl = null;
 let performanceAvailable = false;
 let performanceOpener = null;
 let generationRequestInFlight = false;
+let lifecycleBackgroundVersion = 0;
+const foregroundWaiters = [];
 
 function updateClock() {
   document.querySelector('#clock').textContent = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(new Date()).toLowerCase();
+}
+
+function waitForForeground() {
+  if (document.visibilityState === 'visible') return Promise.resolve();
+  return new Promise(resolve => foregroundWaiters.push(resolve));
+}
+
+function notifyForeground() {
+  foregroundWaiters.splice(0).forEach(resolve => resolve());
+}
+
+async function writeLyricsAcrossLifecycle(payload) {
+  let observedBackgroundVersion = lifecycleBackgroundVersion;
+  while (true) {
+    try {
+      return await post('/api/write-lyrics', payload);
+    } catch (error) {
+      const interruptedByBackground = !Number.isInteger(error.httpStatus)
+        && lifecycleBackgroundVersion !== observedBackgroundVersion;
+      if (!interruptedByBackground) throw error;
+      diagnostics.record('lyrics-request-retrying-after-background');
+      observedBackgroundVersion = lifecycleBackgroundVersion;
+      await waitForForeground();
+    }
+  }
 }
 updateClock();
 setInterval(updateClock, 30000);
@@ -524,7 +551,7 @@ form.addEventListener('submit', async event => {
 
   try {
     setBusy(true, writingLines);
-    lyricSheet = await post('/api/write-lyrics', {
+    lyricSheet = await writeLyricsAcrossLifecycle({
       token: tokenInput.value,
       idea: ideaInput.value,
       vibe: vibeInput.value,
@@ -590,9 +617,18 @@ form.addEventListener('submit', async event => {
   }
 });
 
-window.addEventListener('pageshow', () => { resumePendingGeneration('pageshow'); });
+window.addEventListener('pagehide', () => { lifecycleBackgroundVersion += 1; });
+window.addEventListener('pageshow', () => {
+  notifyForeground();
+  resumePendingGeneration('pageshow');
+});
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') resumePendingGeneration('visibilitychange');
+  if (document.visibilityState === 'hidden') {
+    lifecycleBackgroundVersion += 1;
+    return;
+  }
+  notifyForeground();
+  resumePendingGeneration('visibilitychange');
 });
 resumePendingGeneration('page-load');
 checkGenerationButton.addEventListener('click', () => {
