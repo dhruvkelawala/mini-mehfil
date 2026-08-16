@@ -40,13 +40,20 @@ async function fillAndSubmit(page, idea = 'Rain over Ahmedabad') {
 
 async function installMediaStub(page) {
   await page.addInitScript(() => {
+    const mediaSources = new WeakMap();
+    Object.defineProperty(HTMLMediaElement.prototype, 'src', {
+      configurable: true,
+      get() { return mediaSources.get(this) || ''; },
+      set(value) { mediaSources.set(this, new URL(value, document.baseURI).href); }
+    });
     Object.defineProperty(HTMLMediaElement.prototype, 'play', {
       configurable: true,
       value() {
-        if (window.__rejectMediaPlay) {
-          return Promise.reject(new DOMException('Autoplay blocked', 'NotAllowedError'));
+        const rejection = window.__mediaPlayRejections?.shift();
+        if (rejection) {
+          return Promise.reject(new DOMException(rejection.message, rejection.name));
         }
-        this.dispatchEvent(new Event('play'));
+        queueMicrotask(() => this.dispatchEvent(new Event('play')));
         return Promise.resolve();
       }
     });
@@ -119,6 +126,9 @@ test('writes lyrics, records a song, and exposes native and roman presentation',
   await expect(page.locator('#reveal-lines')).toContainText('આ સાંજ ભીની છે');
   await expect(page.locator('#reveal-lines')).toContainText('aa saanj bhini chhe');
   expect(requests.map(request => request.endpoint)).toEqual(['lyrics', 'generate']);
+
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#notice')).toHaveText('Your recording is ready.');
 });
 
 test('returns lyric and generation failures to a clean form state', async ({ page }) => {
@@ -204,15 +214,77 @@ test('a delayed old share completion cannot mutate a newer generation', async ({
   await expect.poll(() => sharedReferences).toEqual(['share-ref-old', 'share-ref-new']);
 });
 
-test('rejected automatic playback keeps recording controls available', async ({ page }) => {
-  await page.addInitScript(() => { window.__rejectMediaPlay = true; });
+test('rejected automatic playback stays recoverable and retries from Play', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__mediaPlayRejections = [{ name: 'NotAllowedError', message: 'Synthetic autoplay rejection' }];
+  });
   await interceptSongFlow(page);
   await page.goto('/');
   await fillAndSubmit(page);
 
+  expect(new URL(page.url()).searchParams.has('mediaDebug')).toBe(false);
   await expect(page.locator('#track-title')).toHaveText(lyrics.title);
+  await expect(page.locator('#performance-status')).toHaveText('Your song is ready — tap Play.');
+  await expect(page.locator('#performance')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Play' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Share this song' })).toBeEnabled();
+  await expect(page.getByRole('link', { name: 'Save this song' })).toHaveAttribute('href', audioUrl);
   await expect(page.getByRole('link', { name: 'Save this song' })).toHaveAttribute('aria-disabled', 'false');
-  await expect(page.locator('#notice')).toHaveText('Your recording is ready.');
+  await expect(page.locator('#media-diagnostics')).toBeHidden();
+
+  await page.getByRole('button', { name: 'Play' }).click();
+
+  await expect(page.locator('#player-shell')).toHaveClass(/playing/);
+  await expect(page.locator('#performance')).toHaveAttribute('data-stage', 'playing');
+  await expect(page.locator('#performance-status')).toHaveText('');
+  await expect(page.locator('#notice')).toHaveText('');
+});
+
+test('a non-policy play rejection keeps Play, Save, and Share available', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__mediaPlayRejections = [{ name: 'NotSupportedError', message: 'Raw decoder detail' }];
+  });
+  await interceptSongFlow(page);
+  await page.goto('/');
+  await fillAndSubmit(page);
+
+  await expect(page.locator('#performance-status')).toContainText('Play');
+  await expect(page.locator('#performance-status')).toContainText('Save');
+  await expect(page.locator('#performance-status')).not.toContainText('Raw decoder detail');
+  await expect(page.locator('#notice')).not.toHaveClass(/working/);
+  await expect(page.locator('#performance')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Share this song' })).toBeEnabled();
+  await expect(page.getByRole('link', { name: 'Save this song' })).toHaveAttribute('href', audioUrl);
+  await expect(page.getByRole('link', { name: 'Save this song' })).toHaveAttribute('aria-disabled', 'false');
+});
+
+test('a media error surfaces sanitized recovery without clearing controls', async ({ page }) => {
+  const signedUrlDetail = 'https://media.invalid/song.mp3?token=do-not-render';
+  const rawMediaDetail = `Decoder exposed ${signedUrlDetail}`;
+  await interceptSongFlow(page);
+  await page.goto('/');
+  await fillAndSubmit(page);
+  await expect(page.locator('#track-title')).toHaveText(lyrics.title);
+
+  await page.locator('#audio').evaluate((element, message) => {
+    Object.defineProperty(element, 'error', {
+      configurable: true,
+      value: { code: 3, message }
+    });
+    element.dispatchEvent(new Event('error'));
+  }, rawMediaDetail);
+
+  await expect(page.locator('#performance-status')).toContainText('Play');
+  await expect(page.locator('#performance-status')).toContainText('Save');
+  await expect(page.locator('#player-shell')).not.toHaveClass(/playing/);
+  await expect(page.locator('#performance')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Share this song' })).toBeEnabled();
+  await expect(page.getByRole('link', { name: 'Save this song' })).toHaveAttribute('href', audioUrl);
+  await expect(page.getByRole('link', { name: 'Save this song' })).toHaveAttribute('aria-disabled', 'false');
+  await expect(page.locator('#performance-status')).not.toContainText(rawMediaDetail);
+  await expect(page.locator('#notice')).not.toContainText(signedUrlDetail);
+  await expect(page.locator('#notice')).not.toHaveClass(/working/);
+  await expect(page.locator('#media-diagnostics')).toBeHidden();
 });

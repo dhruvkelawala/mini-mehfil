@@ -205,10 +205,21 @@ function showPerformanceStatus(message) {
   performanceStatus.textContent = message;
 }
 
+function setPlaybackStatus(stage, message, working = false) {
+  const wasRecovering = performanceView.dataset.stage === 'recovery';
+  performanceView.dataset.stage = stage;
+  performanceStatus.textContent = message;
+  if (message) {
+    notice.className = working ? 'notice working' : 'notice';
+    notice.textContent = message;
+  } else if (wasRecovering) {
+    notice.className = 'notice';
+    notice.textContent = '';
+  }
+}
+
 function renderPlaybackLyrics() {
   if (!lyricSheet || performanceView.hidden) return;
-  performanceView.dataset.stage = 'playing';
-  performanceStatus.textContent = '';
   peek.hidden = true;
   lyricReveal.hidden = false;
   revealLanguage.textContent = languageLabel();
@@ -362,6 +373,11 @@ async function attemptPlayback(trigger) {
     return true;
   } catch (error) {
     diagnostics.fatal('audio.play() rejected', error, audio, { trigger });
+    const isPolicyRejection = error?.name === 'NotAllowedError';
+    const message = isPolicyRejection
+      ? 'Your song is ready — tap Play.'
+      : 'Playback hit a snag — tap Play to try again, or Save your song.';
+    setPlaybackStatus('recovery', message, isPolicyRejection);
     return false;
   }
 }
@@ -502,6 +518,7 @@ playButton.addEventListener('click', () => {
 audio.addEventListener('play', () => {
   player.classList.add('playing');
   performanceReplay.hidden = true;
+  setPlaybackStatus('playing', '');
   updateScenePerformance();
   renderPlaybackLyrics();
   playButton.setAttribute('aria-label', 'Pause');
@@ -518,6 +535,16 @@ audio.addEventListener('timeupdate', () => {
 });
 audio.addEventListener('loadedmetadata', () => {
   timecode.textContent = `0:00 / ${formatTime(audio.duration)}`;
+});
+audio.addEventListener('error', () => {
+  diagnostics.record('playback-recovery-visible', {
+    reason: 'media-error',
+    media: diagnostics.snapshot(audio)
+  });
+  player.classList.remove('playing');
+  scene.classList.remove('is-performing');
+  playButton.setAttribute('aria-label', 'Play');
+  setPlaybackStatus('recovery', 'This recording cannot play right now — try Play again or Save your song.');
 });
 seek.addEventListener('input', () => {
   if (audio.duration) {
