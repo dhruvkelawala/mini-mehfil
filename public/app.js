@@ -445,9 +445,6 @@ const recovery = recoveryApi.create({
     diagnostics.record('generation-status-response', { jobIdPrefix: pending.jobId.slice(0, 6), status: response.status, jobStatus: response.value?.status });
   },
   onPending() {
-    notice.className = 'notice working';
-    notice.textContent = 'Checking whether your recording finished…';
-    showPerformanceStatus(notice.textContent);
     setBusy(false, []);
   },
   onComplete(result, pending) { finalizeGeneration(result, pending); },
@@ -470,8 +467,8 @@ const recovery = recoveryApi.create({
       return;
     }
     notice.className = 'notice';
-    notice.textContent = `${error.message} Your recording checkpoint is safe.`;
-    showPerformanceStatus('The recording may still be finishing.');
+    notice.textContent = 'We’re having trouble checking your recording. It may still be finishing.';
+    showPerformanceStatus(notice.textContent);
     setBusy(false, []);
     checkGenerationButton.hidden = false;
     diagnostics.setRetryAction?.('Check generation', () => recovery.resume());
@@ -494,12 +491,11 @@ function resumePendingGeneration(reason, pendingRecord = recovery.read()) {
   peek.hidden = false;
   openPerformance(generateButton);
   updateScenePerformance();
-  setBusy(true, ['Checking whether your recording finished…']);
+  setBusy(true, recordingLines);
   trackTitle.textContent = 'Your mehfil is recording';
-  trackSubtitle.textContent = 'Returning to the same recording';
+  trackSubtitle.textContent = 'View the performance while you wait';
   checkGenerationButton.hidden = true;
   diagnostics.record('generation-recovery-started', { reason, jobIdPrefix: pending.jobId.slice(0, 6) });
-  diagnostics.setRetryAction?.('Check generation', () => recovery.resume());
   recovery.start(pending, pending.run);
   return true;
 }
@@ -573,10 +569,7 @@ form.addEventListener('submit', async event => {
   } catch (error) {
     if (generationStage === 'generate-music' && pending && !Number.isInteger(error.httpStatus)) {
       awaitingRecovery = true;
-      notice.className = 'notice working';
-      notice.textContent = 'Checking whether your recording finished…';
       diagnostics.record('generation-recovery-started', { reason: 'generate-request-rejected', jobIdPrefix: pending.jobId.slice(0, 6) });
-      diagnostics.setRetryAction?.('Check generation', () => recovery.resume());
       recovery.start(pending, pending.run);
       return;
     }

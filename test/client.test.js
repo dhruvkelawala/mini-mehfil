@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -18,6 +19,129 @@ function functionBody(name) {
     if (depth === 0) return app.slice(open + 1, index);
   }
   assert.fail(`${name} should have a complete body`);
+}
+
+function browserHarness() {
+  class FakeElement {
+    constructor(selector = '') {
+      this.selector = selector;
+      this.hidden = false;
+      this.disabled = false;
+      this.inert = false;
+      this.paused = true;
+      this.ended = false;
+      this.duration = NaN;
+      this.currentTime = 0;
+      this.src = '';
+      this.value = '';
+      this.textContent = '';
+      this.dataset = {};
+      this.children = [];
+      this.listeners = new Map();
+      this.classList = { add() {}, remove() {}, toggle() {} };
+    }
+    addEventListener(type, listener) { this.listeners.set(type, listener); }
+    append(...children) { this.children.push(...children); }
+    after() {}
+    focus() { document.activeElement = this; }
+    getClientRects() { return [1]; }
+    load() {}
+    pause() { this.paused = true; }
+    play() { this.paused = false; return Promise.resolve(); }
+    querySelector(selector) { return new FakeElement(`${this.selector} ${selector}`); }
+    querySelectorAll() { return []; }
+    removeAttribute(name) { if (name === 'src') this.src = ''; }
+    replaceChildren(...children) { this.children = children; }
+    reportValidity() { return true; }
+    setAttribute() {}
+  }
+
+  const elements = new Map();
+  const element = selector => {
+    if (!elements.has(selector)) elements.set(selector, new FakeElement(selector));
+    return elements.get(selector);
+  };
+  const documentListeners = new Map();
+  const windowListeners = new Map();
+  const document = {
+    activeElement: element('.generate'),
+    body: element('body'),
+    visibilityState: 'visible',
+    addEventListener(type, listener) { documentListeners.set(type, listener); },
+    createDocumentFragment() { return new FakeElement('fragment'); },
+    createElement(tag) { return new FakeElement(tag); },
+    querySelector: element
+  };
+  element('#performance').hidden = true;
+  element('#check-generation').hidden = true;
+
+  const state = {
+    pending: null,
+    recoveryOptions: null,
+    recoveryStarts: 0,
+    generatePosts: 0,
+    diagnosticRetryLabel: null,
+    resolveGenerate: null
+  };
+  const coordinator = {
+    cancel() {},
+    clear() { state.pending = null; },
+    createJobId() { return 'AbCdEfGhIjKlMnOpQrStUvWx'; },
+    current() { return state.current || null; },
+    read() { return state.pending; },
+    resume() { if (state.current) state.recoveryOptions.onPending({}, state.current); },
+    save(value) { state.pending = value; return value; },
+    start(pending) {
+      state.current = pending;
+      state.recoveryStarts += 1;
+      state.recoveryOptions.onPending({}, pending);
+      return true;
+    }
+  };
+  const window = {
+    MehfilGenerationRecovery: { create(options) { state.recoveryOptions = options; return coordinator; } },
+    MehfilMediaDiagnostics: {
+      attachMedia() {}, fatal() {}, record() {}, redactUrl() { return '[redacted]'; },
+      setRetryAction(label) { state.diagnosticRetryLabel = label; },
+      setRetryHandler() {}, snapshot() { return null; }
+    },
+    addEventListener(type, listener) { windowListeners.set(type, listener); },
+    confirm() { return true; }
+  };
+  class TestURL extends URL {}
+  TestURL.createObjectURL = () => 'blob:test';
+  TestURL.revokeObjectURL = () => {};
+  const response = value => ({
+    ok: true,
+    status: 200,
+    headers: { get() { return 'application/json'; } },
+    async json() { return value; }
+  });
+  vm.runInNewContext(app, {
+    Blob, console, document, fetch: async url => {
+      if (url === '/api/write-lyrics') return response({
+        title: 'Monsoon Song', language: 'Gujarati', languageCode: 'gu', nativeScriptName: 'Gujarati',
+        isLatinScript: false, lyricsNative: 'વરસાદ', lyricsRoman: 'varsaad', prompt: 'Warm monsoon folk'
+      });
+      if (url === '/api/generate') {
+        state.generatePosts += 1;
+        return new Promise(resolve => { state.resolveGenerate = value => resolve(response(value)); });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+    Intl, performance: { now: () => 0 }, Promise, setInterval: () => 1,
+    clearInterval() {}, setTimeout: () => 1, sessionStorage: {}, URL: TestURL,
+    Uint8Array, window
+  }, { filename: 'public/app.js' });
+
+  return {
+    element,
+    state,
+    background() { document.visibilityState = 'hidden'; documentListeners.get('visibilitychange')(); },
+    foreground() { document.visibilityState = 'visible'; documentListeners.get('visibilitychange')(); },
+    pageshow() { windowListeners.get('pageshow')(); },
+    submit() { return element('#song-form').listeners.get('submit')({ preventDefault() {} }); }
+  };
 }
 
 test('player controls use SVG icons instead of platform-dependent glyphs', () => {
@@ -87,4 +211,55 @@ test('generation recovery is wired without retrying the paid request', () => {
   assert.match(app, /generationRequestInFlight = true[\s\S]*await post\(['"]\/api\/generate[\s\S]*finally[\s\S]*generationRequestInFlight = false/);
   assert.match(functionBody('post'), /error\.httpStatus = response\.status/);
   assert.match(app, /generationStage === ['"]generate-music['"] && pending && !Number\.isInteger\(error\.httpStatus\)/);
+});
+
+test('background, foreground, and pageshow preserve the ordinary recording UI without another paid request', async () => {
+  const browser = browserHarness();
+  browser.element('#token').value = 'sk-test';
+  browser.element('#idea').value = 'Monsoon';
+  browser.element('#vibe').value = 'Warm folk';
+  browser.element('#language').value = 'gu';
+
+  const submission = browser.submit();
+  await new Promise(setImmediate);
+
+  browser.background();
+  browser.foreground();
+
+  assert.equal(browser.element('#track-title').textContent, 'Your mehfil is recording');
+  assert.equal(browser.element('#track-subtitle').textContent, 'View the performance while you wait');
+  assert.equal(browser.element('#notice').textContent, 'The harmonium warms up…');
+  assert.equal(browser.element('#performance-status').textContent, 'The harmonium warms up…');
+  assert.equal(browser.element('#check-generation').hidden, true);
+  assert.equal(browser.state.recoveryStarts, 0);
+  assert.equal(browser.state.generatePosts, 1);
+  assert.equal(browser.state.diagnosticRetryLabel, null);
+
+  browser.state.resolveGenerate({ status: 'pending', jobId: 'AbCdEfGhIjKlMnOpQrStUvWx' });
+  await submission;
+  browser.pageshow();
+
+  assert.equal(browser.state.recoveryStarts, 1);
+  assert.equal(browser.state.generatePosts, 1);
+  assert.equal(browser.element('#track-title').textContent, 'Your mehfil is recording');
+  assert.equal(browser.element('#track-subtitle').textContent, 'View the performance while you wait');
+  assert.equal(browser.state.diagnosticRetryLabel, null);
+});
+
+test('only a genuine status outage reveals a neutral Check generation action', () => {
+  const browser = browserHarness();
+  browser.state.pending = {
+    jobId: 'AbCdEfGhIjKlMnOpQrStUvWx',
+    lyricSheet: { title: 'Monsoon Song', lyricsNative: 'વરસાદ' }
+  };
+  browser.foreground();
+  assert.equal(browser.state.diagnosticRetryLabel, null);
+
+  browser.state.recoveryOptions.onRetryable({ status: 503, message: 'Recording recovery is temporarily unavailable.' }, browser.state.current);
+
+  assert.equal(browser.element('#check-generation').hidden, false);
+  assert.equal(browser.state.diagnosticRetryLabel, 'Check generation');
+  assert.equal(browser.element('#notice').textContent, 'We’re having trouble checking your recording. It may still be finishing.');
+  assert.doesNotMatch(browser.element('#notice').textContent, /checkpoint|recovery|aborted|retrying/i);
+  assert.equal(browser.state.generatePosts, 0);
 });
