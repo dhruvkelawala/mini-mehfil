@@ -10,7 +10,7 @@ Type a few keywords in any language — `Aloopuri Khavsa`, `monsoon in Mumbai`, 
 npm start
 ```
 
-Then open [http://127.0.0.1:4173](http://127.0.0.1:4173) and paste your MiniMax API key ([get one here](https://platform.minimax.io/)). No install step: the app has zero dependencies, standard-library Node only (≥24).
+Then open [http://127.0.0.1:4173](http://127.0.0.1:4173) and paste your MiniMax API key ([get one here](https://platform.minimax.io/)). Running the app needs no install or build step: production has zero runtime dependencies and uses standard-library Node only (≥24).
 
 ## Cost
 
@@ -43,5 +43,11 @@ Sharing is opt-in for each finished song and remains unavailable unless both var
 ## Test
 
 ```bash
+npm install
+npx playwright install chromium
 npm test
+npm run test:browser
 ```
+
+`npm test` is the fast standard-library Node suite. Browser verification uses
+the development-only Playwright dependency; `npm run test:all` runs both gates.
