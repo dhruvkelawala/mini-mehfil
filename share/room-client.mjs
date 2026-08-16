@@ -12,8 +12,11 @@ export function installRoomClient({ roomId }) {
   const joinLabel = document.querySelector('#join-label');
   const room = document.querySelector('#room');
   const queue = document.querySelector('#queue');
+  const player = document.querySelector('#player');
   const audio = document.querySelector('#audio');
   const play = document.querySelector('#play');
+  const seek = document.querySelector('#seek');
+  const timecode = document.querySelector('#timecode');
   const playError = document.querySelector('#play-error');
   const songLyrics = document.querySelector('#song-lyrics');
   const scene = document.querySelector('.scene');
@@ -144,13 +147,33 @@ export function installRoomClient({ roomId }) {
     playError.textContent = '';
     try {
       await audio.play();
-      play.hidden = true;
       return true;
     } catch {
       play.hidden = false;
       playError.textContent = 'Playback needs another tap. Please try again.';
       return false;
     }
+  }
+
+  function formatTime(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+  }
+
+  function syncPlayerTimeline() {
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+    const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    const progress = duration ? Math.min(100, (currentTime / duration) * 100) : 0;
+    seek.value = String(progress);
+    seek.setAttribute('style', `--seek-progress:${progress}%`);
+    timecode.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
+  }
+
+  function setPlaybackState(isPlaying) {
+    player.classList[isPlaying ? 'add' : 'remove']('is-playing');
+    play.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play');
+    play.setAttribute('aria-pressed', String(isPlaying));
   }
 
   function prepareAudioUnlock() {
@@ -211,7 +234,9 @@ export function installRoomClient({ roomId }) {
     const progress = audio.duration
       ? Math.min(audio.currentTime / (audio.duration * 0.9), 1)
       : 0;
-    const shownCount = Math.min(spokenCount, Math.ceil(progress * spokenCount));
+    const shownCount = spokenCount
+      ? Math.min(spokenCount, Math.max(1, Math.ceil(progress * spokenCount)))
+      : 0;
     let seenCount = 0;
 
     [...songLyrics.children].forEach((element, index) => {
@@ -250,7 +275,7 @@ export function installRoomClient({ roomId }) {
 
   function renderSong(song) {
     if (!song) return;
-    document.querySelector('#player').hidden = false;
+    player.hidden = false;
     document.querySelector('#song-title').textContent = song.title;
     if (song.shareId === lastShareId) return;
 
@@ -263,9 +288,11 @@ export function installRoomClient({ roomId }) {
       silentAudioUrl = null;
     }
     audio.src = `/s/${song.shareId}/audio`;
+    setPlaybackState(false);
     audio.load();
     audio.addEventListener('loadedmetadata', async () => {
       audio.currentTime = Math.max(0, (Date.now() - song.startedAt) / 1_000);
+      syncPlayerTimeline();
       syncSongLyrics();
       await attemptRoomPlayback();
     }, { once: true });
@@ -333,13 +360,34 @@ export function installRoomClient({ roomId }) {
   document.querySelector('#peek').addEventListener('click', () => {
     document.querySelector('#lyrics').hidden = false;
   });
-  play.addEventListener('click', () => void attemptRoomPlayback());
-  audio.addEventListener('play', () => {
-    scene.classList.add('is-performing');
+  play.addEventListener('click', () => {
+    if (audio.paused) void attemptRoomPlayback();
+    else audio.pause();
+  });
+  seek.addEventListener('input', () => {
+    if (!Number.isFinite(audio.duration) || !audio.duration) return;
+    audio.currentTime = (Number(seek.value) / 100) * audio.duration;
+    syncPlayerTimeline();
     syncSongLyrics();
   });
-  audio.addEventListener('pause', () => scene.classList.remove('is-performing'));
-  audio.addEventListener('timeupdate', syncSongLyrics);
+  audio.addEventListener('play', () => {
+    scene.classList.add('is-performing');
+    setPlaybackState(true);
+    syncSongLyrics();
+  });
+  audio.addEventListener('pause', () => {
+    scene.classList.remove('is-performing');
+    setPlaybackState(false);
+  });
+  audio.addEventListener('ended', () => {
+    scene.classList.remove('is-performing');
+    setPlaybackState(false);
+  });
+  audio.addEventListener('durationchange', syncPlayerTimeline);
+  audio.addEventListener('timeupdate', () => {
+    syncPlayerTimeline();
+    syncSongLyrics();
+  });
 
   if (sessionStorage.getItem(credentialKey)) connect('');
 }

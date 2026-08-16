@@ -146,27 +146,41 @@ export function roomPage(roomId, nonce) {
     .lyrics { margin-top: 16px; white-space: pre-wrap; color: var(--muted); font: italic 16px/1.6 "Iowan Old Style", Georgia, serif; }
 
     .player-shell {
-      position: fixed; z-index: 5; bottom: 25px; left: 50%; width: min(680px, calc(100% - 32px)); min-height: 88px;
+      position: fixed; z-index: 5; bottom: 25px; left: 50%; width: min(720px, calc(100% - 32px)); min-height: 104px;
       display: grid; grid-template-columns: 68px minmax(0,1fr) 52px; align-items: center; gap: 12px; padding: 10px 16px 10px 10px;
-      border: 1px solid rgba(255,255,255,.2); border-radius: 52px; background: rgba(122,54,45,.93);
+      border: 1px solid rgba(255,255,255,.2); border-radius: 34px; background: rgba(122,54,45,.96);
       box-shadow: 0 20px 55px rgba(8,19,18,.42), inset 0 1px rgba(255,255,255,.15); backdrop-filter: blur(12px);
       transform: translateX(-50%); animation: player-up .85s both;
     }
     .record { width: 68px; height: 68px; display: grid; place-items: center; border-radius: 50%; background: repeating-radial-gradient(circle, #202322 0 3px, #101313 4px 6px); box-shadow: 0 4px 14px rgba(0,0,0,.35); }
     .record::after { content: "M"; width: 29px; height: 29px; display: grid; place-items: center; border-radius: 50%; background: var(--amber); color: #67362e; font: 800 14px Georgia, serif; }
+    .player-shell.is-playing .record { animation: spin 4s linear infinite; }
     .player-track { min-width: 0; }
     .player-track h2, .player-track p { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .player-track h2 { font-size: 16px; }
     .player-track p { margin: 3px 0 0; color: var(--muted); font-size: 10px; }
-    .song-lyrics { max-height: 0; overflow: hidden; }
-    .play-button { width: 49px; height: 49px; display: grid; place-items: center; border: 0; border-radius: 50%; color: #29322e; background: #fffaf0; cursor: pointer; font-size: 11px; font-weight: 800; }
+    .song-lyrics { height: 25px; margin-top: 5px; overflow: auto; color: #fff8ec; font: italic 13px/1.75 "Iowan Old Style", Georgia, serif; scrollbar-width: none; }
+    .song-lyrics::-webkit-scrollbar { display: none; }
+    .song-lyrics:empty::before { content: "Lyrics will follow the music"; color: rgba(255,248,236,.7); }
+    .song-line { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .song-line small { display: inline; margin-left: 8px; color: #ead0b5; font: 10px/1.4 ui-sans-serif, system-ui, sans-serif; }
+    .song-line.cue { color: var(--amber); font: 800 9px/1.8 ui-sans-serif, system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+    .timeline { display: grid; grid-template-columns: minmax(80px,1fr) auto; align-items: center; gap: 9px; margin-top: 5px; }
+    #seek { appearance: none; width: 100%; height: 3px; padding: 0; border: 0; border-radius: 2px; background: linear-gradient(90deg, #fffaf0 var(--seek-progress,0%), rgba(255,255,255,.28) var(--seek-progress,0%)); box-shadow: none; cursor: pointer; }
+    #seek::-webkit-slider-thumb { appearance: none; width: 11px; height: 11px; border-radius: 50%; background: #fffaf0; box-shadow: 0 1px 5px rgba(0,0,0,.3); }
+    #seek::-moz-range-thumb { width: 11px; height: 11px; border: 0; border-radius: 50%; background: #fffaf0; }
+    #timecode { color: #ead0b5; font-size: 9px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .play-button { width: 49px; height: 49px; display: grid; place-items: center; border: 0; border-radius: 50%; color: #29322e; background: #fffaf0; box-shadow: 0 5px 15px rgba(0,0,0,.18); cursor: pointer; }
+    .player-icon { width: 19px; height: 19px; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .play-icon { fill: currentColor; stroke: none; transform: translateX(1px); }
+    .pause-icon { display: none; }
+    .player-shell.is-playing .play-icon { display: none; }
+    .player-shell.is-playing .pause-icon { display: block; }
     .player-shell audio { display: none; }
     .play-error { grid-column: 2 / -1; margin: -8px 0 2px; color: #ffe0cb; font-size: 10px; }
-    .song-line { display: block; }
-    .song-line small { display: block; color: var(--muted); }
-    .song-line.cue { color: var(--amber); font: 800 10px sans-serif; text-transform: uppercase; }
 
     @keyframes joining { to { transform: translateX(5px); opacity: .62; } }
+    @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes settle { from { opacity: 0; transform: scale(1.08); } to { opacity: 1; transform: scale(1.015); } }
     @keyframes fade-down { from { opacity: 0; transform: translateY(-10px); } }
     @keyframes rise { from { opacity: 0; transform: translateY(25px); } }
@@ -195,12 +209,17 @@ export function roomPage(roomId, nonce) {
       .field-row, .room-shelves { grid-template-columns: 1fr; }
       input, select, textarea { font-size: 16px; }
       .room-shelves { gap: 20px; }
-      .player-shell { bottom: 12px; min-height: 72px; grid-template-columns: 50px minmax(0,1fr) 42px; padding: 8px 12px 8px 8px; }
+      .player-shell { bottom: 12px; min-height: 92px; grid-template-columns: 50px minmax(0,1fr) 42px; gap: 9px; padding: 8px 12px 8px 8px; border-radius: 28px; }
       .record { width: 50px; height: 50px; }
       .record::after { width: 22px; height: 22px; font-size: 11px; }
       .play-button { width: 41px; height: 41px; }
+      .song-lyrics { font-size: 12px; }
+      #timecode { display: none; }
     }
-    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+      .player-shell.is-playing .record { animation: none; }
+    }
   </style>
 </head>
 <body>
@@ -269,11 +288,19 @@ export function roomPage(roomId, nonce) {
         </section>
       </section>
 
-      <section id="player" class="player-shell" hidden>
+      <section id="player" class="player-shell" aria-label="Song player" hidden>
         <div class="record" aria-hidden="true"></div>
-        <div class="player-track"><h2 id="song-title"></h2><p id="song-language"></p><div id="song-lyrics" class="song-lyrics" aria-live="polite"></div></div>
+        <div class="player-track">
+          <h2 id="song-title"></h2>
+          <p id="song-language"></p>
+          <div id="song-lyrics" class="song-lyrics" aria-label="Synced lyrics" aria-live="polite"></div>
+          <div class="timeline"><input id="seek" type="range" min="0" max="100" value="0" aria-label="Seek"><span id="timecode">0:00 / 0:00</span></div>
+        </div>
         <audio id="audio" preload="metadata"></audio>
-        <button id="play" class="play-button" type="button">Play</button>
+        <button id="play" class="play-button" type="button" aria-label="Play" aria-pressed="false">
+          <svg class="player-icon play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.5v11l9-5.5-9-5.5Z"/></svg>
+          <svg class="player-icon pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7v10M16 7v10"/></svg>
+        </button>
         <p id="play-error" class="play-error" role="alert"></p>
       </section>
     </section>
