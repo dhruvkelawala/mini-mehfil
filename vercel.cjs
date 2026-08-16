@@ -1,3 +1,3 @@
 const { createVercelConfig } = require('./vercel-config.cjs');
 
-module.exports = createVercelConfig(process.env);
+exports.config = createVercelConfig(process.env);

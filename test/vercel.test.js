@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const deployedConfig = require('../vercel.cjs');
+const deployedModule = require('../vercel.cjs');
 const { createVercelConfig } = require('../vercel-config.cjs');
 const handler = require('../api');
 
@@ -19,7 +19,8 @@ test('Vercel gives the catch-all function enough time to finish one paid generat
 });
 
 test('Vercel configuration exports only schema properties', () => {
-  assert.deepEqual(Object.keys(deployedConfig).sort(), ['functions', 'rewrites']);
+  assert.deepEqual(Object.keys(deployedModule), ['config']);
+  assert.deepEqual(Object.keys(deployedModule.config).sort(), ['functions', 'rewrites']);
 });
 
 test('Vercel leaves the share route disabled without a valid Worker origin', () => {
