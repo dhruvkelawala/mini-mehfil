@@ -314,7 +314,7 @@ test('R2 generation storage uses atomic create and handles conditional conflicts
   const claim = await storage.claimJob(IDEMPOTENCY_KEY, record);
   assert.equal(claim.created, false);
   assert.deepEqual(puts[0].options.onlyIf, { etagDoesNotMatch: '*' });
-  getResult = { httpEtag: 'etag-1', async text() { return JSON.stringify(record); } };
+  getResult = { httpEtag: '"etag-1"', async text() { return JSON.stringify(record); } };
   assert.deepEqual(await storage.getJob(IDEMPOTENCY_KEY), { record, etag: 'etag-1' });
   const transition = await storage.transitionJob(IDEMPOTENCY_KEY, { ...record, status: 'failed' }, 'etag-1');
   assert.equal(transition.conflict, true);

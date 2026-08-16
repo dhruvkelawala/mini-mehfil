@@ -237,6 +237,7 @@ function notFoundPage() {
 }
 
 export function createR2Storage(bucket) {
+  const conditionalEtag = object => object?.etag || object?.httpEtag?.replace(/^"|"$/g, '');
   return {
     async put(id, share) {
       await bucket.put(`shares/${id}.mp3`, share.audio, {
@@ -271,13 +272,13 @@ export function createR2Storage(bucket) {
         httpMetadata: { contentType: 'application/json; charset=utf-8', cacheControl: 'no-store' }
       });
       if (!object) return { created: false };
-      return { created: true, record, etag: object.httpEtag || object.etag };
+      return { created: true, record, etag: conditionalEtag(object) };
     },
     async getJob(id) {
       const object = await bucket.get(`jobs/${id}.json`);
       if (!object) return null;
       try {
-        return { record: JSON.parse(await object.text()), etag: object.httpEtag || object.etag };
+        return { record: JSON.parse(await object.text()), etag: conditionalEtag(object) };
       } catch { return null; }
     },
     async transitionJob(id, record, etag) {
@@ -286,7 +287,7 @@ export function createR2Storage(bucket) {
         httpMetadata: { contentType: 'application/json; charset=utf-8', cacheControl: 'no-store' }
       });
       if (!object) return { conflict: true };
-      return { conflict: false, record, etag: object.httpEtag || object.etag };
+      return { conflict: false, record, etag: conditionalEtag(object) };
     }
   };
 }
