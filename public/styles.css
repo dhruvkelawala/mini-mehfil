@@ -50,7 +50,7 @@ h1 {
   margin: 0; font-family: "Noto Serif Devanagari", "Kohinoor Devanagari", serif; font-size: clamp(88px, 11vw, 172px); line-height: 1.04;
   letter-spacing: -.01em; font-weight: 800; filter: drop-shadow(0 7px 0 rgba(110,32,29,.22));
 }
-/* "Mini" rides above the shirorekha — the pun on MiniMax, said quietly. */
+/* "Mini" rides above the shirorekha, with the pun on MiniMax said quietly. */
 .mini {
   /* Devanagari ink sits high in its line box, so "Mini" needs real clearance
      above the shirorekha or the two collide. Measured, not guessed. */

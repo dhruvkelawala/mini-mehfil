@@ -7,6 +7,8 @@ const vm = require('node:vm');
 const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 const recovery = fs.readFileSync(path.join(__dirname, '..', 'public', 'generation-recovery.js'), 'utf8');
+const diagnostics = fs.readFileSync(path.join(__dirname, '..', 'public', 'media-diagnostics.js'), 'utf8');
+const playbackPage = fs.readFileSync(path.join(__dirname, '..', 'share', 'playback-page.mjs'), 'utf8');
 
 function functionBody(name) {
   const start = app.indexOf(`function ${name}(`);
@@ -160,6 +162,27 @@ test('player controls use SVG icons instead of platform-dependent glyphs', () =>
   assert.match(player, /id="share"[\s\S]*<svg class="player-icon"/);
   assert.match(player, /id="download"[\s\S]*<svg class="player-icon"/);
   assert.doesNotMatch(app, /shareButton\.innerHTML|playButton\.querySelector\(['"]span['"]\)/);
+});
+
+test('loading messages keep looping and user-facing copy contains no em dashes', () => {
+  const timers = [];
+  const field = () => ({ disabled: false });
+  const context = {
+    generateButton: field(), tokenInput: field(), ideaInput: field(), vibeInput: field(), languageSelect: field(),
+    notice: { className: '', textContent: '' }, waitingTimer: null,
+    clearInterval() {},
+    setInterval(callback) { timers.push(callback); return timers.length; },
+    showPerformanceStatus() {}
+  };
+  const setBusy = vm.runInNewContext(`(function setBusy(busy, lines) {${functionBody('setBusy')}})`, context);
+  const lines = ['one', 'two', 'three'];
+  setBusy(true, lines);
+  timers[0]();
+  timers[0]();
+  timers[0]();
+  assert.equal(context.notice.textContent, 'one');
+
+  for (const source of [app, html, diagnostics, playbackPage]) assert.doesNotMatch(source, /—/);
 });
 
 test('a stale share request cannot mutate a later generation', () => {

@@ -148,7 +148,7 @@
       output.textContent = JSON.stringify(report(), null, 2);
       if (fatalState) {
         panel.classList.add('is-fatal');
-        headline.textContent = `${fatalState.summary}: ${fatalState.error.name} — ${fatalState.error.message}`;
+        headline.textContent = `${fatalState.summary}: ${fatalState.error.name}. ${fatalState.error.message}`;
       }
     }
 
@@ -195,7 +195,7 @@
         copyButton.textContent = 'Copied';
       } catch (error) {
         record('copy-report-rejected', { error });
-        copyButton.textContent = 'Copy failed — download instead';
+        copyButton.textContent = 'Copy failed. Download instead';
       }
     }
 

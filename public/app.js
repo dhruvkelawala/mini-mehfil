@@ -50,7 +50,7 @@ const recordingLines = [
   'Tabla finds the taal…',
   'The singer clears their throat…',
   'First take, everyone quiet…',
-  'Almost there — good songs take a moment…'
+  'Almost there. Good songs take a moment…'
 ];
 
 let waitingTimer;
@@ -300,7 +300,7 @@ function setBusy(busy, lines) {
   notice.textContent = lines[index];
   showPerformanceStatus(lines[index]);
   waitingTimer = setInterval(() => {
-    index = Math.min(index + 1, lines.length - 1);
+    index = (index + 1) % lines.length;
     notice.textContent = lines[index];
     showPerformanceStatus(lines[index]);
   }, 6000);
