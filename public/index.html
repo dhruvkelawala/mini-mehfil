@@ -314,27 +314,27 @@
       <button class="generate" type="submit"><span class="button-label">Start the mehfil</span><span class="arrow">→</span></button>
       <p class="cost-hint" id="cost-hint">Lyrics cost about a tenth of a cent. The song costs ≈ $0.15.</p>
     </form>
-  </main>
 
-  <aside id="room-panel" class="room-panel" aria-labelledby="room-heading" hidden>
-    <div class="room-panel-head">
-      <h2 id="room-heading" tabindex="-1">Live mehfil</h2>
-      <div class="room-panel-tools">
-        <span id="room-state">closed</span>
-        <button id="dismiss-room" class="room-dismiss" type="button" aria-label="Hide live mehfil controls">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>
-        </button>
+    <aside id="room-panel" class="room-panel" aria-labelledby="room-heading" hidden>
+      <div class="room-panel-head">
+        <h2 id="room-heading" tabindex="-1">Live mehfil</h2>
+        <div class="room-panel-tools">
+          <span id="room-state">closed</span>
+          <button id="dismiss-room" class="room-dismiss" type="button" aria-label="Hide live mehfil controls">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>
+          </button>
+        </div>
       </div>
-    </div>
-    <p>Room <strong id="room-code">—</strong> · <span id="room-presence">No listeners yet</span></p>
-    <div class="room-link-row"><input id="room-link" readonly aria-label="Listener join link"><button id="copy-room" type="button">Copy link</button></div>
-    <p id="room-message" class="room-message" role="status" aria-live="polite"></p>
-    <h3>Listeners</h3><ul id="host-participants" class="host-participants"></ul>
-    <h3>Requests</h3>
-    <ol id="host-queue" class="host-queue" aria-label="Request queue"></ol>
-    <h3>Setlist</h3><ol id="host-setlist" class="host-setlist"></ol>
-    <button id="close-room" class="room-close" type="button">Close room</button>
-  </aside>
+      <p>Room <strong id="room-code">—</strong> · <span id="room-presence">No listeners yet</span></p>
+      <div class="room-link-row"><input id="room-link" readonly aria-label="Listener join link"><button id="copy-room" type="button">Copy link</button></div>
+      <p id="room-message" class="room-message" role="status" aria-live="polite"></p>
+      <h3>Listeners</h3><ul id="host-participants" class="host-participants"></ul>
+      <h3>Requests</h3>
+      <ol id="host-queue" class="host-queue" aria-label="Request queue"></ol>
+      <h3>Setlist</h3><ol id="host-setlist" class="host-setlist"></ol>
+      <button id="close-room" class="room-close" type="button">Close room</button>
+    </aside>
+  </main>
 
   <section class="performance" id="performance" role="dialog" aria-modal="true" aria-labelledby="performance-title" hidden>
     <h2 class="sr-only" id="performance-title">Your mehfil performance</h2>

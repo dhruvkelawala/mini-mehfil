@@ -44,7 +44,7 @@ input { caret-color: #e6a653; }
 .live { display: flex; align-items: center; gap: 8px; text-transform: uppercase; font-size: 11px; letter-spacing: .16em; }
 .live i { width: 8px; height: 8px; display: block; border-radius: 50%; background: #4ddc8a; box-shadow: 0 0 14px #4ddc8a; animation: pulse 2.2s infinite; }
 main {
-  width: min(1180px, calc(100% - 44px)); margin: 16px auto 145px; display: grid; grid-template-columns: 1fr 460px; gap: 72px; align-items: center;
+  width: min(1180px, calc(100% - 44px)); margin: 16px auto 145px; display: grid; grid-template-columns: 1fr 460px; column-gap: 72px; row-gap: 18px; align-items: center;
 }
 .identity { text-align: center; align-self: center; transform: translateY(-22px); text-shadow: 0 5px 24px rgba(26,25,18,.32); animation: rise .9s .15s both; }
 h1 {
@@ -76,12 +76,10 @@ h1 {
 .room-open.is-live svg { stroke: #7be0a4; }
 .room-open-compact { display: none; }
 .room-panel {
-  position: fixed; z-index: 4; top: 82px; right: 24px; width: min(420px, calc(100% - 48px)); max-height: calc(100svh - 208px);
-  padding: 22px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid rgba(249,237,218,.22); border-radius: 12px;
+  grid-column: 2; width: 100%; min-width: 0; padding: 22px; align-self: start; border: 1px solid rgba(249,237,218,.22); border-radius: 12px;
   color: var(--ink); background: linear-gradient(155deg, rgba(15,38,37,.96), rgba(48,28,24,.95));
   box-shadow: 0 24px 70px rgba(4,15,14,.46), inset 0 1px rgba(255,255,255,.08);
   backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); text-align: left; text-shadow: none;
-  scrollbar-width: thin; scrollbar-color: rgba(230,166,83,.45) transparent;
   animation: room-panel-in .35s cubic-bezier(.16,1,.3,1) both;
 }
 .room-panel[hidden] { display: none; }
@@ -289,7 +287,7 @@ input::placeholder { color: #b3a08a; opacity: 1; }
 @keyframes pulse { 50% { opacity: .45; transform: scale(.85); } }
 @keyframes performance-in { from { opacity: 0; } }
 @keyframes lyric-arrive { from { opacity: 0; filter: blur(3px); transform: translateY(7px); } }
-@keyframes room-panel-in { from { opacity: .6; transform: translateX(18px); backdrop-filter: blur(4px); } }
+@keyframes room-panel-in { from { opacity: .6; transform: translateY(12px); backdrop-filter: blur(4px); } }
 @media (max-width: 900px) {
   body { overflow-y: auto; }
   main { grid-template-columns: 1fr; gap: 16px; margin-top: 0; margin-bottom: 145px; }
@@ -297,6 +295,7 @@ input::placeholder { color: #b3a08a; opacity: 1; }
   h1 { font-size: clamp(76px, 22vw, 132px); }
   .tagline { margin-top: 6px; }
   .composer { width: min(520px, 100%); margin: 0 auto; }
+  .room-panel { grid-column: 1; width: min(520px, 100%); margin: 0 auto; }
   .player-shell { left: 16px; right: 16px; width: auto; max-width: 720px; margin-inline: auto; }
 }
 @media (max-width: 560px) {
@@ -308,7 +307,7 @@ input::placeholder { color: #b3a08a; opacity: 1; }
   .room-open { min-height: 44px; padding-inline: 10px; }
   .room-open-wide { display: none; }
   .room-open-compact { display: inline; }
-  .room-panel { top: auto; right: 12px; bottom: 96px; left: 12px; width: auto; max-height: min(72svh, 600px); padding: 19px; }
+  .room-panel { padding: 19px; }
   main { width: calc(100% - 24px); margin-bottom: 130px; }
   .identity { margin-top: 5px; }
   .tagline { font-size: 14px; }
@@ -328,7 +327,6 @@ input::placeholder { color: #b3a08a; opacity: 1; }
   .performance .lyric-reveal { padding: 18px 14px; }
   .performance .reveal-lines { max-height: max(140px, min(55svh, calc(100svh - 330px))); font-size: 18px; line-height: 1.55; }
 }
-@media (max-width: 560px) { @keyframes room-panel-in { from { opacity: .6; transform: translateY(18px); backdrop-filter: blur(4px); } } }
 @media (max-height: 500px) {
   /* Landscape phones: shrink the sheet's chrome so the lyrics and the replay
      button stay clear of the fixed player bar instead of sliding beneath it. */
