@@ -16,6 +16,7 @@ export function installRoomClient({ roomId }) {
   const audio = document.querySelector('#audio');
   const play = document.querySelector('#play');
   const seek = document.querySelector('#seek');
+  const seekProgress = document.querySelector('#seek-progress');
   const timecode = document.querySelector('#timecode');
   const playError = document.querySelector('#play-error');
   const songLyrics = document.querySelector('#song-lyrics');
@@ -145,6 +146,7 @@ export function installRoomClient({ roomId }) {
   async function attemptRoomPlayback() {
     play.hidden = false;
     playError.textContent = '';
+    if (audio.ended) audio.currentTime = 0;
     try {
       await audio.play();
       return true;
@@ -166,7 +168,7 @@ export function installRoomClient({ roomId }) {
     const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
     const progress = duration ? Math.min(100, (currentTime / duration) * 100) : 0;
     seek.value = String(progress);
-    seek.setAttribute('style', `--seek-progress:${progress}%`);
+    seekProgress.value = progress;
     timecode.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
   }
 
@@ -291,10 +293,12 @@ export function installRoomClient({ roomId }) {
     setPlaybackState(false);
     audio.load();
     audio.addEventListener('loadedmetadata', async () => {
-      audio.currentTime = Math.max(0, (Date.now() - song.startedAt) / 1_000);
+      const elapsed = Math.max(0, (Date.now() - song.startedAt) / 1_000);
+      const joinLive = !Number.isFinite(audio.duration) || elapsed < audio.duration;
+      audio.currentTime = joinLive ? elapsed : 0;
       syncPlayerTimeline();
       syncSongLyrics();
-      await attemptRoomPlayback();
+      if (joinLive) await attemptRoomPlayback();
     }, { once: true });
   }
 

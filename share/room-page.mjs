@@ -166,8 +166,16 @@ export function roomPage(roomId, nonce) {
     .song-line small { display: inline; margin-left: 8px; color: #ead0b5; font: 10px/1.4 ui-sans-serif, system-ui, sans-serif; }
     .song-line.cue { color: var(--amber); font: 800 9px/1.8 ui-sans-serif, system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
     .timeline { display: grid; grid-template-columns: minmax(80px,1fr) auto; align-items: center; gap: 9px; margin-top: 5px; }
-    #seek { appearance: none; width: 100%; height: 3px; padding: 0; border: 0; border-radius: 2px; background: linear-gradient(90deg, #fffaf0 var(--seek-progress,0%), rgba(255,255,255,.28) var(--seek-progress,0%)); box-shadow: none; cursor: pointer; }
-    #seek::-webkit-slider-thumb { appearance: none; width: 11px; height: 11px; border-radius: 50%; background: #fffaf0; box-shadow: 0 1px 5px rgba(0,0,0,.3); }
+    .seek-control { position: relative; height: 15px; border-radius: 8px; }
+    .seek-control:has(#seek:focus-visible) { outline: 2px solid var(--amber); outline-offset: 2px; }
+    #seek-progress { position: absolute; top: 6px; left: 0; width: 100%; height: 3px; overflow: hidden; border: 0; border-radius: 2px; appearance: none; background: rgba(255,255,255,.28); }
+    #seek-progress::-webkit-progress-bar { background: rgba(255,255,255,.28); }
+    #seek-progress::-webkit-progress-value { background: #fffaf0; }
+    #seek-progress::-moz-progress-bar { background: #fffaf0; }
+    #seek { position: absolute; inset: 0; appearance: none; width: 100%; height: 15px; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; cursor: pointer; }
+    #seek::-webkit-slider-runnable-track { height: 3px; background: transparent; }
+    #seek::-webkit-slider-thumb { appearance: none; width: 11px; height: 11px; margin-top: -4px; border-radius: 50%; background: #fffaf0; box-shadow: 0 1px 5px rgba(0,0,0,.3); }
+    #seek::-moz-range-track { height: 3px; background: transparent; }
     #seek::-moz-range-thumb { width: 11px; height: 11px; border: 0; border-radius: 50%; background: #fffaf0; }
     #timecode { color: #ead0b5; font-size: 9px; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .play-button { width: 49px; height: 49px; display: grid; place-items: center; border: 0; border-radius: 50%; color: #29322e; background: #fffaf0; box-shadow: 0 5px 15px rgba(0,0,0,.18); cursor: pointer; }
@@ -294,7 +302,7 @@ export function roomPage(roomId, nonce) {
           <h2 id="song-title"></h2>
           <p id="song-language"></p>
           <div id="song-lyrics" class="song-lyrics" aria-label="Synced lyrics" aria-live="polite"></div>
-          <div class="timeline"><input id="seek" type="range" min="0" max="100" value="0" aria-label="Seek"><span id="timecode">0:00 / 0:00</span></div>
+          <div class="timeline"><div class="seek-control"><progress id="seek-progress" max="100" value="0" aria-hidden="true"></progress><input id="seek" type="range" min="0" max="100" value="0" aria-label="Seek"></div><span id="timecode">0:00 / 0:00</span></div>
         </div>
         <audio id="audio" preload="metadata"></audio>
         <button id="play" class="play-button" type="button" aria-label="Play" aria-pressed="false">
