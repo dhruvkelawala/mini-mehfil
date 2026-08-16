@@ -32,6 +32,10 @@ day or less because recovered MiniMax source URLs expire after 24 hours. Job JSO
 contains only the version, job ID, state/timestamps, finished source and optional
 trace ID, or a stable public failure. It never contains a MiniMax token, prompt,
 lyrics, request headers, raw upstream error, or public share metadata.
+Pending is an execution state, not a day-long outcome: after five minutes without
+a terminal checkpoint, the Worker atomically records a stable interrupted failure.
+This prevents recovery clients from polling an invocation that its host already
+terminated, without retrying the paid generation call.
 
 Deploy backward-compatibly: deploy the additive Worker routes and verify the R2
 binding, secret, and both lifecycle rules before deploying the Vercel app. To

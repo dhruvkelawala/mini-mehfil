@@ -226,6 +226,38 @@ test('generation jobs are claimed once and duplicate claims return the original 
   assert.equal(record.expiresAt, '2026-08-16T12:00:00.000Z');
 });
 
+test('an abandoned generation becomes a durable failure instead of staying pending forever', async () => {
+  const storage = memoryStorage();
+  let current = Date.parse('2026-08-15T12:00:00Z');
+  const handle = createShareHandler({ storage, uploadSecret: SECRET, now: () => current });
+  await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST' }));
+
+  current += 5 * 60 * 1000 + 1;
+  const status = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`));
+  assert.equal(status.status, 200);
+  assert.deepEqual(await status.json(), {
+    version: 1,
+    jobId: IDEMPOTENCY_KEY,
+    status: 'failed',
+    createdAt: '2026-08-15T12:00:00.000Z',
+    updatedAt: '2026-08-15T12:05:00.001Z',
+    expiresAt: '2026-08-16T12:00:00.000Z',
+    error: {
+      code: 'GENERATION_INTERRUPTED',
+      message: 'The recording stopped before it could finish. Try the mehfil again.'
+    }
+  });
+
+  const duplicate = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST' }));
+  assert.equal(duplicate.status, 200);
+  assert.equal((await duplicate.json()).status, 'failed');
+  const lateCompletion = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, {
+    method: 'PUT',
+    body: { status: 'complete', source: 'https://cdn.example/song.mp3' }
+  }));
+  assert.equal(lateCompletion.status, 409);
+});
+
 test('generation job completion is whitelisted, conditional, and idempotent', async () => {
   const storage = memoryStorage();
   const handle = createShareHandler({ storage, uploadSecret: SECRET, now: () => Date.parse('2026-08-15T12:00:00Z') });

@@ -7,6 +7,7 @@ const MAX_BODY_BYTES = 64 * 1024;
 const MAX_SHARE_AUDIO_BYTES = 10 * 1024 * 1024;
 const JOB_ID_PATTERN = /^[A-Za-z0-9_-]{24}$/;
 const RECOVERY_TIMEOUT_MS = 15 * 1000;
+const GENERATION_TIMEOUT_MS = 4 * 60 * 1000;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -118,7 +119,7 @@ function publicFailure(message, code = 'GENERATION_FAILED') {
   let safe = 'MiniMax could not make the recording. Please try again.';
   if (/token|auth|unauthori[sz]ed|forbidden/i.test(upstream)) safe = 'MiniMax rejected the API token. Check it and try again.';
   else if (/rate|quota|limit|too many/i.test(upstream)) safe = 'MiniMax is handling too many requests. Please try again shortly.';
-  else if (code === 'GENERATION_TIMEOUT') safe = 'Generation timed out after seven minutes.';
+  else if (code === 'GENERATION_TIMEOUT') safe = 'The recording took too long to finish. Try the mehfil again.';
   else if (code === 'MISSING_AUDIO') safe = 'MiniMax succeeded but did not return an audio file.';
   else if (code === 'MINIMAX_UNAVAILABLE') safe = 'Generation failed while contacting MiniMax.';
   return { code, message: safe };
@@ -163,6 +164,7 @@ function createServer(options = {}) {
   const shareBaseUrl = normalizeShareBaseUrl(options.shareBaseUrl ?? process.env.MEHFIL_SHARE_URL ?? '');
   const shareSecret = String(options.shareSecret ?? process.env.MEHFIL_SHARE_SECRET ?? '').trim();
   const sharingConfigured = Boolean(shareBaseUrl && shareSecret);
+  const generationTimeoutMs = options.generationTimeoutMs ?? GENERATION_TIMEOUT_MS;
   const sharedUrls = new Map();
 
   async function recoveryRequest(pathname, { method = 'GET', body } = {}) {
@@ -269,7 +271,7 @@ function createServer(options = {}) {
         }
 
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 7 * 60 * 1000);
+        const timeout = setTimeout(() => controller.abort(), generationTimeoutMs);
         let upstream;
         try {
           paidCallStarted = true;
@@ -325,7 +327,7 @@ function createServer(options = {}) {
         return sendJson(res, 200, result);
       } catch (error) {
         if (error.name === 'AbortError') {
-          const failure = publicFailure('Generation timed out after seven minutes.', 'GENERATION_TIMEOUT');
+          const failure = publicFailure('Generation timed out.', 'GENERATION_TIMEOUT');
           if (claimedJobId && !await checkpointFailure(claimedJobId, failure)) return sendJson(res, 503, { error: 'Generation ended, but recovery could not save its final status. Please check again.' });
           return sendJson(res, 504, { error: failure.message });
         }

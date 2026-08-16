@@ -420,6 +420,47 @@ test('a MiniMax network failure reports retryable storage trouble when failure c
   assert.equal(checkpointCalls, 2);
 });
 
+test('a timed-out paid call checkpoints a stable failure before responding', async () => {
+  let checkpoint;
+  const mockFetch = async (url, init = {}) => {
+    if (url.endsWith('/claim')) {
+      return new Response(JSON.stringify({ jobId: JOB_ID, status: 'pending' }), { status: 201 });
+    }
+    if (url === 'https://mock.minimax.test/v1/music_generation') {
+      return new Promise((resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+      });
+    }
+    if (url === `https://share.example/generation-jobs/${JOB_ID}` && init.method === 'PUT') {
+      checkpoint = JSON.parse(init.body);
+      return new Response(JSON.stringify({ jobId: JOB_ID, ...checkpoint }));
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  await withServer(mockFetch, async base => {
+    const response = await fetch(`${base}/api/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jobId: JOB_ID, token: 'sk-private', lyrics: 'A patient song' })
+    });
+    assert.equal(response.status, 504);
+    assert.equal((await response.json()).error, 'The recording took too long to finish. Try the mehfil again.');
+  }, {
+    shareBaseUrl: 'https://share.example',
+    shareSecret: 'share-secret',
+    generationTimeoutMs: 5
+  });
+
+  assert.deepEqual(checkpoint, {
+    status: 'failed',
+    error: {
+      code: 'GENERATION_TIMEOUT',
+      message: 'The recording took too long to finish. Try the mehfil again.'
+    }
+  });
+});
+
 test('generation status preserves pending and failed contracts and distinguishes missing storage', async () => {
   const pendingId = '111111111111111111111111';
   const failedId = '222222222222222222222222';

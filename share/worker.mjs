@@ -9,6 +9,7 @@ const JOB_ID_PATTERN = /^[A-Za-z0-9_-]{24}$/;
 const JOB_VERSION = 1;
 const MAX_JOB_JSON_BYTES = 64 * 1024;
 const JOB_TTL_MS = 24 * 60 * 60 * 1000;
+const PENDING_JOB_TTL_MS = 5 * 60 * 1000;
 const REPOSITORY_URL = 'https://github.com/dhruvkelawala/mini-mehfil';
 
 function json(value, status = 200, headers = {}) {
@@ -189,6 +190,26 @@ function sameTerminal(left, right) {
     left.error?.code === right.error?.code && left.error?.message === right.error?.message;
 }
 
+async function settleAbandonedJob(storage, result, jobId, currentTime) {
+  const current = validStoredJob(result?.record, jobId);
+  const stillRecoverable = current && Date.parse(current.expiresAt) > currentTime;
+  const abandoned = stillRecoverable
+    && current.status === 'pending'
+    && Date.parse(current.updatedAt) + PENDING_JOB_TTL_MS <= currentTime;
+  if (!abandoned) return result;
+
+  const failed = terminalJob(current, {
+    status: 'failed',
+    error: {
+      code: 'GENERATION_INTERRUPTED',
+      message: 'The recording stopped before it could finish. Try the mehfil again.'
+    }
+  }, currentTime);
+  const transitioned = await storage.transitionJob(jobId, failed, result.etag);
+  if (!transitioned.conflict) return transitioned;
+  return await storage.getJob(jobId);
+}
+
 async function readJobJson(request) {
   const declared = Number(request.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > MAX_JOB_JSON_BYTES) throw Object.assign(new Error('Job update is too large.'), { status: 413 });
@@ -285,21 +306,25 @@ export function createShareHandler({ storage, rateLimit = async () => true, idGe
 
       try {
         if (claimMatch) {
-          const record = pendingJob(jobId, now());
+          const currentTime = now();
+          const record = pendingJob(jobId, currentTime);
           let result = await storage.claimJob(jobId, record);
           if (!result.created && !result.record) result = { ...result, ...await storage.getJob(jobId) };
+          if (!result.created) result = await settleAbandonedJob(storage, result, jobId, currentTime);
           const stored = validStoredJob(result.record, jobId);
-          if (!stored || Date.parse(stored.expiresAt) <= now()) return json({ error: 'Generation job is unavailable.' }, 404);
+          if (!stored || Date.parse(stored.expiresAt) <= currentTime) return json({ error: 'Generation job is unavailable.' }, 404);
           return json(stored, result.created ? 201 : 200);
         }
 
-        const currentResult = await storage.getJob(jobId);
+        const currentTime = now();
+        let currentResult = await storage.getJob(jobId);
+        currentResult = await settleAbandonedJob(storage, currentResult, jobId, currentTime);
         const current = validStoredJob(currentResult?.record, jobId);
-        if (!current || Date.parse(current.expiresAt) <= now()) return json({ error: 'Generation job was not found.' }, 404);
+        if (!current || Date.parse(current.expiresAt) <= currentTime) return json({ error: 'Generation job was not found.' }, 404);
         if (request.method === 'GET') return json(current);
 
         const input = await readJobJson(request);
-        const next = terminalJob(current, input, now());
+        const next = terminalJob(current, input, currentTime);
         if (current.status !== 'pending') return sameTerminal(current, next) ? json(current) : json({ error: 'Generation job is already finished.' }, 409);
         const transitioned = await storage.transitionJob(jobId, next, currentResult.etag);
         if (transitioned.conflict) {
