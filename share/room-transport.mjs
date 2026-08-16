@@ -19,6 +19,7 @@ const CLIENT_EVENT_TYPES = new Set([
   'lyrics-ready',
   'recording-failed',
   'song-ready',
+  'playback-updated',
   'kicked',
   'room-expired'
 ]);
@@ -289,7 +290,10 @@ export function createRoomTransport({
       event.requestId = createParticipantId();
     }
     if (message.type === 'song-ready') {
-      event.startedAt = now() + SONG_START_DELAY_MS;
+      event.startedAt = now();
+    }
+    if (message.type === 'playback-updated' && message.status === 'playing') {
+      event.at += SONG_START_DELAY_MS;
     }
     return event;
   }

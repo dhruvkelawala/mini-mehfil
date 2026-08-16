@@ -303,3 +303,54 @@ test('the room cap rejects the twenty-first listener', async () => {
   assert.equal(harness.latest(rejected, 'error').code, 'room-full');
   assert.ok(harness.closed.some(item => item.socket === rejected && item.code === 4002));
 });
+
+test('host playback commands are scheduled and broadcast while listener commands are rejected', async () => {
+  const harness = createHarness();
+  await openRoom(harness);
+  const listener = await connectListener(harness);
+  const host = await connectHost(harness);
+
+  await harness.transport.message(listener, JSON.stringify({
+    type: 'request-submitted',
+    idea: 'rain'
+  }));
+  const requestId = harness.latest(host, 'snapshot').state.queue[0].id;
+  for (const message of [
+    { type: 'request-accepted', requestId },
+    { type: 'recording-started', requestId },
+    {
+      type: 'lyrics-ready',
+      requestId,
+      lyrics: {
+        title: 'Rain',
+        language: 'Hindi',
+        lyricsNative: 'बारिश',
+        lyricsRoman: 'baarish'
+      }
+    },
+    { type: 'song-ready', requestId, shareId: 'abcdefghijklmnop' }
+  ]) {
+    await harness.transport.message(host, JSON.stringify(message));
+  }
+
+  await harness.transport.message(host, JSON.stringify({
+    type: 'playback-updated',
+    shareId: 'abcdefghijklmnop',
+    status: 'playing',
+    positionMs: 750
+  }));
+  assert.deepEqual(harness.latest(listener, 'snapshot').state.currentSong.playback, {
+    status: 'playing',
+    positionMs: 750,
+    changedAt: harness.now() + 1_500
+  });
+
+  await harness.transport.message(listener, JSON.stringify({
+    type: 'playback-updated',
+    shareId: 'abcdefghijklmnop',
+    status: 'paused',
+    positionMs: 900
+  }));
+  assert.equal(harness.latest(listener, 'error').code, 'host-only');
+  assert.equal(harness.latest(host, 'snapshot').state.currentSong.playback.status, 'playing');
+});

@@ -90,6 +90,15 @@ export function roomPage(roomId, nonce) {
     .room-meta { margin-top: 18px; color: var(--muted); font-size: 11px; }
     .status { min-height: 1.5em; margin: 0; }
     .status::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 8px; border-radius: 50%; background: var(--amber); box-shadow: 0 2px 10px rgba(230,166,83,.5); }
+    .identity.has-song { transform: translateY(-8px); }
+    .identity.has-song h1 { font-size: clamp(66px, 7vw, 108px); }
+    .identity.has-song .mini { margin-bottom: .65em; }
+    .lyric-stage { width: min(620px,100%); min-height: 190px; margin: 25px auto 0; display: grid; align-content: center; }
+    .lyric-stage h2 { color: #e6a653; font-size: 20px; letter-spacing: -.01em; }
+    .lyric-cue { min-height: 1.5em; margin: 18px 0 5px; color: #dfc39a; font-size: 10px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+    .lyric-primary { margin: 0; color: #fff8ec; font: 700 clamp(27px,3.3vw,44px)/1.22 "Iowan Old Style", Georgia, serif; text-wrap: balance; text-shadow: 0 5px 26px rgba(0,0,0,.45); }
+    .lyric-secondary { min-height: 1.5em; margin: 10px 0 0; color: #dfcbb5; font: italic 15px/1.45 "Iowan Old Style", Georgia, serif; text-wrap: balance; }
+    .lyric-primary.is-new, .lyric-secondary.is-new { animation: lyric-focus .48s cubic-bezier(.16,1,.3,1) both; }
 
     .composer {
       position: relative; min-width: 0; padding: 25px 26px 24px; border: 1px solid rgba(249,237,218,.16); border-radius: 9px;
@@ -147,7 +156,7 @@ export function roomPage(roomId, nonce) {
 
     .player-shell {
       position: fixed; z-index: 5; bottom: 25px; left: 50%; width: min(720px, calc(100% - 32px)); min-height: 104px;
-      display: grid; grid-template-columns: 68px minmax(0,1fr) 52px; align-items: center; gap: 12px; padding: 10px 16px 10px 10px;
+      display: grid; grid-template-columns: 68px minmax(0,1fr); align-items: center; gap: 12px; padding: 10px 18px 10px 10px;
       border: 1px solid rgba(255,255,255,.2); border-radius: 34px; background: rgba(122,54,45,.96);
       box-shadow: 0 20px 55px rgba(8,19,18,.42), inset 0 1px rgba(255,255,255,.15); backdrop-filter: blur(12px);
       transform: translateX(-50%); animation: player-up .85s both;
@@ -159,36 +168,21 @@ export function roomPage(roomId, nonce) {
     .player-track h2, .player-track p { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .player-track h2 { font-size: 16px; }
     .player-track p { margin: 3px 0 0; color: var(--muted); font-size: 10px; }
-    .song-lyrics { height: 25px; margin-top: 5px; overflow: auto; color: #fff8ec; font: italic 13px/1.75 "Iowan Old Style", Georgia, serif; scrollbar-width: none; }
-    .song-lyrics::-webkit-scrollbar { display: none; }
-    .song-lyrics:empty::before { content: "Lyrics will follow the music"; color: rgba(255,248,236,.7); }
-    .song-line { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-    .song-line small { display: inline; margin-left: 8px; color: #ead0b5; font: 10px/1.4 ui-sans-serif, system-ui, sans-serif; }
-    .song-line.cue { color: var(--amber); font: 800 9px/1.8 ui-sans-serif, system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+    .host-playback { display: flex; align-items: center; gap: 6px; color: #f1d8bd !important; }
+    .host-playback svg { width: 13px; height: 13px; fill: none; stroke: #e6a653; stroke-width: 1.8; stroke-linecap: round; }
     .timeline { display: grid; grid-template-columns: minmax(80px,1fr) auto; align-items: center; gap: 9px; margin-top: 5px; }
-    .seek-control { position: relative; height: 15px; border-radius: 8px; }
-    .seek-control:has(#seek:focus-visible) { outline: 2px solid var(--amber); outline-offset: 2px; }
-    #seek-progress { position: absolute; top: 6px; left: 0; width: 100%; height: 3px; overflow: hidden; border: 0; border-radius: 2px; appearance: none; background: rgba(255,255,255,.28); }
+    #seek-progress { width: 100%; height: 3px; overflow: hidden; border: 0; border-radius: 2px; appearance: none; background: rgba(255,255,255,.28); }
     #seek-progress::-webkit-progress-bar { background: rgba(255,255,255,.28); }
     #seek-progress::-webkit-progress-value { background: #fffaf0; }
     #seek-progress::-moz-progress-bar { background: #fffaf0; }
-    #seek { position: absolute; inset: 0; appearance: none; width: 100%; height: 15px; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; cursor: pointer; }
-    #seek::-webkit-slider-runnable-track { height: 3px; background: transparent; }
-    #seek::-webkit-slider-thumb { appearance: none; width: 11px; height: 11px; margin-top: -4px; border-radius: 50%; background: #fffaf0; box-shadow: 0 1px 5px rgba(0,0,0,.3); }
-    #seek::-moz-range-track { height: 3px; background: transparent; }
-    #seek::-moz-range-thumb { width: 11px; height: 11px; border: 0; border-radius: 50%; background: #fffaf0; }
     #timecode { color: #ead0b5; font-size: 9px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .play-button { width: 49px; height: 49px; display: grid; place-items: center; border: 0; border-radius: 50%; color: #29322e; background: #fffaf0; box-shadow: 0 5px 15px rgba(0,0,0,.18); cursor: pointer; }
-    .player-icon { width: 19px; height: 19px; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-    .play-icon { fill: currentColor; stroke: none; transform: translateX(1px); }
-    .pause-icon { display: none; }
-    .player-shell.is-playing .play-icon { display: none; }
-    .player-shell.is-playing .pause-icon { display: block; }
+    .enable-audio { grid-column: 2; justify-self: start; min-height: 34px; padding: 7px 11px; border: 1px solid rgba(255,255,255,.28); border-radius: 18px; color: #fff8ec; background: rgba(41,50,46,.6); cursor: pointer; font-size: 10px; font-weight: 800; }
     .player-shell audio { display: none; }
     .play-error { grid-column: 2 / -1; margin: -8px 0 2px; color: #ffe0cb; font-size: 10px; }
 
     @keyframes joining { to { transform: translateX(5px); opacity: .62; } }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes lyric-focus { from { opacity: .2; filter: blur(4px); transform: translateY(8px); } }
     @keyframes settle { from { opacity: 0; transform: scale(1.08); } to { opacity: 1; transform: scale(1.015); } }
     @keyframes fade-down { from { opacity: 0; transform: translateY(-10px); } }
     @keyframes rise { from { opacity: 0; transform: translateY(25px); } }
@@ -199,6 +193,8 @@ export function roomPage(roomId, nonce) {
       .identity { transform: none; }
       .identity h1 { font-size: clamp(76px, 22vw, 132px); }
       .tagline { margin-top: 6px; }
+      .identity.has-song { transform: none; }
+      .identity.has-song h1 { font-size: clamp(64px,13vw,92px); }
       .composer { width: min(520px,100%); margin: 0 auto; }
       .room-shelves { width: min(720px,100%); margin: 28px auto 0; gap: 28px; }
     }
@@ -217,11 +213,12 @@ export function roomPage(roomId, nonce) {
       .field-row, .room-shelves { grid-template-columns: 1fr; }
       input, select, textarea { font-size: 16px; }
       .room-shelves { gap: 20px; }
-      .player-shell { bottom: 12px; min-height: 92px; grid-template-columns: 50px minmax(0,1fr) 42px; gap: 9px; padding: 8px 12px 8px 8px; border-radius: 28px; }
+      .lyric-stage { min-height: 150px; margin-top: 18px; padding-inline: 8px; }
+      .lyric-primary { font-size: clamp(25px,7.5vw,36px); }
+      .lyric-secondary { font-size: 14px; }
+      .player-shell { bottom: 12px; min-height: 84px; grid-template-columns: 50px minmax(0,1fr); gap: 9px; padding: 8px 12px 8px 8px; border-radius: 28px; }
       .record { width: 50px; height: 50px; }
       .record::after { width: 22px; height: 22px; font-size: 11px; }
-      .play-button { width: 41px; height: 41px; }
-      .song-lyrics { font-size: 12px; }
       #timecode { display: none; }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -244,6 +241,12 @@ export function roomPage(roomId, nonce) {
       <h1 id="brand-title" aria-label="Mini Mehfil"><span class="mini" aria-hidden="true">Mini</span>महफ़िल</h1>
       <p class="tagline">A private song room. Request the next tune, then listen together.</p>
       <div class="room-meta"><p id="status" class="status" aria-live="polite">Ready to join</p></div>
+      <section id="lyric-stage" class="lyric-stage" aria-labelledby="lyric-title" hidden>
+        <h2 id="lyric-title"></h2>
+        <p id="lyric-cue" class="lyric-cue"></p>
+        <p id="lyric-primary" class="lyric-primary" aria-live="polite"></p>
+        <p id="lyric-secondary" class="lyric-secondary"></p>
+      </section>
     </section>
 
     <form id="join-panel" class="composer">
@@ -301,14 +304,11 @@ export function roomPage(roomId, nonce) {
         <div class="player-track">
           <h2 id="song-title"></h2>
           <p id="song-language"></p>
-          <div id="song-lyrics" class="song-lyrics" aria-label="Synced lyrics" aria-live="polite"></div>
-          <div class="timeline"><div class="seek-control"><progress id="seek-progress" max="100" value="0" aria-hidden="true"></progress><input id="seek" type="range" min="0" max="100" value="0" aria-label="Seek"></div><span id="timecode">0:00 / 0:00</span></div>
+          <p class="host-playback"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 10v4M12 8v8M16 10v4"/></svg><span id="playback-state">Host paused</span></p>
+          <div class="timeline"><progress id="seek-progress" max="100" value="0" aria-label="Playback progress"></progress><span id="timecode">0:00 / 0:00</span></div>
         </div>
         <audio id="audio" preload="metadata"></audio>
-        <button id="play" class="play-button" type="button" aria-label="Play" aria-pressed="false">
-          <svg class="player-icon play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.5v11l9-5.5-9-5.5Z"/></svg>
-          <svg class="player-icon pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7v10M16 7v10"/></svg>
-        </button>
+        <button id="enable-audio" class="enable-audio" type="button" hidden>Enable sound</button>
         <p id="play-error" class="play-error" role="alert"></p>
       </section>
     </section>

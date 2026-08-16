@@ -45,7 +45,12 @@ Sharing remains opt-in for each finished song. The proxy resolves a completed pr
 
 The same sharing configuration enables live mehfils. Press **Open this mehfil to friends** locally and copy the public listener link. Listeners join without an account, API key, or installation, submit song requests, and hear finished recordings together. The host accepts and orders requests, then explicitly presses **Record** before any paid generation begins; all generation costs remain on the host's MiniMax key.
 
-Rooms are transient and host-controlled. The public join URL contains only an eight-character room code. The separate host credential stays in that browser tab's `sessionStorage`, while the MiniMax key continues to travel only between the host browser and local proxy.
+Rooms are transient and host-controlled. The host's player is authoritative: play,
+pause, and seeking are synchronized to listeners, whose room page shows the
+current native-script lyric and romanization as the song advances. The public
+join URL contains only an eight-character room code. The separate host
+credential stays in that browser tab's `sessionStorage`, while the MiniMax key
+continues to travel only between the host browser and local proxy.
 
 ## How it works
 

@@ -11,7 +11,7 @@ export const ROOM_LIMITS = Object.freeze({
 const HOST_EVENTS = new Set([
   'request-accepted', 'request-reordered', 'request-declined',
   'recording-started', 'lyrics-ready', 'recording-failed', 'song-ready',
-  'kicked', 'room-expired'
+  'playback-updated', 'kicked', 'room-expired'
 ]);
 
 const fail = (state, code) => ({ state, error: { code }, effects: [] });
@@ -198,11 +198,33 @@ export function transitionRoom(state, event) {
         title: String(sheet.title || event.title || ''),
         language: String(sheet.language || event.language || ''),
         startedAt: event.startedAt,
-        lyrics: sheet
+        lyrics: sheet,
+        playback: {
+          status: 'paused',
+          positionMs: 0,
+          changedAt: event.startedAt
+        }
       };
       const index = requestIndex(event.requestId);
       next.queue[index] = { ...next.queue[index], status: 'ready' };
       next.currentRecording = null;
+      return ok(next);
+    }
+    case 'playback-updated': {
+      const positionMs = Number(event.positionMs);
+      const validSong = next.currentSong?.shareId === event.shareId;
+      const validStatus = event.status === 'playing' || event.status === 'paused';
+      const validPosition = Number.isFinite(positionMs)
+        && positionMs >= 0
+        && positionMs <= 24 * 60 * 60 * 1000;
+      if (!validSong || !validStatus || !validPosition) {
+        return fail(state, 'invalid-playback');
+      }
+      next.currentSong.playback = {
+        status: event.status,
+        positionMs: Math.round(positionMs),
+        changedAt: event.at
+      };
       return ok(next);
     }
     case 'kicked': {
@@ -223,6 +245,14 @@ export function transitionRoom(state, event) {
 }
 
 export function projectRoomState(state, viewer = {}) {
+  const currentSong = state.currentSong ? structuredClone(state.currentSong) : null;
+  if (currentSong && !currentSong.playback) {
+    currentSong.playback = {
+      status: 'paused',
+      positionMs: 0,
+      changedAt: currentSong.startedAt
+    };
+  }
   const base = {
     version: state.version,
     roomId: state.roomId,
@@ -235,7 +265,7 @@ export function projectRoomState(state, viewer = {}) {
       .map(item => viewer.role === 'host' ? { ...item } : { name: item.name }),
     listenerCount: state.participants.filter(item => item.connected).length,
     currentRecording: state.currentRecording ? structuredClone(state.currentRecording) : null,
-    currentSong: state.currentSong ? structuredClone(state.currentSong) : null,
+    currentSong,
     setlist: structuredClone(state.setlist)
   };
   base.queue = viewer.role === 'host'

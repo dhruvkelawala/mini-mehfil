@@ -14,12 +14,17 @@ export function installRoomClient({ roomId }) {
   const queue = document.querySelector('#queue');
   const player = document.querySelector('#player');
   const audio = document.querySelector('#audio');
-  const play = document.querySelector('#play');
-  const seek = document.querySelector('#seek');
   const seekProgress = document.querySelector('#seek-progress');
   const timecode = document.querySelector('#timecode');
+  const enableAudio = document.querySelector('#enable-audio');
   const playError = document.querySelector('#play-error');
-  const songLyrics = document.querySelector('#song-lyrics');
+  const playbackState = document.querySelector('#playback-state');
+  const identity = document.querySelector('.identity');
+  const lyricStage = document.querySelector('#lyric-stage');
+  const lyricTitle = document.querySelector('#lyric-title');
+  const lyricCue = document.querySelector('#lyric-cue');
+  const lyricPrimary = document.querySelector('#lyric-primary');
+  const lyricSecondary = document.querySelector('#lyric-secondary');
   const scene = document.querySelector('.scene');
 
   let socket;
@@ -27,6 +32,10 @@ export function installRoomClient({ roomId }) {
   let terminal = false;
   let lastShareId = null;
   let songLines = [];
+  let currentSong = null;
+  let playbackTimer = null;
+  let playbackRevision = null;
+  let lastLyricIndex = -1;
   let silentAudioUrl = null;
 
   function setJoinBusy(busy) {
@@ -144,15 +153,15 @@ export function installRoomClient({ roomId }) {
   }
 
   async function attemptRoomPlayback() {
-    play.hidden = false;
     playError.textContent = '';
     if (audio.ended) audio.currentTime = 0;
     try {
       await audio.play();
+      enableAudio.hidden = true;
       return true;
     } catch {
-      play.hidden = false;
-      playError.textContent = 'Playback needs another tap. Please try again.';
+      enableAudio.hidden = false;
+      playError.textContent = 'Your browser blocked shared audio. Enable sound once to join the music.';
       return false;
     }
   }
@@ -167,15 +176,13 @@ export function installRoomClient({ roomId }) {
     const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
     const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
     const progress = duration ? Math.min(100, (currentTime / duration) * 100) : 0;
-    seek.value = String(progress);
     seekProgress.value = progress;
     timecode.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
   }
 
-  function setPlaybackState(isPlaying) {
+  function setPlaybackState(isPlaying, label = isPlaying ? 'Playing with the host' : 'Host paused') {
     player.classList[isPlaying ? 'add' : 'remove']('is-playing');
-    play.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play');
-    play.setAttribute('aria-pressed', String(isPlaying));
+    playbackState.textContent = label;
   }
 
   function prepareAudioUnlock() {
@@ -211,45 +218,93 @@ export function installRoomClient({ roomId }) {
       };
     });
 
-    songLyrics.replaceChildren(...songLines.map(value => {
-      const line = document.createElement('span');
-      line.className = value.cue ? 'song-line cue' : 'song-line';
-      line.textContent = value.cue
-        ? value.primary.replace(/^\[(.+)\]$/, '$1')
-        : value.primary;
-      if (value.secondary) {
-        const secondary = document.createElement('small');
-        secondary.textContent = value.secondary;
-        line.append(secondary);
-      }
-      return line;
-    }));
-
+    lyricTitle.textContent = song.title || 'Now playing';
     document.querySelector('#song-language').textContent = sheet.language
       || song.language
       || '';
+    lyricStage.hidden = false;
+    identity.classList.add('has-song');
+    lastLyricIndex = -1;
     syncSongLyrics();
   }
 
   function syncSongLyrics() {
-    const spokenCount = songLines.filter(line => !line.cue).length;
+    const spokenLines = songLines
+      .map((line, index) => ({ ...line, index }))
+      .filter(line => !line.cue);
+    if (!spokenLines.length) {
+      lyricStage.hidden = true;
+      return;
+    }
     const progress = audio.duration
       ? Math.min(audio.currentTime / (audio.duration * 0.9), 1)
       : 0;
-    const shownCount = spokenCount
-      ? Math.min(spokenCount, Math.max(1, Math.ceil(progress * spokenCount)))
-      : 0;
-    let seenCount = 0;
-
-    [...songLyrics.children].forEach((element, index) => {
-      if (songLines[index].cue) {
-        element.hidden = shownCount <= seenCount;
-      } else {
-        seenCount += 1;
-        element.hidden = seenCount > shownCount;
-      }
+    const spokenIndex = Math.min(
+      spokenLines.length - 1,
+      Math.floor(progress * spokenLines.length)
+    );
+    const active = spokenLines[spokenIndex];
+    if (active.index === lastLyricIndex) return;
+    lastLyricIndex = active.index;
+    const cue = songLines.slice(0, active.index).findLast(line => line.cue);
+    lyricCue.textContent = cue?.primary.replace(/^\[(.+)\]$/, '$1') || '';
+    lyricPrimary.textContent = active.primary;
+    lyricSecondary.textContent = active.secondary;
+    lyricPrimary.classList.remove('is-new');
+    lyricSecondary.classList.remove('is-new');
+    requestAnimationFrame(() => {
+      lyricPrimary.classList.add('is-new');
+      lyricSecondary.classList.add('is-new');
     });
-    songLyrics.scrollTop = songLyrics.scrollHeight;
+  }
+
+  function roomPlaybackPositionMs(playback) {
+    const elapsed = playback.status === 'playing'
+      ? Math.max(0, Date.now() - playback.changedAt)
+      : 0;
+    return Math.max(0, playback.positionMs + elapsed);
+  }
+
+  function applyRoomPlayback(song) {
+    currentSong = song;
+    const playback = song.playback || {
+      status: 'paused',
+      positionMs: 0,
+      changedAt: song.startedAt
+    };
+    const revision = `${song.shareId}:${playback.status}:${playback.positionMs}:${playback.changedAt}`;
+    if (revision === playbackRevision) return;
+    clearTimeout(playbackTimer);
+    playbackTimer = null;
+    playbackRevision = revision;
+    const apply = async () => {
+      const desired = roomPlaybackPositionMs(playback) / 1000;
+      audio.currentTime = Number.isFinite(audio.duration)
+        ? Math.min(desired, audio.duration)
+        : desired;
+      syncPlayerTimeline();
+      syncSongLyrics();
+      if (playback.status === 'playing') await attemptRoomPlayback();
+      else {
+        audio.pause();
+        setPlaybackState(false);
+      }
+    };
+    if (audio.readyState < 1) {
+      audio.addEventListener('loadedmetadata', () => {
+        playbackRevision = null;
+        applyRoomPlayback(song);
+      }, { once: true });
+      return;
+    }
+    if (playback.status === 'playing' && playback.changedAt > Date.now()) {
+      audio.pause();
+      audio.currentTime = playback.positionMs / 1000;
+      setPlaybackState(false, 'Starting together…');
+      playbackTimer = setTimeout(apply, playback.changedAt - Date.now());
+    } else {
+      void apply();
+    }
   }
 
   function renderQueue(state) {
@@ -279,10 +334,13 @@ export function installRoomClient({ roomId }) {
     if (!song) return;
     player.hidden = false;
     document.querySelector('#song-title').textContent = song.title;
-    if (song.shareId === lastShareId) return;
+    currentSong = song;
+    if (song.shareId === lastShareId) {
+      applyRoomPlayback(song);
+      return;
+    }
 
     lastShareId = song.shareId;
-    play.hidden = false;
     playError.textContent = '';
     prepareSongLyrics(song);
     if (silentAudioUrl) {
@@ -292,14 +350,7 @@ export function installRoomClient({ roomId }) {
     audio.src = `/s/${song.shareId}/audio`;
     setPlaybackState(false);
     audio.load();
-    audio.addEventListener('loadedmetadata', async () => {
-      const elapsed = Math.max(0, (Date.now() - song.startedAt) / 1_000);
-      const joinLive = !Number.isFinite(audio.duration) || elapsed < audio.duration;
-      audio.currentTime = joinLive ? elapsed : 0;
-      syncPlayerTimeline();
-      syncSongLyrics();
-      if (joinLive) await attemptRoomPlayback();
-    }, { once: true });
+    applyRoomPlayback(song);
   }
 
   function renderSetlist(setlist) {
@@ -334,7 +385,6 @@ export function installRoomClient({ roomId }) {
     if (joinButton.disabled) return;
     terminal = false;
     setJoinBusy(true);
-    play.hidden = false;
     prepareAudioUnlock();
     try {
       audio.muted = true;
@@ -342,8 +392,8 @@ export function installRoomClient({ roomId }) {
       audio.pause();
       audio.currentTime = 0;
     } catch {
-      play.hidden = false;
-      playError.textContent = 'Playback needs another tap. Please try again.';
+      enableAudio.hidden = false;
+      playError.textContent = 'Your browser needs sound enabled once.';
     } finally {
       audio.muted = false;
     }
@@ -364,15 +414,8 @@ export function installRoomClient({ roomId }) {
   document.querySelector('#peek').addEventListener('click', () => {
     document.querySelector('#lyrics').hidden = false;
   });
-  play.addEventListener('click', () => {
-    if (audio.paused) void attemptRoomPlayback();
-    else audio.pause();
-  });
-  seek.addEventListener('input', () => {
-    if (!Number.isFinite(audio.duration) || !audio.duration) return;
-    audio.currentTime = (Number(seek.value) / 100) * audio.duration;
-    syncPlayerTimeline();
-    syncSongLyrics();
+  enableAudio.addEventListener('click', () => {
+    if (currentSong) applyRoomPlayback(currentSong);
   });
   audio.addEventListener('play', () => {
     scene.classList.add('is-performing');
@@ -385,7 +428,7 @@ export function installRoomClient({ roomId }) {
   });
   audio.addEventListener('ended', () => {
     scene.classList.remove('is-performing');
-    setPlaybackState(false);
+    setPlaybackState(false, 'Song finished');
   });
   audio.addEventListener('durationchange', syncPlayerTimeline);
   audio.addEventListener('timeupdate', () => {

@@ -48,6 +48,8 @@ const roomCode = document.querySelector('#room-code');
 const roomLink = document.querySelector('#room-link');
 const roomPresence = document.querySelector('#room-presence');
 const roomMessage = document.querySelector('#room-message');
+const roomPlayback = document.querySelector('#room-playback');
+const roomPlaybackState = document.querySelector('#room-playback-state');
 const hostQueue = document.querySelector('#host-queue');
 const hostParticipants = document.querySelector('#host-participants');
 const hostSetlist = document.querySelector('#host-setlist');
@@ -87,6 +89,8 @@ let roomClosing = false;
 let roomTerminal = false;
 let roomAuthenticated = false;
 let roomConnectTimer = null;
+let roomPlaybackTimer = null;
+let roomPlaybackRevision = null;
 let activeRoomDetails = null;
 const ROOM_SESSION_KEY = 'mini-mehfil-host-room';
 
@@ -445,7 +449,12 @@ function loadSong(source, title, reference) {
   performanceButton.hidden = !performanceView.hidden;
   performanceReplay.hidden = true;
   renderPlaybackLyrics();
-  void attemptPlayback('generation-complete');
+  if (activeRoomDetails) {
+    audio.pause();
+    audio.currentTime = 0;
+  } else {
+    void attemptPlayback('generation-complete');
+  }
 }
 
 function generationError(message, { clear = true } = {}) {
@@ -701,6 +710,16 @@ document.addEventListener('keydown', event => {
   }
 });
 performanceReplay.addEventListener('click', () => {
+  const roomSong = controlledRoomSong();
+  if (roomSong) {
+    roomSend({
+      type: 'playback-updated',
+      shareId: roomSong.shareId,
+      status: 'playing',
+      positionMs: 0
+    });
+    return;
+  }
   performanceReplay.hidden = true;
   hasRevealed = false;
   lyricReveal.hidden = false;
@@ -712,6 +731,17 @@ performanceReplay.addEventListener('click', () => {
 });
 
 playButton.addEventListener('click', () => {
+  const roomSong = controlledRoomSong();
+  if (roomSong) {
+    const sent = roomSend({
+      type: 'playback-updated',
+      shareId: roomSong.shareId,
+      status: audio.paused ? 'playing' : 'paused',
+      positionMs: audio.ended ? 0 : audio.currentTime * 1000
+    });
+    if (!sent) notice.textContent = 'The room is reconnecting. Playback did not change.';
+    return;
+  }
   if (audio.paused) void attemptPlayback('play-button'); else audio.pause();
 });
 audio.addEventListener('play', () => {
@@ -719,12 +749,12 @@ audio.addEventListener('play', () => {
   performanceReplay.hidden = true;
   updateScenePerformance();
   renderPlaybackLyrics();
-  playButton.setAttribute('aria-label', 'Pause');
+  playButton.setAttribute('aria-label', controlledRoomSong() ? 'Pause for everyone' : 'Pause');
 });
 audio.addEventListener('pause', () => {
   player.classList.remove('playing');
   updateScenePerformance();
-  playButton.setAttribute('aria-label', 'Play');
+  playButton.setAttribute('aria-label', controlledRoomSong() ? 'Play for everyone' : 'Play');
 });
 audio.addEventListener('timeupdate', () => {
   seek.value = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
@@ -741,7 +771,26 @@ seek.addEventListener('input', () => {
     renderPlaybackLyrics();
   }
 });
+seek.addEventListener('change', () => {
+  const roomSong = controlledRoomSong();
+  if (!roomSong) return;
+  roomSend({
+    type: 'playback-updated',
+    shareId: roomSong.shareId,
+    status: audio.paused ? 'paused' : 'playing',
+    positionMs: audio.currentTime * 1000
+  });
+});
 audio.addEventListener('ended', () => {
+  const roomSong = controlledRoomSong();
+  if (roomSong) {
+    roomSend({
+      type: 'playback-updated',
+      shareId: roomSong.shareId,
+      status: 'paused',
+      positionMs: audio.duration * 1000
+    });
+  }
   if (!performanceView.hidden) performanceReplay.hidden = false;
 });
 
@@ -823,6 +872,90 @@ function roomSend(message) {
   return true;
 }
 
+function currentHostShareId() {
+  if (!shareUrl) return null;
+  return /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(shareUrl).pathname)?.[1] || null;
+}
+
+function controlledRoomSong() {
+  const song = roomSnapshot?.currentSong;
+  return song && currentHostShareId() === song.shareId ? song : null;
+}
+
+function roomPlaybackPositionMs(playback) {
+  const elapsed = playback.status === 'playing'
+    ? Math.max(0, Date.now() - playback.changedAt)
+    : 0;
+  return Math.max(0, playback.positionMs + elapsed);
+}
+
+function ensureHostRoomSong(song) {
+  if (currentHostShareId() === song.shareId) return;
+  const origin = new URL(activeRoomDetails.joinUrl).origin;
+  shareUrl = `${origin}/s/${song.shareId}`;
+  shareReference = null;
+  lyricSheet = song.lyrics;
+  audio.src = `${shareUrl}/audio`;
+  trackTitle.textContent = song.title || 'Mehfil recording';
+  trackSubtitle.textContent = song.language || 'MiniMax Music 3';
+  playButton.disabled = false;
+  shareButton.disabled = true;
+  download.href = audio.src;
+  download.setAttribute('aria-disabled', 'false');
+  performanceAvailable = true;
+  performanceButton.hidden = !performanceView.hidden;
+  renderPlaybackLyrics();
+  audio.load();
+}
+
+function applyHostRoomPlayback(song) {
+  if (!song) {
+    clearTimeout(roomPlaybackTimer);
+    roomPlaybackTimer = null;
+    roomPlayback.hidden = true;
+    roomPlaybackRevision = null;
+    return;
+  }
+
+  ensureHostRoomSong(song);
+  const playback = song.playback || {
+    status: 'paused',
+    positionMs: 0,
+    changedAt: song.startedAt
+  };
+  roomPlayback.hidden = false;
+  roomPlaybackState.textContent = playback.status === 'playing' ? 'Playing' : 'Paused';
+  const revision = `${song.shareId}:${playback.status}:${playback.positionMs}:${playback.changedAt}`;
+  if (revision === roomPlaybackRevision) return;
+  clearTimeout(roomPlaybackTimer);
+  roomPlaybackTimer = null;
+  roomPlaybackRevision = revision;
+
+  const apply = () => {
+    const desired = roomPlaybackPositionMs(playback) / 1000;
+    if (Number.isFinite(audio.duration)) {
+      audio.currentTime = Math.min(desired, audio.duration);
+    } else {
+      audio.currentTime = desired;
+    }
+    if (playback.status === 'playing') audio.play().catch(() => {});
+    else audio.pause();
+  };
+
+  if (audio.readyState < 1) {
+    audio.addEventListener('loadedmetadata', () => applyHostRoomPlayback(song), { once: true });
+    roomPlaybackRevision = null;
+    return;
+  }
+  if (playback.status === 'playing' && playback.changedAt > Date.now()) {
+    audio.pause();
+    audio.currentTime = playback.positionMs / 1000;
+    roomPlaybackTimer = setTimeout(apply, playback.changedAt - Date.now());
+  } else {
+    apply();
+  }
+}
+
 function roomSession() {
   try {
     return JSON.parse(sessionStorage.getItem(ROOM_SESSION_KEY));
@@ -839,6 +972,9 @@ function setRoomButtonLabel(wide, compact = wide) {
 function clearRoomSession() {
   clearTimeout(roomConnectTimer);
   roomConnectTimer = null;
+  clearTimeout(roomPlaybackTimer);
+  roomPlaybackTimer = null;
+  roomPlaybackRevision = null;
   roomClosing = false;
   roomTerminal = true;
   sessionStorage.removeItem(ROOM_SESSION_KEY);
@@ -848,6 +984,7 @@ function clearRoomSession() {
   roomAuthenticated = false;
   activeRoomDetails = null;
   roomMessage.textContent = '';
+  roomPlayback.hidden = true;
   roomPanel.hidden = true;
   openRoomButton.classList.remove('is-live');
   openRoomButton.setAttribute('aria-expanded', 'false');
@@ -991,6 +1128,7 @@ function renderHostRoom(state) {
     item => !['declined', 'ready'].includes(item.status)
   );
   hostQueue.replaceChildren(...activeQueue.map(item => queueRow(item, state.queue)));
+  applyHostRoomPlayback(state.currentSong);
   if (state.expiredAt) clearRoomSession();
 }
 
