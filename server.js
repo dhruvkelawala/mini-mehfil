@@ -1,7 +1,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
+const { issueShareTicket, verifyShareTicket } = require('./share-ticket');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_BODY_BYTES = 64 * 1024;
@@ -75,15 +75,6 @@ async function readLimitedBody(response, limit) {
   return Buffer.concat(chunks, size);
 }
 
-function decodeAudioSource(source) {
-  if (/^https:\/\//i.test(source)) return null;
-  const hex = source.startsWith('0x') ? source.slice(2) : source;
-  if (!hex || hex.length % 2 || !/^[0-9a-f]+$/i.test(hex)) throw Object.assign(new Error('The finished recording is unavailable.'), { status: 400 });
-  const audio = Buffer.from(hex, 'hex');
-  if (audio.length > MAX_SHARE_AUDIO_BYTES) throw Object.assign(new Error('The recording is larger than the 10 MB sharing limit.'), { status: 413 });
-  return audio;
-}
-
 function normalizeShareBaseUrl(value) {
   if (!value) return '';
   try {
@@ -136,8 +127,6 @@ function createServer(options = {}) {
   const shareBaseUrl = normalizeShareBaseUrl(options.shareBaseUrl ?? process.env.MEHFIL_SHARE_URL ?? '');
   const shareSecret = String(options.shareSecret ?? process.env.MEHFIL_SHARE_SECRET ?? '').trim();
   const sharingConfigured = Boolean(shareBaseUrl && shareSecret);
-  const generatedAudio = new Map();
-
   return http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/write-lyrics') {
       try {
@@ -217,13 +206,16 @@ function createServer(options = {}) {
         }
         const source = audioSource(result);
         if (source && sharingConfigured) {
-          const shareReference = crypto.randomBytes(18).toString('base64url');
-          const now = Date.now();
-          for (const [key, entry] of generatedAudio) {
-            if (entry.expiresAt <= now) generatedAudio.delete(key);
+          try {
+            result.share_ref = issueShareTicket({
+              source,
+              expiresAt: Date.now() + SHARE_REFERENCE_TTL_MS,
+              secret: shareSecret
+            });
+          } catch {
+            // Inline and otherwise invalid audio sources remain playable locally,
+            // but are intentionally unavailable to the sharing endpoint.
           }
-          generatedAudio.set(shareReference, { source, expiresAt: now + SHARE_REFERENCE_TTL_MS });
-          result.share_ref = shareReference;
         }
         return sendJson(res, 200, result);
       } catch (error) {
@@ -237,12 +229,12 @@ function createServer(options = {}) {
         if (!sharingConfigured) return sendJson(res, 503, { error: 'Sharing is not configured on this mehfil.' });
         const body = await readJson(req);
         const shareReference = typeof body.shareRef === 'string' ? body.shareRef : '';
-        const entry = generatedAudio.get(shareReference);
-        if (!entry || entry.expiresAt <= Date.now()) {
-          generatedAudio.delete(shareReference);
+        let ticket;
+        try {
+          ticket = verifyShareTicket(shareReference, { now: Date.now(), secret: shareSecret });
+        } catch {
           return sendJson(res, 404, { error: 'That recording is no longer ready to share. Make it again and retry.' });
         }
-        if (entry.shareUrl) return sendJson(res, 201, { url: entry.shareUrl });
 
         const metadata = {
           title: typeof body.title === 'string' ? body.title : '',
@@ -253,23 +245,23 @@ function createServer(options = {}) {
           lyricsRoman: typeof body.lyricsRoman === 'string' ? body.lyricsRoman : ''
         };
 
-        let audio = decodeAudioSource(entry.source);
-        if (!audio) {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 2 * 60 * 1000);
-          try {
-            const response = await fetchImpl(entry.source, { signal: controller.signal });
-            if (!response.ok) throw Object.assign(new Error('The finished recording could not be downloaded. Please retry.'), { status: 502 });
-            audio = await readLimitedBody(response, MAX_SHARE_AUDIO_BYTES);
-          } finally {
-            clearTimeout(timeout);
-          }
+        const downloadController = new AbortController();
+        const downloadTimeout = setTimeout(() => downloadController.abort(), 2 * 60 * 1000);
+        let audio;
+        try {
+          const response = await fetchImpl(ticket.source, { signal: downloadController.signal });
+          if (!response.ok) throw Object.assign(new Error('The finished recording could not be downloaded. Please retry.'), { status: 502 });
+          audio = await readLimitedBody(response, MAX_SHARE_AUDIO_BYTES);
+        } finally {
+          clearTimeout(downloadTimeout);
         }
         if (!audio.length) throw Object.assign(new Error('The finished recording is empty.'), { status: 502 });
 
         const form = new FormData();
         form.set('audio', new Blob([audio], { type: 'audio/mpeg' }), 'mehfil-song.mp3');
         form.set('metadata', JSON.stringify(metadata));
+        // This endpoint stays stateless across serverless instances. A retry may
+        // repeat the transfer; the stable Worker key deduplicates share creation.
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 2 * 60 * 1000);
         let response;
@@ -278,7 +270,7 @@ function createServer(options = {}) {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${shareSecret}`,
-              'Idempotency-Key': shareReference
+              'Idempotency-Key': ticket.idempotencyKey
             },
             body: form,
             signal: controller.signal
@@ -296,9 +288,7 @@ function createServer(options = {}) {
         if (publicUrl.origin !== configuredOrigin || !/^\/s\/[A-Za-z0-9_-]{16}$/.test(publicUrl.pathname)) {
           throw Object.assign(new Error('The share service returned an invalid link.'), { status: 502 });
         }
-        entry.shareUrl = publicUrl.href;
-        entry.source = null;
-        return sendJson(res, 201, { url: entry.shareUrl });
+        return sendJson(res, 201, { url: publicUrl.href });
       } catch (error) {
         if (error.name === 'AbortError') return sendJson(res, 504, { error: 'Sharing took too long. Please retry.' });
         return sendJson(res, error.status || 502, { error: error.message || 'The song could not be shared. Please retry.' });

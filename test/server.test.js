@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const serverModule = require('../server');
+const { issueShareTicket } = require('../share-ticket');
 const { createServer } = serverModule;
 
 test('exports an HTTP server for serverless runtimes', () => {
@@ -83,8 +84,9 @@ test('does not cache or expose the token in responses', async () => {
   });
 });
 
-test('shares only server-issued recordings and forwards no token', async () => {
+test('shares a server-issued recording across isolated server instances and forwards no token', async () => {
   let uploaded;
+  const fetchedAudio = [];
   const mockFetch = async (url, init = {}) => {
     if (url === 'https://mock.minimax.test/v1/music_generation') {
       return new Response(JSON.stringify({
@@ -93,6 +95,7 @@ test('shares only server-issued recordings and forwards no token', async () => {
       }), { status: 200 });
     }
     if (url === 'https://cdn.minimax.test/song.mp3') {
+      fetchedAudio.push(url);
       return new Response(new Uint8Array([73, 68, 51]), { status: 200, headers: { 'content-type': 'audio/mpeg' } });
     }
     if (url === 'https://share.example/shares') {
@@ -106,18 +109,23 @@ test('shares only server-issued recordings and forwards no token', async () => {
     throw new Error(`Unexpected URL: ${url}`);
   };
 
+  let shareReference;
   await withServer(mockFetch, async base => {
     const generated = await fetch(`${base}/api/generate`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ token: 'sk-cp-never-upload', lyrics: '[Verse]\nઆ સાંજ', prompt: 'Gujarati indie pop' })
     });
     const song = await generated.json();
-    assert.match(song.share_ref, /^[A-Za-z0-9_-]{24}$/);
+    assert.equal(typeof song.share_ref, 'string');
+    assert.ok(song.share_ref.length > 24);
+    shareReference = song.share_ref;
+  }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
 
+  await withServer(mockFetch, async base => {
     const shared = await fetch(`${base}/api/share`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        shareRef: song.share_ref,
+        shareRef: shareReference,
         token: 'sk-cp-never-upload',
         title: 'Aloopuri Khavsa',
         language: 'Gujarati',
@@ -138,6 +146,7 @@ test('shares only server-issued recordings and forwards no token', async () => {
   assert.equal(uploaded.metadata.token, undefined);
   assert.equal(uploaded.headers.Authorization, 'Bearer worker-upload-secret');
   assert.match(uploaded.headers['Idempotency-Key'], /^[A-Za-z0-9_-]{24}$/);
+  assert.deepEqual(fetchedAudio, ['https://cdn.minimax.test/song.mp3']);
   assert.doesNotMatch(JSON.stringify(uploaded), /never-upload/);
 });
 
@@ -150,6 +159,28 @@ test('does not fetch arbitrary audio for an unknown share reference', async () =
     });
     assert.equal(response.status, 404);
     assert.match((await response.json()).error, /no longer ready/);
+  }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
+  assert.equal(contacted, false);
+});
+
+test('rejects tampered, wrong-secret, and expired tickets without fetching', async () => {
+  const now = Date.now();
+  const tickets = [
+    issueShareTicket({ source: 'https://cdn.minimax.test/song.mp3', expiresAt: now + 60_000, secret: 'worker-upload-secret' }),
+    issueShareTicket({ source: 'https://cdn.minimax.test/song.mp3', expiresAt: now + 60_000, secret: 'different-worker-secret' }),
+    issueShareTicket({ source: 'https://cdn.minimax.test/song.mp3', expiresAt: now - 1, secret: 'worker-upload-secret' })
+  ];
+  tickets[0] = `${tickets[0].slice(0, -1)}${tickets[0].endsWith('A') ? 'B' : 'A'}`;
+
+  let contacted = false;
+  await withServer(async () => { contacted = true; }, async base => {
+    for (const shareRef of tickets) {
+      const response = await fetch(`${base}/api/share`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ shareRef })
+      });
+      assert.equal(response.status, 404);
+      assert.equal((await response.json()).error, 'That recording is no longer ready to share. Make it again and retry.');
+    }
   }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
   assert.equal(contacted, false);
 });
@@ -185,17 +216,40 @@ test('does not issue share references unless URL and secret are both configured'
   }
 });
 
+test('keeps inline audio available without issuing a share reference', async () => {
+  const mockFetch = async () => new Response(JSON.stringify({
+    data: { audio: '494433', status: 2 },
+    base_resp: { status_code: 0, status_msg: 'success' }
+  }), { status: 200 });
+
+  await withServer(mockFetch, async base => {
+    const response = await fetch(`${base}/api/generate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: 'sk-test', lyrics: 'Keep this local' })
+    });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.data.audio, '494433');
+    assert.equal(result.share_ref, undefined);
+  }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
+});
+
 test('surfaces share upload failures so the same recording can be retried', async () => {
   let attempts = 0;
-  const mockFetch = async url => {
+  const idempotencyKeys = [];
+  const mockFetch = async (url, init = {}) => {
     if (url === 'https://mock.minimax.test/v1/music_generation') {
       return new Response(JSON.stringify({
-        data: { audio: '494433', status: 2 },
+        data: { audio: 'https://cdn.minimax.test/retry.mp3', status: 2 },
         base_resp: { status_code: 0, status_msg: 'success' }
       }), { status: 200 });
     }
+    if (url === 'https://cdn.minimax.test/retry.mp3') {
+      return new Response(new Uint8Array([73, 68, 51]), { status: 200 });
+    }
     if (url === 'https://share.example/shares') {
       attempts += 1;
+      idempotencyKeys.push(init.headers['Idempotency-Key']);
       if (attempts === 1) return new Response(JSON.stringify({ error: 'The bucket is having a quiet moment.' }), { status: 503 });
       return new Response(JSON.stringify({ url: 'https://share.example/s/AbCdEfGhIjKlMnOp' }), { status: 201 });
     }
@@ -221,7 +275,9 @@ test('surfaces share upload failures so the same recording can be retried', asyn
     assert.equal(lostResponseRetry.status, 201);
     assert.equal((await lostResponseRetry.json()).url, 'https://share.example/s/AbCdEfGhIjKlMnOp');
   }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
-  assert.equal(attempts, 2);
+  assert.equal(attempts, 3);
+  assert.equal(new Set(idempotencyKeys).size, 1);
+  assert.match(idempotencyKeys[0], /^[A-Za-z0-9_-]{24}$/);
 });
 
 const SHEET = {
