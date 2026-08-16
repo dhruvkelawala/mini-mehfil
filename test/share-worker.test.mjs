@@ -108,6 +108,14 @@ test('upload to playback round trip preserves title, language, and both lyric sc
   assert.match(html, /id="seek"/);
   assert.match(html, /id="timecode"/);
   assert.match(html, /id="replay"/);
+  assert.match(html, /class="topbar-link-icon"/);
+  assert.match(html, /class="player-icon play-icon"/);
+  assert.match(html, /class="player-icon pause-icon"/);
+  assert.match(html, /id="share"[^>]*>[\s\S]*?<svg class="player-icon"/);
+  assert.match(html, /class="player-icon download-icon"/);
+  assert.doesNotMatch(html, /Make your own song ↗/);
+  assert.doesNotMatch(html, /id="share"[^>]*>↗/);
+  assert.doesNotMatch(html, /share\.innerHTML/);
   assert.doesNotMatch(html, /<audio[^>]+controls/);
   assert.doesNotMatch(html, /class="courtyard"/);
   assert.match(html, /property="og:url" content="https:\/\/share\.example\/s\/AbCdEfGhIjKlMnOp"/);
