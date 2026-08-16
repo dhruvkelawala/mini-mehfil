@@ -1,6 +1,5 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const deployedModule = require('../vercel.cjs');
 const { createVercelConfig } = require('../vercel-config.cjs');
 const handler = require('../api');
 
@@ -18,7 +17,8 @@ test('Vercel gives the catch-all function enough time to finish one paid generat
   ]);
 });
 
-test('Vercel configuration exports only schema properties', () => {
+test('Vercel configuration exports only schema properties', async () => {
+  const deployedModule = await import('../vercel.mjs');
   assert.deepEqual(Object.keys(deployedModule), ['config']);
   assert.deepEqual(Object.keys(deployedModule.config).sort(), ['functions', 'rewrites']);
 });
