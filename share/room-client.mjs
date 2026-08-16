@@ -283,7 +283,7 @@ export function installRoomClient({ roomId }) {
 
     lastShareId = song.shareId;
     play.hidden = false;
-    playError.textContent = 'Tap to hear this recording.';
+    playError.textContent = '';
     prepareSongLyrics(song);
     if (silentAudioUrl) {
       URL.revokeObjectURL(silentAudioUrl);
