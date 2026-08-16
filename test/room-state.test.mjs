@@ -18,6 +18,30 @@ test('host manages queue and listener cannot', () => { const s=submitted(); asse
 test('reorder and decline require valid transitions', () => { let s=submitted(); s=transitionRoom(s, listener('request-submitted',{requestId:'q2',idea:'sun'})).state; s=transitionRoom(s,host('request-reordered',{requestId:'q2',toIndex:0})).state; assert.equal(s.queue[0].id,'q2'); s=transitionRoom(s,host('request-declined',{requestId:'q2'})).state; assert.equal(s.queue[0].status,'declined'); });
 test('only one recording and failure restores accepted', () => { let s=accepted(); s=transitionRoom(s,host('recording-started',{requestId:'q1'})).state; assert.equal(transitionRoom(s,host('recording-started',{requestId:'q1'})).error.code,'recording-active'); s=transitionRoom(s,host('recording-failed',{requestId:'q1'})).state; assert.equal(s.queue[0].status,'accepted'); });
 test('lyrics and ready populate a paused current song', () => { let s=transitionRoom(accepted(),host('recording-started',{requestId:'q1'})).state; s=transitionRoom(s,host('lyrics-ready',{requestId:'q1',lyrics:{title:'Rain',language:'Hindi',lyricsNative:'बारिश',lyricsRoman:'baarish',prompt:'secret'}})).state; s=transitionRoom(s,host('song-ready',{requestId:'q1',shareId:'abcdefghijklmnop',startedAt:5000})).state; assert.equal(s.currentSong.lyrics.prompt,undefined); assert.deepEqual(projectRoomState(s,{role:'listener'}).currentSong.playback,{status:'paused',positionMs:0,changedAt:5000}); });
+test('host can share a standalone song into the live room', () => {
+  const event = {
+    shareId: 'abcdefghijklmnop',
+    startedAt: 5000,
+    lyrics: {
+      title: 'Body on Fire',
+      language: 'English',
+      nativeScriptName: 'Latin',
+      isLatinScript: true,
+      lyricsNative: 'Sun came in',
+      lyricsRoman: 'Sun came in',
+      prompt: 'must not leak'
+    }
+  };
+  assert.equal(transitionRoom(base(), listener('song-shared', event)).error.code, 'host-only');
+  const state = transitionRoom(base(), host('song-shared', event)).state;
+  assert.equal(state.currentSong.title, 'Body on Fire');
+  assert.equal(state.currentSong.lyrics.prompt, undefined);
+  assert.deepEqual(state.currentSong.playback, {
+    status: 'paused',
+    positionMs: 0,
+    changedAt: 5000
+  });
+});
 test('only the host controls current-song playback',()=>{let s=transitionRoom(accepted(),host('recording-started',{requestId:'q1'})).state;s=transitionRoom(s,host('lyrics-ready',{requestId:'q1',lyrics:{title:'Rain',language:'Hindi',lyricsNative:'बारिश',lyricsRoman:'baarish'}})).state;s=transitionRoom(s,host('song-ready',{requestId:'q1',shareId:'abcdefghijklmnop',startedAt:5000})).state;const command={shareId:'abcdefghijklmnop',status:'playing',positionMs:1200};assert.equal(transitionRoom(s,listener('playback-updated',command)).error.code,'host-only');s=transitionRoom(s,host('playback-updated',command)).state;assert.deepEqual(s.currentSong.playback,{status:'playing',positionMs:1200,changedAt:2000});assert.equal(transitionRoom(s,host('playback-updated',{...command,shareId:'wrong'})).error.code,'invalid-playback');assert.equal(transitionRoom(s,host('playback-updated',{...command,positionMs:-1})).error.code,'invalid-playback');});
 test('prior songs enter capped setlist', () => { let s=base(); s.currentSong={shareId:'aaaaaaaaaaaaaaaa',title:'A',language:'x',startedAt:1,lyrics:{}}; s.participants=[{id:'p1',name:'A',connected:true}]; s.queue=[{id:'q1',participantId:'p1',status:'recording'}]; s.currentRecording={requestId:'q1',lyrics:{title:'B',language:'y'}}; s=transitionRoom(s,host('song-ready',{requestId:'q1',shareId:'bbbbbbbbbbbbbbbb',startedAt:2})).state; assert.deepEqual(s.setlist[0],{shareId:'aaaaaaaaaaaaaaaa',title:'A',language:'x',startedAt:1}); });
 test('projections hide participant ids from listeners', () => { const s=submitted(); assert.equal(projectRoomState(s,{role:'host'}).participants[0].id,'p1'); assert.equal(projectRoomState(s,{role:'listener',participantId:'p1'}).participants[0].id,undefined); });

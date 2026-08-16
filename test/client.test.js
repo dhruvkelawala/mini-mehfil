@@ -349,6 +349,18 @@ test('only a genuine status outage reveals a neutral Check generation action', (
   assert.equal(browser.state.generatePosts, 0);
 });
 test('standalone generation is extracted behind a thin form caller',()=>{assert.match(app,/async function generateSong\(\{ idea, vibe, language \}, hooks = \{\}\)/);const handler=app.slice(app.indexOf("form.addEventListener('submit'"),app.indexOf("performanceClose.addEventListener"));assert.match(handler,/clearLoadedSong\(\)[\s\S]*resetPeek\(\)[\s\S]*await generateSong/);});
+test('main generation publishes its finished song into an active room', () => {
+  const handler = app.slice(
+    app.indexOf("form.addEventListener('submit'"),
+    app.indexOf("performanceClose.addEventListener")
+  );
+  assert.match(handler, /publishGeneratedSongToRoom/);
+  const publish = functionSource('publishGeneratedSongToRoom');
+  assert.match(publish, /uploadCurrentSong/);
+  assert.match(publish, /type: 'song-shared'/);
+  assert.match(publish, /shareId/);
+  assert.match(publish, /lyrics/);
+});
 test('host room credentials remain session-only and authenticate first',()=>{assert.match(app,/sessionStorage\.setItem\(ROOM_SESSION_KEY/);assert.doesNotMatch(app,/localStorage/);assert.match(app,/new WebSocket\(details\.socketUrl\)/);assert.match(app,/socket\.send\(JSON\.stringify\(\{[\s\S]*type: 'auth-host',[\s\S]*secret: details\.hostSecret[\s\S]*\}\)\)/);assert.doesNotMatch(app,/details\.socketUrl\s*\+.*hostSecret|URLSearchParams.*hostSecret/);});
 test('host player publishes authoritative room playback', () => {
   const playback = functionSource('applyHostRoomPlayback');

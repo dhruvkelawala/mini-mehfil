@@ -156,7 +156,7 @@ export function roomPage(roomId, nonce) {
 
     .player-shell {
       position: fixed; z-index: 5; bottom: 25px; left: 50%; width: min(720px, calc(100% - 32px)); min-height: 104px;
-      display: grid; grid-template-columns: 68px minmax(0,1fr); align-items: center; gap: 12px; padding: 10px 18px 10px 10px;
+      display: grid; grid-template-columns: 68px minmax(0,1fr) 42px; align-items: center; gap: 12px; padding: 10px 14px 10px 10px;
       border: 1px solid rgba(255,255,255,.2); border-radius: 34px; background: rgba(122,54,45,.96);
       box-shadow: 0 20px 55px rgba(8,19,18,.42), inset 0 1px rgba(255,255,255,.15); backdrop-filter: blur(12px);
       transform: translateX(-50%); animation: player-up .85s both;
@@ -171,11 +171,17 @@ export function roomPage(roomId, nonce) {
     .host-playback { display: flex; align-items: center; gap: 6px; color: #f1d8bd !important; }
     .host-playback svg { width: 13px; height: 13px; fill: none; stroke: #e6a653; stroke-width: 1.8; stroke-linecap: round; }
     .timeline { display: grid; grid-template-columns: minmax(80px,1fr) auto; align-items: center; gap: 9px; margin-top: 5px; }
-    #seek-progress { width: 100%; height: 3px; overflow: hidden; border: 0; border-radius: 2px; appearance: none; background: rgba(255,255,255,.28); }
-    #seek-progress::-webkit-progress-bar { background: rgba(255,255,255,.28); }
-    #seek-progress::-webkit-progress-value { background: #fffaf0; }
-    #seek-progress::-moz-progress-bar { background: #fffaf0; }
+    #listener-seek { width: 100%; height: 3px; min-height: 3px; padding: 0; border: 0; border-radius: 2px; appearance: none; background: rgba(255,255,255,.28); box-shadow: none; }
+    #listener-seek::-webkit-slider-thumb { width: 8px; height: 8px; border: 0; border-radius: 50%; appearance: none; background: #fffaf0; }
+    #listener-seek::-moz-range-thumb { width: 8px; height: 8px; border: 0; border-radius: 50%; background: #fffaf0; }
+    #listener-seek:disabled { cursor: not-allowed; opacity: .78; }
     #timecode { color: #ead0b5; font-size: 9px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .listener-play { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.28); border-radius: 50%; color: #fff8ec; background: rgba(41,50,46,.34); }
+    .listener-play:disabled { cursor: not-allowed; opacity: .58; }
+    .listener-play svg { width: 17px; height: 17px; fill: currentColor; }
+    .listener-play .pause-icon { display: none; }
+    .player-shell.is-playing .listener-play .play-icon { display: none; }
+    .player-shell.is-playing .listener-play .pause-icon { display: block; }
     .enable-audio { grid-column: 2; justify-self: start; min-height: 34px; padding: 7px 11px; border: 1px solid rgba(255,255,255,.28); border-radius: 18px; color: #fff8ec; background: rgba(41,50,46,.6); cursor: pointer; font-size: 10px; font-weight: 800; }
     .player-shell audio { display: none; }
     .play-error { grid-column: 2 / -1; margin: -8px 0 2px; color: #ffe0cb; font-size: 10px; }
@@ -216,9 +222,10 @@ export function roomPage(roomId, nonce) {
       .lyric-stage { min-height: 150px; margin-top: 18px; padding-inline: 8px; }
       .lyric-primary { font-size: clamp(25px,7.5vw,36px); }
       .lyric-secondary { font-size: 14px; }
-      .player-shell { bottom: 12px; min-height: 84px; grid-template-columns: 50px minmax(0,1fr); gap: 9px; padding: 8px 12px 8px 8px; border-radius: 28px; }
+      .player-shell { bottom: 12px; min-height: 84px; grid-template-columns: 50px minmax(0,1fr) 36px; gap: 9px; padding: 8px; border-radius: 28px; }
       .record { width: 50px; height: 50px; }
       .record::after { width: 22px; height: 22px; font-size: 11px; }
+      .listener-play { width: 34px; height: 34px; }
       #timecode { display: none; }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -299,14 +306,15 @@ export function roomPage(roomId, nonce) {
         </section>
       </section>
 
-      <section id="player" class="player-shell" aria-label="Song player" hidden>
+      <section id="player" class="player-shell" aria-label="Host-controlled song player">
         <div class="record" aria-hidden="true"></div>
         <div class="player-track">
-          <h2 id="song-title"></h2>
-          <p id="song-language"></p>
-          <p class="host-playback"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 10v4M12 8v8M16 10v4"/></svg><span id="playback-state">Host paused</span></p>
-          <div class="timeline"><progress id="seek-progress" max="100" value="0" aria-label="Playback progress"></progress><span id="timecode">0:00 / 0:00</span></div>
+          <h2 id="song-title">Waiting for the first song</h2>
+          <p id="song-language">The host controls playback</p>
+          <p class="host-playback"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 10v4M12 8v8M16 10v4"/></svg><span id="playback-state">Waiting for the host</span></p>
+          <div class="timeline"><input id="listener-seek" type="range" min="0" max="100" value="0" aria-label="Playback position, controlled by the host" disabled><span id="timecode">0:00 / 0:00</span></div>
         </div>
+        <button id="listener-play" class="listener-play" type="button" aria-label="Playback is controlled by the host" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path class="play-icon" d="M8 5l11 7-11 7z"/><path class="pause-icon" d="M7 5h4v14H7zM14 5h4v14h-4z"/></svg></button>
         <audio id="audio" preload="metadata"></audio>
         <button id="enable-audio" class="enable-audio" type="button" hidden>Enable sound</button>
         <p id="play-error" class="play-error" role="alert"></p>

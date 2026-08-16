@@ -14,7 +14,7 @@ export function installRoomClient({ roomId }) {
   const queue = document.querySelector('#queue');
   const player = document.querySelector('#player');
   const audio = document.querySelector('#audio');
-  const seekProgress = document.querySelector('#seek-progress');
+  const seekProgress = document.querySelector('#listener-seek');
   const timecode = document.querySelector('#timecode');
   const enableAudio = document.querySelector('#enable-audio');
   const playError = document.querySelector('#play-error');

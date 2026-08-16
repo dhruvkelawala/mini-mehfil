@@ -354,3 +354,32 @@ test('host playback commands are scheduled and broadcast while listener commands
   assert.equal(harness.latest(listener, 'error').code, 'host-only');
   assert.equal(harness.latest(host, 'snapshot').state.currentSong.playback.status, 'playing');
 });
+
+test('a host standalone generation becomes the listener current song', async () => {
+  const harness = createHarness();
+  await openRoom(harness);
+  const listener = await connectListener(harness);
+  const host = await connectHost(harness);
+
+  await harness.transport.message(host, JSON.stringify({
+    type: 'song-shared',
+    shareId: 'abcdefghijklmnop',
+    lyrics: {
+      title: 'Body on Fire',
+      language: 'English',
+      nativeScriptName: 'Latin',
+      isLatinScript: true,
+      lyricsNative: 'Sun came in',
+      lyricsRoman: 'Sun came in'
+    }
+  }));
+
+  const song = harness.latest(listener, 'snapshot').state.currentSong;
+  assert.equal(song.shareId, 'abcdefghijklmnop');
+  assert.equal(song.title, 'Body on Fire');
+  assert.deepEqual(song.playback, {
+    status: 'paused',
+    positionMs: 0,
+    changedAt: harness.now()
+  });
+});

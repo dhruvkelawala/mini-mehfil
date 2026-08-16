@@ -12,15 +12,17 @@ test('room page escapes data and reuses the exact courtyard', () => {
   assert.ok(html.includes(COURTYARD_SCENE));
 });
 
-test('room page makes synced lyrics prominent and playback host-controlled', () => {
+test('room page keeps a disabled player visible and makes synced lyrics prominent', () => {
   const html = roomPage('ABCDEFGH', 'n');
   for (const text of [
     'Join the mehfil', 'id="join-label">Join the mehfil', 'id="request"',
     'Reveal lyrics', 'id="audio"', 'id="lyric-stage"', 'id="lyric-primary"',
-    'id="lyric-secondary"', 'id="seek-progress"', 'id="playback-state"',
+    'id="lyric-secondary"', 'id="listener-seek"', 'id="listener-play"', 'id="playback-state"',
     'Enable sound', 'Setlist', 'aria-live="polite"'
   ]) assert.ok(html.includes(text), text);
-  assert.doesNotMatch(html, /id="play"|id="seek"/);
+  assert.match(html, /id="listener-play"[^>]*disabled/);
+  assert.match(html, /id="listener-seek"[^>]*disabled/);
+  assert.doesNotMatch(html, /id="player"[^>]*hidden/);
   assert.match(html, /\.lyric-primary \{[^}]*clamp\(27px,3\.3vw,44px\)/);
 });
 
@@ -110,7 +112,6 @@ test('listener follows host playback and sees synchronized native and romanized 
   element('name').value = 'Ada';
   element('enable-audio').hidden = true;
   element('lyric-stage').hidden = true;
-  element('player').hidden = true;
 
   const audio = element('audio');
   let playCalls = 0;
@@ -229,7 +230,7 @@ test('listener follows host playback and sees synchronized native and romanized 
   assert.ok(element('player').classNames.has('is-playing'));
   assert.equal(element('lyric-primary').textContent, 'दूसरी');
   assert.equal(element('lyric-secondary').textContent, 'dusri');
-  assert.ok(Number(element('seek-progress').value) >= 60);
+  assert.ok(Number(element('listener-seek').value) >= 60);
 
   rejectPlayback = true;
   await socket.emit('message', { data: JSON.stringify({

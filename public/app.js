@@ -659,7 +659,10 @@ form.addEventListener('submit', async event => {
   clearLoadedSong();
   resetPeek();
   try {
-    await generateSong({ idea: ideaInput.value, vibe: vibeInput.value, language: languageSelect.value });
+    await generateSong(
+      { idea: ideaInput.value, vibe: vibeInput.value, language: languageSelect.value },
+      activeRoomDetails ? { onReady: publishGeneratedSongToRoom } : {}
+    );
   } catch { /* generateSong owns the visible standalone error state. */ }
 });
 
@@ -854,6 +857,34 @@ async function uploadCurrentSong({ copy = false, requestRun = generationRun, req
   } finally {
     if (requestIsCurrent()) shareButton.disabled = false;
   }
+}
+
+async function publishGeneratedSongToRoom({ lyricSheet: sheet, shareReference: reference, requestRun }) {
+  if (!activeRoomDetails) return;
+  if (!roomAuthenticated) {
+    throw new Error('Your recording is ready, but the live room is reconnecting. Try sharing it again once connected.');
+  }
+  const url = await uploadCurrentSong({
+    copy: false,
+    requestRun,
+    requestReference: reference
+  });
+  const match = /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(url).pathname);
+  if (!match) throw new Error('The share service returned an invalid link.');
+  const sent = roomSend({
+    type: 'song-shared',
+    shareId: match[1],
+    lyrics: {
+      title: sheet.title,
+      language: sheet.language,
+      nativeScriptName: sheet.nativeScriptName,
+      isLatinScript: sheet.isLatinScript,
+      lyricsNative: sheet.lyricsNative,
+      lyricsRoman: sheet.lyricsRoman
+    }
+  });
+  if (!sent) throw new Error('Your recording is ready, but the live room lost its connection.');
+  notice.textContent = 'Your recording is ready for the room. Press play when everyone is seated.';
 }
 
 shareButton.addEventListener('click', async () => {

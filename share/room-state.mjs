@@ -11,7 +11,7 @@ export const ROOM_LIMITS = Object.freeze({
 const HOST_EVENTS = new Set([
   'request-accepted', 'request-reordered', 'request-declined',
   'recording-started', 'lyrics-ready', 'recording-failed', 'song-ready',
-  'playback-updated', 'kicked', 'room-expired'
+  'song-shared', 'playback-updated', 'kicked', 'room-expired'
 ]);
 
 const fail = (state, code) => ({ state, error: { code }, effects: [] });
@@ -20,6 +20,37 @@ const clean = (value, max, required = false) => {
   const text = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
   return (!required || text) && text.length <= max ? text : null;
 };
+
+function cleanLyrics(sheet = {}) {
+  const title = clean(sheet.title, 120, true);
+  const language = clean(sheet.language, 80, true);
+  const nativeScriptName = clean(sheet.nativeScriptName, 80);
+  const lyricsNative = typeof sheet.lyricsNative === 'string'
+    && sheet.lyricsNative.trim()
+    && sheet.lyricsNative.length <= 5000
+    ? sheet.lyricsNative
+    : null;
+  const lyricsRoman = typeof sheet.lyricsRoman === 'string'
+    && sheet.lyricsRoman.trim()
+    && sheet.lyricsRoman.length <= 5000
+    ? sheet.lyricsRoman
+    : null;
+  if (
+    title === null
+    || language === null
+    || nativeScriptName === null
+    || lyricsNative === null
+    || lyricsRoman === null
+  ) return null;
+  return {
+    title,
+    language,
+    nativeScriptName,
+    isLatinScript: Boolean(sheet.isLatinScript),
+    lyricsNative,
+    lyricsRoman
+  };
+}
 
 export function createRoomState({ roomId, openedAt, expiresAt } = {}) {
   return {
@@ -140,34 +171,9 @@ export function transitionRoom(state, event) {
       if (next.currentRecording?.requestId !== event.requestId) {
         return fail(state, 'invalid-transition');
       }
-      const sheet = event.lyrics || {};
-      const title = clean(sheet.title, 120, true);
-      const language = clean(sheet.language, 80, true);
-      const nativeScriptName = clean(sheet.nativeScriptName, 80);
-      const lyricsNative = typeof sheet.lyricsNative === 'string'
-        && sheet.lyricsNative.trim()
-        && sheet.lyricsNative.length <= 5000
-        ? sheet.lyricsNative
-        : null;
-      const lyricsRoman = typeof sheet.lyricsRoman === 'string'
-        && sheet.lyricsRoman.trim()
-        && sheet.lyricsRoman.length <= 5000
-        ? sheet.lyricsRoman
-        : null;
-      const invalidLyrics = title === null
-        || language === null
-        || nativeScriptName === null
-        || lyricsNative === null
-        || lyricsRoman === null;
-      if (invalidLyrics) return fail(state, 'invalid-lyrics');
-      next.currentRecording.lyrics = {
-        title,
-        language,
-        nativeScriptName,
-        isLatinScript: Boolean(sheet.isLatinScript),
-        lyricsNative,
-        lyricsRoman
-      };
+      const lyrics = cleanLyrics(event.lyrics);
+      if (!lyrics) return fail(state, 'invalid-lyrics');
+      next.currentRecording.lyrics = lyrics;
       return ok(next);
     }
     case 'recording-failed': {
@@ -177,6 +183,35 @@ export function transitionRoom(state, event) {
       const index = requestIndex(event.requestId);
       next.queue[index] = { ...next.queue[index], status: 'accepted' };
       next.currentRecording = null;
+      return ok(next);
+    }
+    case 'song-shared': {
+      const validShareId = /^[A-Za-z0-9_-]{16}$/.test(event.shareId || '');
+      const lyrics = cleanLyrics(event.lyrics);
+      if (!validShareId || !lyrics || next.currentRecording) {
+        return fail(state, 'invalid-song');
+      }
+      if (next.currentSong) {
+        next.setlist.push({
+          shareId: next.currentSong.shareId,
+          title: next.currentSong.title,
+          language: next.currentSong.language,
+          startedAt: next.currentSong.startedAt
+        });
+      }
+      next.setlist = next.setlist.slice(-ROOM_LIMITS.setlist);
+      next.currentSong = {
+        shareId: event.shareId,
+        title: lyrics.title,
+        language: lyrics.language,
+        startedAt: event.startedAt,
+        lyrics,
+        playback: {
+          status: 'paused',
+          positionMs: 0,
+          changedAt: event.startedAt
+        }
+      };
       return ok(next);
     }
     case 'song-ready': {
