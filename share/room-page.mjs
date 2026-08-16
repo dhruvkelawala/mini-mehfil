@@ -1,29 +1,214 @@
 import { COURTYARD_SCENE } from './courtyard.mjs';
+import { installRoomClient } from './room-client.mjs';
 
-const escapeHtml = value => String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
-const scriptJson = value => JSON.stringify(value).replaceAll('<','\\u003c').replaceAll('>','\\u003e').replaceAll('&','\\u0026');
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function scriptJson(value) {
+  return JSON.stringify(value)
+    .replaceAll('<', '\\u003c')
+    .replaceAll('>', '\\u003e')
+    .replaceAll('&', '\\u0026');
+}
 
 export function roomPage(roomId, nonce) {
-  const data = scriptJson({ roomId });
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#1f4238"><title>Room ${escapeHtml(roomId)} · Mini Mehfil</title>
-<style nonce="${nonce}">:root{--ink:#f9edda;--muted:#ddcbb8;--night:#142e2d;--amber:#e6a653;--terra:#7a362d}*{box-sizing:border-box}body{margin:0;min-height:100svh;color:var(--ink);background:var(--night);font-family:"Avenir Next",sans-serif}.scene,.scene svg{position:fixed;inset:0;width:100%;height:100%;z-index:-2}.scene:after{content:"";position:absolute;inset:0;background:rgba(7,25,24,.58)}.scene.is-performing{filter:saturate(1.1)}main{width:min(760px,calc(100% - 28px));margin:auto;padding:32px 0 80px}.card{padding:22px;margin:16px 0;border:1px solid #ffffff35;border-radius:22px;background:#142e2de8;backdrop-filter:blur(12px)}h1,h2{font-family:Georgia,serif}label{display:block;margin:12px 0 5px}input,select,textarea,button{width:100%;padding:12px;border-radius:12px;border:1px solid #ffffff44;font:inherit}input,select,textarea{color:var(--ink);background:#081b1caa}button{margin-top:12px;color:#2b251f;background:var(--amber);font-weight:800;cursor:pointer}.secondary{color:var(--ink);background:var(--terra)}[hidden]{display:none!important}.status{min-height:1.5em;color:var(--muted)}.queue li,.setlist li{margin:.6em 0}.lyrics{white-space:pre-wrap;font:italic 18px/1.6 Georgia,serif}.song-lyrics{max-height:210px;overflow:auto;text-align:center;font:italic 18px/1.55 Georgia,serif}.song-line{display:block;color:#fff8ec}.song-line small{display:block;color:var(--muted)}.song-line.cue{margin:.8em 0;color:var(--amber);font:800 10px sans-serif;text-transform:uppercase}.player{position:sticky;bottom:12px}.player audio{width:100%}@media(max-width:360px){main{width:calc(100% - 16px)}.card{padding:16px;margin:10px 0}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation:none!important}}</style></head><body>${COURTYARD_SCENE}<main>
-<header><small>LIVE MEHFIL · ${escapeHtml(roomId)}</small><h1>Come sit in the courtyard</h1><p id="status" class="status" aria-live="polite">Ready to join.</p></header>
-<section id="join-panel" class="card"><h2>Join this mehfil</h2><label for="name">Your name (optional)</label><input id="name" maxlength="40" autocomplete="nickname"><button id="join" type="button">Join the mehfil 🔊</button></section>
-<section id="room" hidden><section class="card"><p><strong id="listeners">0 listeners</strong> · <span id="host">Host away</span></p><form id="request"><label for="idea">What should the song be about?</label><textarea id="idea" maxlength="200" required></textarea><label for="vibe">Vibe</label><input id="vibe" maxlength="120"><label for="language">Language</label><input id="language" maxlength="40"><button>Request a song</button></form></section>
-<section class="card"><h2>Request queue</h2><ol id="queue" class="queue"></ol><p id="recording"></p><button id="peek" class="secondary" type="button" hidden>Don't click me</button><div id="lyrics" class="lyrics" hidden></div></section>
-<section id="player" class="card player" hidden><h2 id="song-title"></h2><p id="song-language"></p><div id="song-lyrics" class="song-lyrics" aria-live="polite"></div><audio id="audio" preload="metadata" controls></audio><button id="play" type="button">Tap to hear the mehfil</button><p id="play-error" role="alert"></p></section>
-<section class="card"><h2>Setlist</h2><ol id="setlist" class="setlist"></ol></section></section></main>
-<script id="room-data" type="application/json">${data}</script><script nonce="${nonce}">
-const {roomId}=JSON.parse(document.querySelector('#room-data').textContent),key='mini-mehfil-room:'+roomId,status=document.querySelector('#status'),joinPanel=document.querySelector('#join-panel'),room=document.querySelector('#room'),queue=document.querySelector('#queue'),audio=document.querySelector('#audio'),play=document.querySelector('#play'),playError=document.querySelector('#play-error'),songLyrics=document.querySelector('#song-lyrics'),scene=document.querySelector('.scene');let socket,retry=0,snapshot,terminal=false,lastShareId=null,audioUnlocked=false,songLines=[],silentAudioUrl=null;
-const wsUrl=()=>location.origin.replace(/^http/,'ws')+'/rooms/'+roomId+'/ws';
-function stopRoom(message,{clearCredential=true,allowFreshJoin=false}={}){terminal=true;if(clearCredential)sessionStorage.removeItem(key);status.textContent=message;socket?.close();if(allowFreshJoin){joinPanel.hidden=false;room.hidden=true}}
-function connect(name){terminal=false;status.textContent=retry?'Reconnecting…':'Joining…';socket=new WebSocket(wsUrl());socket.addEventListener('open',()=>{const resume=sessionStorage.getItem(key);socket.send(JSON.stringify(resume?{type:'join',resume}:{type:'join',name}));retry=0});socket.addEventListener('message',event=>{let message;try{message=JSON.parse(event.data)}catch{return stopRoom('The room sent a malformed message.',{clearCredential:false})}if(message.type==='resume-credential')sessionStorage.setItem(key,message.credential);if(message.type==='snapshot')render(message.state);if(message.type==='error'){if(message.code==='resume-invalid')return stopRoom('Your seat expired. Join again.',{allowFreshJoin:true});if(message.code==='room-full')return stopRoom('This mehfil is full.');if(message.code==='kicked')return stopRoom('You were asked to leave the mehfil.');if(message.code==='room-expired'||message.code==='room-unavailable')return stopRoom('This mehfil has ended.');status.textContent=message.code}});socket.addEventListener('close',event=>{if(terminal)return;if(event.code===4002)return stopRoom('This mehfil is full.');if(event.code===4003)return stopRoom('You were asked to leave the mehfil.');if(event.code===4004)return stopRoom('This mehfil has ended.');if(event.code===4001)return stopRoom('This room is unavailable.',{allowFreshJoin:true});status.textContent='Offline — reconnecting…';setTimeout(()=>{if(terminal)return;retry=Math.min(retry+1,6);connect(name)},Math.min(1000*2**retry,30000))})}
-function send(value){if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify(value))}
-async function attemptRoomPlayback(trigger){play.hidden=false;playError.textContent='';try{await audio.play();play.hidden=true;audioUnlocked=true;return true}catch{play.hidden=false;playError.textContent='Playback needs another tap. Please try again.';return false}}
-function prepareAudioUnlock(){if(silentAudioUrl)URL.revokeObjectURL(silentAudioUrl);const wavHeader=new Uint8Array([82,73,70,70,244,7,0,0,87,65,86,69,102,109,116,32,16,0,0,0,1,0,1,0,64,31,0,0,128,62,0,0,2,0,16,0,100,97,116,97,208,7,0,0]);silentAudioUrl=URL.createObjectURL(new Blob([wavHeader,new Uint8Array(2000)],{type:'audio/wav'}));audio.src=silentAudioUrl;audio.load()}
-function prepareSongLyrics(song){const sheet=song.lyrics||{},native=(sheet.lyricsNative||'').split('\\n').filter(line=>line.trim()),roman=(sheet.lyricsRoman||'').split('\\n').filter(line=>line.trim()),useNative=!sheet.isLatinScript&&native.length,primary=useNative?native:roman;songLines=primary.map((line,index)=>{const romanLine=roman[index]||'',cue=/^\[.+\]$/.test(romanLine||line);return{cue,primary:cue?(romanLine||line):line,secondary:useNative&&!cue&&romanLine!==line?romanLine:''}});songLyrics.replaceChildren(...songLines.map(value=>{const line=document.createElement('span');line.className=value.cue?'song-line cue':'song-line';line.textContent=value.cue?value.primary.replace(/^\[(.+)\]$/,'$1'):value.primary;if(value.secondary){const small=document.createElement('small');small.textContent=value.secondary;line.append(small)}return line}));document.querySelector('#song-language').textContent=sheet.language||song.language||'';syncSongLyrics()}
-function syncSongLyrics(){const spoken=songLines.filter(line=>!line.cue).length,progress=audio.duration?Math.min(audio.currentTime/(audio.duration*.9),1):0,shown=Math.min(spoken,Math.ceil(progress*spoken));let seen=0;[...songLyrics.children].forEach((element,index)=>{if(songLines[index].cue){element.hidden=shown<=seen}else{seen+=1;element.hidden=seen>shown}});songLyrics.scrollTop=songLyrics.scrollHeight}
-function render(state){snapshot=state;joinPanel.hidden=true;room.hidden=false;status.textContent=state.hostPresent?'The host is here.':'Host away — requests will wait.';document.querySelector('#listeners').textContent=state.listenerCount+' listener'+(state.listenerCount===1?'':'s');document.querySelector('#host').textContent=state.hostPresent?'Host present':'Host away';queue.replaceChildren(...state.queue.map(item=>{const li=document.createElement('li');li.textContent=(item.mine?'Your request':'A request')+' — '+item.status;return li}));const recording=state.currentRecording;document.querySelector('#recording').textContent=recording?(state.queue.find(item=>item.id===recording.requestId)?.mine?'The band is recording yours':'The band is recording') : '';const peek=document.querySelector('#peek'),lyrics=document.querySelector('#lyrics');peek.hidden=!recording?.lyrics;if(recording?.lyrics){lyrics.textContent=(recording.lyrics.lyricsNative||'')+'\\n\\n'+(recording.lyrics.lyricsRoman||'')}const song=state.currentSong;if(song){document.querySelector('#player').hidden=false;document.querySelector('#song-title').textContent=song.title;if(song.shareId!==lastShareId){lastShareId=song.shareId;play.hidden=false;playError.textContent='Tap to hear this recording.';prepareSongLyrics(song);if(silentAudioUrl){URL.revokeObjectURL(silentAudioUrl);silentAudioUrl=null}audio.src='/s/'+song.shareId+'/audio';audio.load();audio.addEventListener('loadedmetadata',async()=>{audio.currentTime=Math.max(0,(Date.now()-song.startedAt)/1000);syncSongLyrics();await attemptRoomPlayback('new-song')},{once:true})}}document.querySelector('#setlist').replaceChildren(...state.setlist.map(item=>{const li=document.createElement('li'),a=document.createElement('a');a.href='/s/'+item.shareId;a.textContent=item.title;li.append(a);return li}))}
-document.querySelector('#join').addEventListener('click',async()=>{terminal=false;play.hidden=false;prepareAudioUnlock();try{audio.muted=true;await audio.play();audio.pause();audio.currentTime=0;audioUnlocked=true}catch{play.hidden=false;playError.textContent='Playback needs another tap. Please try again.'}finally{audio.muted=false}connect(document.querySelector('#name').value)});document.querySelector('#request').addEventListener('submit',event=>{event.preventDefault();send({type:'request-submitted',idea:document.querySelector('#idea').value,vibe:document.querySelector('#vibe').value,language:document.querySelector('#language').value});event.target.reset()});document.querySelector('#peek').addEventListener('click',()=>{document.querySelector('#lyrics').hidden=false});play.addEventListener('click',()=>{void attemptRoomPlayback('tap-retry')});audio.addEventListener('play',()=>{scene.classList.add('is-performing');syncSongLyrics()});audio.addEventListener('pause',()=>scene.classList.remove('is-performing'));audio.addEventListener('timeupdate',syncSongLyrics);if(sessionStorage.getItem(key))connect('');
-</script></body></html>`;
+  const client = `(${installRoomClient.toString()})(${scriptJson({ roomId })});`;
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#1f4238">
+  <title>Room ${escapeHtml(roomId)} · Mini Mehfil</title>
+  <style nonce="${nonce}">
+    :root {
+      --ink: #f9edda;
+      --muted: #ddcbb8;
+      --night: #142e2d;
+      --amber: #e6a653;
+      --terra: #7a362d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100svh;
+      color: var(--ink);
+      background: var(--night);
+      font-family: "Avenir Next", sans-serif;
+    }
+    .scene,
+    .scene svg {
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      width: 100%;
+      height: 100%;
+    }
+    .scene::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: rgba(7, 25, 24, 0.58);
+    }
+    .scene.is-performing { filter: saturate(1.1); }
+    main {
+      width: min(760px, calc(100% - 28px));
+      margin: auto;
+      padding: 32px 0 80px;
+    }
+    .card {
+      margin: 16px 0;
+      padding: 22px;
+      border: 1px solid #ffffff35;
+      border-radius: 22px;
+      background: #142e2de8;
+      backdrop-filter: blur(12px);
+    }
+    h1,
+    h2 { font-family: Georgia, serif; }
+    label {
+      display: block;
+      margin: 12px 0 5px;
+    }
+    input,
+    select,
+    textarea,
+    button {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #ffffff44;
+      border-radius: 12px;
+      font: inherit;
+    }
+    input,
+    select,
+    textarea {
+      color: var(--ink);
+      background: #081b1caa;
+    }
+    button {
+      margin-top: 12px;
+      color: #2b251f;
+      background: var(--amber);
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .secondary {
+      color: var(--ink);
+      background: var(--terra);
+    }
+    [hidden] { display: none !important; }
+    .status {
+      min-height: 1.5em;
+      color: var(--muted);
+    }
+    .queue li,
+    .setlist li { margin: 0.6em 0; }
+    .lyrics {
+      white-space: pre-wrap;
+      font: italic 18px/1.6 Georgia, serif;
+    }
+    .song-lyrics {
+      max-height: 210px;
+      overflow: auto;
+      text-align: center;
+      font: italic 18px/1.55 Georgia, serif;
+    }
+    .song-line {
+      display: block;
+      color: #fff8ec;
+    }
+    .song-line small {
+      display: block;
+      color: var(--muted);
+    }
+    .song-line.cue {
+      margin: 0.8em 0;
+      color: var(--amber);
+      font: 800 10px sans-serif;
+      text-transform: uppercase;
+    }
+    .player {
+      position: sticky;
+      bottom: 12px;
+    }
+    .player audio { width: 100%; }
+    @media (max-width: 360px) {
+      main { width: calc(100% - 16px); }
+      .card {
+        margin: 10px 0;
+        padding: 16px;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        scroll-behavior: auto !important;
+        animation: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  ${COURTYARD_SCENE}
+  <main>
+    <header>
+      <small>LIVE MEHFIL · ${escapeHtml(roomId)}</small>
+      <h1>Come sit in the courtyard</h1>
+      <p id="status" class="status" aria-live="polite">Ready to join.</p>
+    </header>
+
+    <section id="join-panel" class="card">
+      <h2>Join this mehfil</h2>
+      <label for="name">Your name (optional)</label>
+      <input id="name" maxlength="40" autocomplete="nickname">
+      <button id="join" type="button">Join the mehfil 🔊</button>
+    </section>
+
+    <section id="room" hidden>
+      <section class="card">
+        <p><strong id="listeners">0 listeners</strong> · <span id="host">Host away</span></p>
+        <form id="request">
+          <label for="idea">What should the song be about?</label>
+          <textarea id="idea" maxlength="200" required></textarea>
+          <label for="vibe">Vibe</label>
+          <input id="vibe" maxlength="120">
+          <label for="language">Language</label>
+          <input id="language" maxlength="40">
+          <button>Request a song</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Request queue</h2>
+        <ol id="queue" class="queue"></ol>
+        <p id="recording"></p>
+        <button id="peek" class="secondary" type="button" hidden>Don't click me</button>
+        <div id="lyrics" class="lyrics" hidden></div>
+      </section>
+
+      <section id="player" class="card player" hidden>
+        <h2 id="song-title"></h2>
+        <p id="song-language"></p>
+        <div id="song-lyrics" class="song-lyrics" aria-live="polite"></div>
+        <audio id="audio" preload="metadata" controls></audio>
+        <button id="play" type="button">Tap to hear the mehfil</button>
+        <p id="play-error" role="alert"></p>
+      </section>
+
+      <section class="card">
+        <h2>Setlist</h2>
+        <ol id="setlist" class="setlist"></ol>
+      </section>
+    </section>
+  </main>
+  <script nonce="${nonce}">${client}</script>
+</body>
+</html>`;
 }

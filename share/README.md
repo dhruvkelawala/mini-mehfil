@@ -22,6 +22,27 @@ npx wrangler deploy
 SQLite-backed Durable Object class. Deploy this migration to the same Worker as
 R2 sharing. It does not replace the `SHARES` or `UPLOAD_RATE_LIMIT` bindings.
 
+## Room architecture
+
+The Durable Object path is deliberately explicit:
+
+```text
+wrangler.jsonc: ROOMS binding -> MehfilRoom
+worker.mjs: compose sharing and room routers
+rooms.mjs: room HTTP routes and Durable Object namespace adapter
+mehfil-room.mjs: exported Durable Object lifecycle class
+room-transport.mjs: authentication, sockets, persistence, and expiry
+room-state.mjs: pure room state transitions and participant projections
+room-client.mjs: listener browser behavior
+room-page.mjs: listener HTML and CSS shell
+```
+
+`createDurableRoomDirectory()` is the only implementation that knows how to
+turn a room code into `env.ROOMS.idFromName(roomId)`. Cloudflare therefore sends
+every request for a code to the same `MehfilRoom` object. The router and its
+tests use the smaller directory interface and do not know about Durable Object
+stubs.
+
 Use the same long, random value for the Worker secret and the local proxy's
 `MEHFIL_SHARE_SECRET`. The secret is server-only: never add it to browser code,
 HTML, a public environment file, or Wrangler's plaintext `vars` section.

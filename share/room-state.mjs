@@ -56,10 +56,20 @@ export function transitionRoom(state, event) {
       if (name === null) return fail(state, 'invalid-name');
       if (event.role === 'host') next.hostPresent = true;
       else if (existing >= 0) {
-        next.participants[existing] = { ...next.participants[existing], connected: true, name: name || next.participants[existing].name };
+        next.participants[existing] = {
+          ...next.participants[existing],
+          connected: true,
+          name: name || next.participants[existing].name
+        };
       } else {
-        if (next.participants.filter(item => item.connected).length >= ROOM_LIMITS.listeners) return fail(state, 'room-full');
-        next.participants.push({ id: event.participantId, name: name || 'Listener', connected: true, joinedAt: event.at });
+        const listenerCount = next.participants.filter(item => item.connected).length;
+        if (listenerCount >= ROOM_LIMITS.listeners) return fail(state, 'room-full');
+        next.participants.push({
+          id: event.participantId,
+          name: name || 'Listener',
+          connected: true,
+          joinedAt: event.at
+        });
       }
       return ok(next);
     }
@@ -75,12 +85,23 @@ export function transitionRoom(state, event) {
     case 'request-submitted': {
       if (event.role !== 'listener' || event.participantId !== event.actorId) return fail(state, 'listener-only');
       if (participantIndex(event.participantId) < 0) return fail(state, 'not-found');
-      if (next.queue.filter(item => !['declined', 'ready'].includes(item.status)).length >= ROOM_LIMITS.queue) return fail(state, 'queue-full');
+      const activeRequestCount = next.queue
+        .filter(item => !['declined', 'ready'].includes(item.status))
+        .length;
+      if (activeRequestCount >= ROOM_LIMITS.queue) return fail(state, 'queue-full');
       const idea = clean(event.idea, ROOM_LIMITS.idea, true);
       const vibe = clean(event.vibe, ROOM_LIMITS.vibe);
       const language = clean(event.language, ROOM_LIMITS.language);
       if (idea === null || vibe === null || language === null) return fail(state, 'invalid-request');
-      next.queue.push({ id: event.requestId, participantId: event.participantId, idea, vibe, language, status: 'pending', submittedAt: event.at });
+      next.queue.push({
+        id: event.requestId,
+        participantId: event.participantId,
+        idea,
+        vibe,
+        language,
+        status: 'pending',
+        submittedAt: event.at
+      });
       return ok(next);
     }
     case 'request-accepted': {
@@ -92,14 +113,18 @@ export function transitionRoom(state, event) {
     case 'request-reordered': {
       const from = requestIndex(event.requestId);
       const to = Number(event.toIndex);
-      if (from < 0 || !Number.isInteger(to) || to < 0 || to >= next.queue.length || !['pending', 'accepted'].includes(next.queue[from].status)) return fail(state, 'invalid-transition');
+      const invalidTarget = !Number.isInteger(to) || to < 0 || to >= next.queue.length;
+      const movable = from >= 0 && ['pending', 'accepted'].includes(next.queue[from].status);
+      if (invalidTarget || !movable) return fail(state, 'invalid-transition');
       const [item] = next.queue.splice(from, 1);
       next.queue.splice(to, 0, item);
       return ok(next);
     }
     case 'request-declined': {
       const index = requestIndex(event.requestId);
-      if (index < 0 || !['pending', 'accepted'].includes(next.queue[index].status)) return fail(state, 'invalid-transition');
+      const canDecline = index >= 0
+        && ['pending', 'accepted'].includes(next.queue[index].status);
+      if (!canDecline) return fail(state, 'invalid-transition');
       next.queue[index] = { ...next.queue[index], status: 'declined' };
       return ok(next);
     }
@@ -112,30 +137,69 @@ export function transitionRoom(state, event) {
       return ok(next);
     }
     case 'lyrics-ready': {
-      if (!next.currentRecording || next.currentRecording.requestId !== event.requestId) return fail(state, 'invalid-transition');
+      if (next.currentRecording?.requestId !== event.requestId) {
+        return fail(state, 'invalid-transition');
+      }
       const sheet = event.lyrics || {};
       const title = clean(sheet.title, 120, true);
       const language = clean(sheet.language, 80, true);
       const nativeScriptName = clean(sheet.nativeScriptName, 80);
-      const lyricsNative = typeof sheet.lyricsNative === 'string' && sheet.lyricsNative.trim() && sheet.lyricsNative.length <= 5000 ? sheet.lyricsNative : null;
-      const lyricsRoman = typeof sheet.lyricsRoman === 'string' && sheet.lyricsRoman.trim() && sheet.lyricsRoman.length <= 5000 ? sheet.lyricsRoman : null;
-      if (title === null || language === null || nativeScriptName === null || lyricsNative === null || lyricsRoman === null) return fail(state, 'invalid-lyrics');
-      next.currentRecording.lyrics = { title, language, nativeScriptName, isLatinScript: Boolean(sheet.isLatinScript), lyricsNative, lyricsRoman };
+      const lyricsNative = typeof sheet.lyricsNative === 'string'
+        && sheet.lyricsNative.trim()
+        && sheet.lyricsNative.length <= 5000
+        ? sheet.lyricsNative
+        : null;
+      const lyricsRoman = typeof sheet.lyricsRoman === 'string'
+        && sheet.lyricsRoman.trim()
+        && sheet.lyricsRoman.length <= 5000
+        ? sheet.lyricsRoman
+        : null;
+      const invalidLyrics = title === null
+        || language === null
+        || nativeScriptName === null
+        || lyricsNative === null
+        || lyricsRoman === null;
+      if (invalidLyrics) return fail(state, 'invalid-lyrics');
+      next.currentRecording.lyrics = {
+        title,
+        language,
+        nativeScriptName,
+        isLatinScript: Boolean(sheet.isLatinScript),
+        lyricsNative,
+        lyricsRoman
+      };
       return ok(next);
     }
     case 'recording-failed': {
-      if (!next.currentRecording || next.currentRecording.requestId !== event.requestId) return fail(state, 'invalid-transition');
+      if (next.currentRecording?.requestId !== event.requestId) {
+        return fail(state, 'invalid-transition');
+      }
       const index = requestIndex(event.requestId);
       next.queue[index] = { ...next.queue[index], status: 'accepted' };
       next.currentRecording = null;
       return ok(next);
     }
     case 'song-ready': {
-      if (!next.currentRecording || next.currentRecording.requestId !== event.requestId || !/^[A-Za-z0-9_-]{16}$/.test(event.shareId || '')) return fail(state, 'invalid-transition');
-      if (next.currentSong) next.setlist.push({ shareId: next.currentSong.shareId, title: next.currentSong.title, language: next.currentSong.language, startedAt: next.currentSong.startedAt });
+      const recordingMatches = next.currentRecording?.requestId === event.requestId;
+      const validShareId = /^[A-Za-z0-9_-]{16}$/.test(event.shareId || '');
+      if (!recordingMatches || !validShareId) return fail(state, 'invalid-transition');
+      if (next.currentSong) {
+        next.setlist.push({
+          shareId: next.currentSong.shareId,
+          title: next.currentSong.title,
+          language: next.currentSong.language,
+          startedAt: next.currentSong.startedAt
+        });
+      }
       next.setlist = next.setlist.slice(-ROOM_LIMITS.setlist);
       const sheet = next.currentRecording.lyrics || event.lyrics || {};
-      next.currentSong = { shareId: event.shareId, title: String(sheet.title || event.title || ''), language: String(sheet.language || event.language || ''), startedAt: event.startedAt, lyrics: sheet };
+      next.currentSong = {
+        shareId: event.shareId,
+        title: String(sheet.title || event.title || ''),
+        language: String(sheet.language || event.language || ''),
+        startedAt: event.startedAt,
+        lyrics: sheet
+      };
       const index = requestIndex(event.requestId);
       next.queue[index] = { ...next.queue[index], status: 'ready' };
       next.currentRecording = null;
@@ -166,7 +230,9 @@ export function projectRoomState(state, viewer = {}) {
     expiresAt: state.expiresAt,
     expiredAt: state.expiredAt,
     hostPresent: state.hostPresent,
-    participants: state.participants.filter(item => item.connected).map(item => viewer.role === 'host' ? { ...item } : { name: item.name }),
+    participants: state.participants
+      .filter(item => item.connected)
+      .map(item => viewer.role === 'host' ? { ...item } : { name: item.name }),
     listenerCount: state.participants.filter(item => item.connected).length,
     currentRecording: state.currentRecording ? structuredClone(state.currentRecording) : null,
     currentSong: state.currentSong ? structuredClone(state.currentSong) : null,
@@ -174,6 +240,10 @@ export function projectRoomState(state, viewer = {}) {
   };
   base.queue = viewer.role === 'host'
     ? structuredClone(state.queue)
-    : state.queue.map(item => ({ id: item.id, status: item.status, mine: item.participantId === viewer.participantId }));
+    : state.queue.map(item => ({
+      id: item.id,
+      status: item.status,
+      mine: item.participantId === viewer.participantId
+    }));
   return base;
 }

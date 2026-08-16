@@ -52,6 +52,9 @@ Rooms are transient and host-controlled. The public join URL contains only an ei
 - `server.js` — zero-dependency Node proxy. `POST /api/write-lyrics` asks MiniMax M3 (via their Anthropic-compatible endpoint) to turn your keywords into structured, singable lyrics in the detected language — native script for the singer, romanized for you to read. `POST /api/generate` sends the native-script lyrics plus an expanded production prompt to MiniMax Music 3; `POST /api/rooms` opens an optional live room through the configured Worker.
 - `lyricist.mjs` — everything provider-specific, quarantined in one file.
 - `public/` — one page, plain HTML/CSS/JS. The courtyard scene is a single hand-built SVG.
+- `share/mehfil-room.mjs` — the `MehfilRoom` Durable Object exported by the
+  Worker; room routing and the `ROOMS` namespace adapter live beside it in
+  `share/rooms.mjs`.
 
 ## Test
 

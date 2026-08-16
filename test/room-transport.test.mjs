@@ -1,24 +1,305 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRoomTransport, sha256, AUTH_TIMEOUT_MS, ABSOLUTE_ROOM_MS, EMPTY_GRACE_MS } from '../share/room-transport.mjs';
+import {
+  ABSOLUTE_ROOM_MS,
+  AUTH_TIMEOUT_MS,
+  EMPTY_GRACE_MS,
+  createRoomTransport,
+  sha256
+} from '../share/room-transport.mjs';
 
-function fixture() {
-  const values = new Map(); const messages=[]; const closed=[]; const alarms=[]; const attachments=new Map(); let clock=1000; let sequence=0;
-  const storage={get:async k=>structuredClone(values.get(k)),put:async(k,v)=>values.set(k,structuredClone(v))};
-  const transport=createRoomTransport({storage,now:()=>clock,randomId:()=>`id${++sequence}`,randomCredential:()=>`resume${sequence}`,send:(s,m)=>messages.push([s,m]),broadcast:fn=>{ for(const s of attachments.keys()) if(attachments.get(s).authenticated) messages.push([s,fn(s)]); },close:(...x)=>closed.push(x),setAttachment:(s,a)=>attachments.set(s,a),getAttachment:s=>attachments.get(s),setAlarm:async x=>alarms.push(x)});
-  return {transport,values,messages,closed,alarms,attachments,tick:n=>clock+=n,now:()=>clock};
+function createHarness() {
+  const stored = new Map();
+  const delivered = [];
+  const closed = [];
+  const alarms = [];
+  const sessions = new Map();
+  let clock = 1_000;
+  let sequence = 0;
+
+  const storage = {
+    async get(key) {
+      return structuredClone(stored.get(key));
+    },
+    async put(key, value) {
+      stored.set(key, structuredClone(value));
+    },
+    async setAlarm(timestamp) {
+      alarms.push(timestamp);
+    }
+  };
+
+  const connections = {
+    send(socket, message) {
+      delivered.push({ socket, message });
+    },
+    broadcast(createMessage) {
+      for (const [socket, session] of sessions) {
+        if (session.authenticated) {
+          delivered.push({ socket, message: createMessage(socket) });
+        }
+      }
+    },
+    close(socket, code, reason) {
+      closed.push({ socket, code, reason });
+    },
+    setSession(socket, session) {
+      sessions.set(socket, session);
+    },
+    getSession(socket) {
+      return sessions.get(socket);
+    }
+  };
+
+  const transport = createRoomTransport({
+    storage,
+    connections,
+    now: () => clock,
+    createParticipantId: () => `id${++sequence}`,
+    createResumeCredential: () => `resume${sequence}`
+  });
+
+  const messagesFor = socket => delivered
+    .filter(item => item.socket === socket)
+    .map(item => item.message);
+  const latest = (socket, type) => messagesFor(socket)
+    .findLast(message => message.type === type);
+
+  return {
+    transport,
+    closed,
+    alarms,
+    messagesFor,
+    latest,
+    tick(milliseconds) {
+      clock += milliseconds;
+    },
+    now() {
+      return clock;
+    }
+  };
 }
 
-test('host authenticates by digest and wrong secret closes',async()=>{const f=fixture();await f.transport.initialize({roomId:'ABCDEFGH',hostDigest:await sha256('host')});const s={};await f.transport.connect(s);await f.transport.message(s,JSON.stringify({type:'auth-host',secret:'wrong'}));assert.equal(f.closed[0][1],4001);});
-test('listener receives credential and resumes identity',async()=>{const f=fixture();await f.transport.initialize({roomId:'ABCDEFGH',hostDigest:await sha256('host')});const a={};await f.transport.connect(a);await f.transport.message(a,JSON.stringify({type:'join',name:'Ada'}));const cred=f.messages.find(([,m])=>m.type==='resume-credential')[1].credential;const id=f.attachments.get(a).participantId;const b={};await f.transport.connect(b);await f.transport.message(b,JSON.stringify({type:'join',resume:cred}));assert.equal(f.attachments.get(b).participantId,id);});
-test('authentication timeout closes idle sockets',async()=>{const f=fixture();await f.transport.initialize({roomId:'ABCDEFGH',hostDigest:await sha256('host')});const s={};await f.transport.connect(s);f.tick(AUTH_TIMEOUT_MS);await f.transport.checkAuthenticationTimeout(s);assert.equal(f.closed[0][2],'authentication-timeout');});
-test('malformed oversized and pre-auth messages do not mutate',async()=>{const f=fixture();await f.transport.initialize({roomId:'ABCDEFGH',hostDigest:await sha256('host')});const s={};await f.transport.connect(s);const before=JSON.stringify(f.values.get('state'));await f.transport.message(s,'{');await f.transport.message(s,'x'.repeat(17000));await f.transport.message(s,JSON.stringify({type:'request-submitted'}));assert.equal(JSON.stringify(f.values.get('state')),before);});
-test('actor and role are derived from attachment',async()=>{const f=fixture();await f.transport.initialize({roomId:'ABCDEFGH',hostDigest:await sha256('host')});const s={};await f.transport.connect(s);await f.transport.message(s,JSON.stringify({type:'join'}));await f.transport.message(s,JSON.stringify({type:'request-submitted',role:'host',actorId:'evil',participantId:'evil',idea:'rain'}));assert.equal(f.values.get('state').queue[0].participantId,f.attachments.get(s).participantId);});
-test('persistence precedes snapshots and errors stay private',async()=>{const f=fixture();await f.transport.initialize({roomId:'ABCDEFGH',hostDigest:await sha256('host')});const s={};await f.transport.connect(s);await f.transport.message(s,JSON.stringify({type:'join'}));assert.equal(f.values.get('state').participants.length,1);await f.transport.message(s,JSON.stringify({type:'request-accepted',requestId:'no'}));assert.equal(f.messages.at(-1)[0],s);assert.equal(f.messages.at(-1)[1].type,'error');});
-test('kick closes listener and blocks credential reuse',async()=>{const f=fixture();await f.transport.initialize({roomId:'ABCDEFGH',hostDigest:await sha256('host')});const l={},h={};await f.transport.connect(l);await f.transport.message(l,JSON.stringify({type:'join'}));const cred=f.messages.find(([,m])=>m.type==='resume-credential')[1].credential;const id=f.attachments.get(l).participantId;await f.transport.connect(h);await f.transport.message(h,JSON.stringify({type:'auth-host',secret:'host'}));await f.transport.message(h,JSON.stringify({type:'kicked',participantId:id}));assert.ok(f.closed.some(x=>x[0]===l));const r={};await f.transport.connect(r);await f.transport.message(r,JSON.stringify({type:'join',resume:cred}));assert.equal(f.messages.at(-1)[1].code,'resume-invalid');});
-test('listener cannot revoke another resume credential by spoofing kick',async()=>{const f=fixture();await f.transport.initialize({roomId:'ABCDEFGH',hostDigest:await sha256('host')});const a={},b={};await f.transport.connect(a);await f.transport.message(a,JSON.stringify({type:'join'}));const credential=f.messages.find(([,m])=>m.type==='resume-credential')[1].credential;const id=f.attachments.get(a).participantId;await f.transport.message(a,JSON.stringify({type:'kicked',participantId:id,role:'host'}));await f.transport.connect(b);await f.transport.message(b,JSON.stringify({type:'join',resume:credential}));assert.equal(f.attachments.get(b).participantId,id);});
-test('disconnect schedules grace and reconnect retains absolute cap',async()=>{const f=fixture();await f.transport.initialize({roomId:'ABCDEFGH',hostDigest:await sha256('host')});const s={};await f.transport.connect(s);await f.transport.message(s,JSON.stringify({type:'join'}));await f.transport.disconnect(s);assert.equal(f.values.get('meta').absoluteDeadline,1000+ABSOLUTE_ROOM_MS);assert.ok(f.values.get('meta').emptyDeadline);});
-test('alarm expires and closes sockets',async()=>{const f=fixture();await f.transport.initialize({roomId:'ABCDEFGH',hostDigest:await sha256('host'),expiresAt:2000});const s={};await f.transport.connect(s);await f.transport.message(s,JSON.stringify({type:'join'}));f.tick(1000);await f.transport.alarm();assert.equal(f.values.get('state').expiredAt,2000);assert.ok(f.closed.length);});
-test('uninitialized and expired rooms close gracefully',async()=>{const empty=fixture(),probe={};assert.equal(await empty.transport.connect(probe),false);await empty.transport.message(probe,JSON.stringify({type:'join'}));assert.deepEqual(empty.closed.map(item=>item.slice(1)),[[4004,'room-unavailable'],[4004,'room-unavailable']]);const f=fixture();await f.transport.initialize({roomId:'ABCDEFGH',hostDigest:await sha256('host'),expiresAt:1000});const socket={};await f.transport.connect(socket);assert.equal(f.closed.at(-1)[1],4004);assert.equal(f.attachments.has(socket),false);});
-test('full-room admission does not authenticate or persist a rejected credential',async()=>{const f=fixture();await f.transport.initialize({roomId:'ABCDEFGH',hostDigest:await sha256('host')});for(let i=0;i<20;i++){const socket={};await f.transport.connect(socket);await f.transport.message(socket,JSON.stringify({type:'join'}));}const rejected={};await f.transport.connect(rejected);await f.transport.message(rejected,JSON.stringify({type:'join'}));assert.equal(f.attachments.get(rejected).authenticated,false);assert.equal(Object.keys(f.values.get('meta').resumeDigests).length,20);assert.ok(f.closed.some(item=>item[0]===rejected&&item[1]===4002));});
-test('empty deadline is stable across unauthenticated probes and resets only around authenticated presence',async()=>{const f=fixture();await f.transport.initialize({roomId:'ABCDEFGH',hostDigest:await sha256('host')});const initial=f.values.get('meta').emptyDeadline;assert.equal(initial,f.now()+EMPTY_GRACE_MS);f.tick(1000);const probe={};await f.transport.connect(probe);await f.transport.disconnect(probe);assert.equal(f.values.get('meta').emptyDeadline,initial);const listener={};await f.transport.connect(listener);await f.transport.message(listener,JSON.stringify({type:'join'}));assert.equal(f.values.get('meta').emptyDeadline,null);await f.transport.disconnect(listener);const disconnectedDeadline=f.values.get('meta').emptyDeadline;assert.equal(disconnectedDeadline,f.now()+EMPTY_GRACE_MS);f.tick(1000);const resumed={};const credential=f.messages.find(([,message])=>message.type==='resume-credential')[1].credential;await f.transport.connect(resumed);await f.transport.message(resumed,JSON.stringify({type:'join',resume:credential}));assert.equal(f.values.get('meta').emptyDeadline,null);});
+async function openRoom(harness, options = {}) {
+  await harness.transport.initialize({
+    roomId: 'ABCDEFGH',
+    hostDigest: await sha256('host'),
+    ...options
+  });
+}
+
+async function connectHost(harness, socket = {}) {
+  await harness.transport.connect(socket);
+  await harness.transport.message(socket, JSON.stringify({
+    type: 'auth-host',
+    secret: 'host'
+  }));
+  return socket;
+}
+
+async function connectListener(harness, socket = {}, join = { name: 'Ada' }) {
+  await harness.transport.connect(socket);
+  await harness.transport.message(socket, JSON.stringify({ type: 'join', ...join }));
+  return socket;
+}
+
+test('host authentication rejects the wrong secret', async () => {
+  const harness = createHarness();
+  await openRoom(harness);
+  const host = {};
+  await harness.transport.connect(host);
+  await harness.transport.message(host, JSON.stringify({
+    type: 'auth-host',
+    secret: 'wrong'
+  }));
+
+  assert.deepEqual(harness.latest(host, 'error'), {
+    type: 'error',
+    code: 'auth-failed'
+  });
+  assert.deepEqual(harness.closed.at(-1), {
+    socket: host,
+    code: 4001,
+    reason: 'auth-failed'
+  });
+});
+
+test('a listener resumes the same seat after reconnecting', async () => {
+  const harness = createHarness();
+  await openRoom(harness);
+  const firstConnection = await connectListener(harness);
+  const credential = harness.latest(firstConnection, 'resume-credential').credential;
+
+  await harness.transport.message(firstConnection, JSON.stringify({
+    type: 'request-submitted',
+    idea: 'rain'
+  }));
+  await harness.transport.disconnect(firstConnection);
+
+  const resumedConnection = await connectListener(
+    harness,
+    {},
+    { resume: credential }
+  );
+  const snapshot = harness.latest(resumedConnection, 'snapshot').state;
+
+  assert.equal(snapshot.listenerCount, 1);
+  assert.deepEqual(snapshot.queue, [{ id: 'id2', status: 'pending', mine: true }]);
+});
+
+test('an unauthenticated socket is closed after the authentication timeout', async () => {
+  const harness = createHarness();
+  await openRoom(harness);
+  const socket = {};
+  await harness.transport.connect(socket);
+  harness.tick(AUTH_TIMEOUT_MS);
+  harness.transport.checkAuthenticationTimeout(socket);
+
+  assert.equal(harness.closed.at(-1).reason, 'authentication-timeout');
+});
+
+test('malformed, oversized, and pre-authentication messages stay private', async () => {
+  const harness = createHarness();
+  await openRoom(harness);
+  const socket = {};
+  await harness.transport.connect(socket);
+
+  await harness.transport.message(socket, '{');
+  await harness.transport.message(socket, 'x'.repeat(17_000));
+  await harness.transport.message(socket, JSON.stringify({
+    type: 'request-submitted',
+    idea: 'rain'
+  }));
+
+  assert.deepEqual(
+    harness.messagesFor(socket).map(message => message.code),
+    ['invalid-message', 'invalid-message', 'authenticate-first']
+  );
+});
+
+test('listener messages cannot spoof their role or identity', async () => {
+  const harness = createHarness();
+  await openRoom(harness);
+  const listener = await connectListener(harness);
+
+  await harness.transport.message(listener, JSON.stringify({
+    type: 'request-submitted',
+    role: 'host',
+    actorId: 'evil',
+    participantId: 'evil',
+    idea: 'rain'
+  }));
+
+  const host = await connectHost(harness);
+  const snapshot = harness.latest(host, 'snapshot').state;
+  assert.equal(snapshot.queue[0].participantId, snapshot.participants[0].id);
+});
+
+test('a rejected action is sent only to the caller', async () => {
+  const harness = createHarness();
+  await openRoom(harness);
+  const listener = await connectListener(harness);
+  const host = await connectHost(harness);
+  const hostMessageCount = harness.messagesFor(host).length;
+
+  await harness.transport.message(listener, JSON.stringify({
+    type: 'request-accepted',
+    requestId: 'missing'
+  }));
+
+  assert.equal(harness.latest(listener, 'error').code, 'host-only');
+  assert.equal(harness.messagesFor(host).length, hostMessageCount);
+});
+
+test('kick closes the listener and invalidates its resume credential', async () => {
+  const harness = createHarness();
+  await openRoom(harness);
+  const listener = await connectListener(harness);
+  const credential = harness.latest(listener, 'resume-credential').credential;
+  const host = await connectHost(harness);
+  const participantId = harness.latest(host, 'snapshot').state.participants[0].id;
+
+  await harness.transport.message(host, JSON.stringify({
+    type: 'kicked',
+    participantId
+  }));
+  const reconnect = await connectListener(harness, {}, { resume: credential });
+
+  assert.ok(harness.closed.some(item => item.socket === listener && item.code === 4003));
+  assert.equal(harness.latest(reconnect, 'error').code, 'resume-invalid');
+});
+
+test('a listener cannot revoke a credential by spoofing a kick', async () => {
+  const harness = createHarness();
+  await openRoom(harness);
+  const listener = await connectListener(harness);
+  const credential = harness.latest(listener, 'resume-credential').credential;
+
+  await harness.transport.message(listener, JSON.stringify({
+    type: 'kicked',
+    role: 'host',
+    participantId: 'id1'
+  }));
+  await harness.transport.disconnect(listener);
+  const resumed = await connectListener(harness, {}, { resume: credential });
+
+  assert.equal(harness.latest(resumed, 'snapshot').state.listenerCount, 1);
+});
+
+test('an empty room accepts reconnects during grace and expires afterward', async () => {
+  const harness = createHarness();
+  await openRoom(harness);
+  const listener = await connectListener(harness);
+  const credential = harness.latest(listener, 'resume-credential').credential;
+  await harness.transport.disconnect(listener);
+
+  harness.tick(EMPTY_GRACE_MS - 1);
+  await harness.transport.alarm();
+  const duringGrace = await connectListener(harness, {}, { resume: credential });
+  assert.equal(harness.latest(duringGrace, 'snapshot').state.expiredAt, null);
+
+  await harness.transport.disconnect(duringGrace);
+  harness.tick(EMPTY_GRACE_MS);
+  await harness.transport.alarm();
+  const afterGrace = {};
+  assert.equal(await harness.transport.connect(afterGrace), false);
+  assert.equal(harness.closed.at(-1).reason, 'room-unavailable');
+});
+
+test('the absolute room cap expires a room even with listeners present', async () => {
+  const harness = createHarness();
+  await openRoom(harness, { expiresAt: 2_000 });
+  const listener = await connectListener(harness);
+  harness.tick(1_000);
+  await harness.transport.alarm();
+
+  assert.equal(harness.latest(listener, 'snapshot').state.expiredAt, 2_000);
+  assert.ok(harness.closed.some(item => item.socket === listener && item.code === 4004));
+});
+
+test('uninitialized and already-expired rooms close without authenticating', async () => {
+  const emptyHarness = createHarness();
+  const probe = {};
+  assert.equal(await emptyHarness.transport.connect(probe), false);
+
+  const expiredHarness = createHarness();
+  await openRoom(expiredHarness, { expiresAt: expiredHarness.now() });
+  const expiredProbe = {};
+  assert.equal(await expiredHarness.transport.connect(expiredProbe), false);
+
+  assert.equal(emptyHarness.closed.at(-1).reason, 'room-unavailable');
+  assert.equal(expiredHarness.closed.at(-1).reason, 'room-unavailable');
+});
+
+test('the room cap rejects the twenty-first listener', async () => {
+  const harness = createHarness();
+  await openRoom(harness, { expiresAt: harness.now() + ABSOLUTE_ROOM_MS });
+
+  for (let index = 0; index < 20; index += 1) {
+    await connectListener(harness, {}, { name: `Listener ${index + 1}` });
+  }
+  const rejected = await connectListener(harness);
+
+  assert.equal(harness.latest(rejected, 'error').code, 'room-full');
+  assert.ok(harness.closed.some(item => item.socket === rejected && item.code === 4002));
+});

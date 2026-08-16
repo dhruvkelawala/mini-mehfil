@@ -1,4 +1,8 @@
-import { createRoomState, transitionRoom, projectRoomState } from './room-state.mjs';
+import {
+  createRoomState,
+  projectRoomState,
+  transitionRoom
+} from './room-state.mjs';
 
 export const MAX_MESSAGE_BYTES = 16 * 1024;
 export const AUTH_TIMEOUT_MS = 5_000;
@@ -6,143 +10,425 @@ export const ABSOLUTE_ROOM_MS = 6 * 60 * 60 * 1000;
 export const EMPTY_GRACE_MS = 15 * 60 * 1000;
 export const SONG_START_DELAY_MS = 1_500;
 
+const CLIENT_EVENT_TYPES = new Set([
+  'request-submitted',
+  'request-accepted',
+  'request-reordered',
+  'request-declined',
+  'recording-started',
+  'lyrics-ready',
+  'recording-failed',
+  'song-ready',
+  'kicked',
+  'room-expired'
+]);
+
 export async function sha256(value) {
   const bytes = new TextEncoder().encode(String(value));
-  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
-    .map(byte => byte.toString(16).padStart(2, '0')).join('');
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return [...digest]
+    .map(byte => byte.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 export function constantTimeEqual(left, right) {
-  const a = String(left); const b = String(right);
-  let difference = a.length ^ b.length;
-  const length = Math.max(a.length, b.length);
-  for (let index = 0; index < length; index += 1) difference |= (a.charCodeAt(index) || 0) ^ (b.charCodeAt(index) || 0);
+  const first = String(left);
+  const second = String(right);
+  let difference = first.length ^ second.length;
+  const length = Math.max(first.length, second.length);
+
+  for (let index = 0; index < length; index += 1) {
+    difference |= (first.charCodeAt(index) || 0) ^ (second.charCodeAt(index) || 0);
+  }
+
   return difference === 0;
 }
 
-export function createRoomTransport({ storage, now = Date.now, randomId, randomCredential, send, broadcast, close, setAttachment, getAttachment, setAlarm, listSockets } = {}) {
-  const sockets = new Set();
-  const activeSockets = () => listSockets ? listSockets() : [...sockets];
+/**
+ * Owns authentication, persistence, projections, expiry, and event dispatch for
+ * one room. Callers provide two adapters: durable storage and live connections.
+ * Tests exercise the same lifecycle interface used by MehfilRoom.
+ */
+export function createRoomTransport({
+  storage,
+  connections,
+  now = Date.now,
+  createParticipantId,
+  createResumeCredential
+} = {}) {
+  if (!storage || !connections) {
+    throw new Error('Room storage and connection adapters are required.');
+  }
+
+  const localSockets = new Set();
+  const activeSockets = () => connections.list?.() || [...localSockets];
   let state;
-  let meta;
-  const load = async () => {
+  let metadata;
+
+  async function load() {
     state ||= await storage.get('state');
-    meta ||= await storage.get('meta');
-    return state;
-  };
-  const persist = async next => { state = next; await storage.put('state', next); };
-  const privateError = (socket, code) => send(socket, { type: 'error', code });
-  const snapshot = socket => {
-    const viewer = getAttachment(socket) || {};
-    send(socket, { type: 'snapshot', state: projectRoomState(state, viewer) });
-  };
-  const snapshots = async () => broadcast(socket => ({ type: 'snapshot', state: projectRoomState(state, getAttachment(socket) || {}) }));
-  const schedule = async () => {
-    const connected = [...activeSockets()].some(socket => getAttachment(socket)?.authenticated);
-    if (connected) meta.emptyDeadline = null;
-    else meta.emptyDeadline ||= now() + EMPTY_GRACE_MS;
-    await storage.put('meta', meta);
-    await setAlarm(Math.min(meta.absoluteDeadline, meta.emptyDeadline || Infinity));
-  };
-  const commit = async result => {
-    await persist(result.state);
-    await snapshots();
-    for (const effect of result.effects) {
-      if (effect.type === 'close-participant') for (const candidate of activeSockets()) if (getAttachment(candidate)?.participantId === effect.participantId) close(candidate, 4003, 'kicked');
-      if (effect.type === 'close-all') for (const candidate of activeSockets()) close(candidate, 4004, 'expired');
+    metadata ||= await storage.get('meta');
+  }
+
+  async function persistState(nextState) {
+    state = nextState;
+    await storage.put('state', nextState);
+  }
+
+  function sendError(socket, code) {
+    connections.send(socket, { type: 'error', code });
+  }
+
+  async function broadcastSnapshots() {
+    connections.broadcast(socket => ({
+      type: 'snapshot',
+      state: projectRoomState(state, connections.getSession(socket) || {})
+    }));
+  }
+
+  async function scheduleExpiry() {
+    const someoneIsPresent = [...activeSockets()].some(
+      socket => connections.getSession(socket)?.authenticated
+    );
+
+    if (someoneIsPresent) metadata.emptyDeadline = null;
+    else metadata.emptyDeadline ||= now() + EMPTY_GRACE_MS;
+
+    await storage.put('meta', metadata);
+    await storage.setAlarm(
+      Math.min(metadata.absoluteDeadline, metadata.emptyDeadline || Infinity)
+    );
+  }
+
+  function applyEffects(effects) {
+    for (const effect of effects) {
+      if (effect.type === 'close-participant') {
+        for (const socket of activeSockets()) {
+          const session = connections.getSession(socket);
+          if (session?.participantId === effect.participantId) {
+            connections.close(socket, 4003, 'kicked');
+          }
+        }
+      }
+
+      if (effect.type === 'close-all') {
+        for (const socket of activeSockets()) {
+          connections.close(socket, 4004, 'expired');
+        }
+      }
     }
-  };
-  const apply = async (socket, event) => {
+  }
+
+  async function commit(result) {
+    await persistState(result.state);
+    await broadcastSnapshots();
+    applyEffects(result.effects);
+  }
+
+  async function apply(socket, event) {
     const result = transitionRoom(state, event);
-    if (result.error) { if (socket) privateError(socket, result.error.code); return { accepted: false, error: result.error.code }; }
-    await commit(result);
-    return { accepted: true };
-  };
-  const expireIfDue = async () => {
-    if (state && meta && !state.expiredAt && (now() >= meta.absoluteDeadline || (meta.emptyDeadline && now() >= meta.emptyDeadline))) {
-      await apply(null, { type:'room-expired', role:'host', trustedAlarm:true, at:now() });
+    if (result.error) {
+      if (socket) sendError(socket, result.error.code);
+      return false;
     }
-  };
+
+    await commit(result);
+    return true;
+  }
+
+  async function expireIfDue() {
+    if (!state || !metadata || state.expiredAt) return;
+
+    const absoluteExpiryReached = now() >= metadata.absoluteDeadline;
+    const emptyExpiryReached = metadata.emptyDeadline
+      && now() >= metadata.emptyDeadline;
+
+    if (absoluteExpiryReached || emptyExpiryReached) {
+      await apply(null, {
+        type: 'room-expired',
+        role: 'host',
+        trustedAlarm: true,
+        at: now()
+      });
+    }
+  }
+
+  async function authenticateHost(socket, message) {
+    const providedDigest = await sha256(message.secret || '');
+    if (!constantTimeEqual(providedDigest, metadata.hostDigest)) {
+      sendError(socket, 'auth-failed');
+      connections.close(socket, 4001, 'auth-failed');
+      return;
+    }
+
+    const result = transitionRoom(state, {
+      type: 'joined',
+      role: 'host',
+      participantId: 'host',
+      at: now()
+    });
+
+    if (result.error) {
+      sendError(socket, result.error.code);
+      connections.close(socket, 4004, 'room-unavailable');
+      return;
+    }
+
+    connections.setSession(socket, {
+      authenticated: true,
+      role: 'host',
+      participantId: 'host'
+    });
+    await commit(result);
+    await scheduleExpiry();
+  }
+
+  async function findResumedParticipant(credential) {
+    const digest = await sha256(credential);
+    const participantId = Object.keys(metadata.resumeDigests)
+      .find(id => constantTimeEqual(metadata.resumeDigests[id], digest));
+    const wasKicked = metadata.kickedDigests
+      .some(item => constantTimeEqual(item, digest));
+    return wasKicked ? null : participantId;
+  }
+
+  async function authenticateListener(socket, message) {
+    let participantId;
+    let credential;
+
+    if (message.resume) {
+      participantId = await findResumedParticipant(message.resume);
+      if (!participantId) {
+        sendError(socket, 'resume-invalid');
+        return;
+      }
+    } else {
+      participantId = createParticipantId();
+      credential = createResumeCredential();
+    }
+
+    const result = transitionRoom(state, {
+      type: 'joined',
+      role: 'listener',
+      participantId,
+      actorId: participantId,
+      name: message.name,
+      at: now()
+    });
+
+    if (result.error) {
+      sendError(socket, result.error.code);
+      if (result.error.code === 'room-full') {
+        connections.close(socket, 4002, 'room-full');
+      }
+      if (result.error.code === 'room-expired') {
+        connections.close(socket, 4004, 'room-unavailable');
+      }
+      return;
+    }
+
+    connections.setSession(socket, {
+      authenticated: true,
+      role: 'listener',
+      participantId
+    });
+    await commit(result);
+
+    if (credential) {
+      metadata.resumeDigests[participantId] = await sha256(credential);
+      await storage.put('meta', metadata);
+      connections.send(socket, { type: 'resume-credential', credential });
+    }
+
+    await scheduleExpiry();
+  }
+
+  async function authenticate(socket, message) {
+    if (message.type === 'auth-host') {
+      await authenticateHost(socket, message);
+      return;
+    }
+    if (message.type === 'join') {
+      await authenticateListener(socket, message);
+      return;
+    }
+    sendError(socket, 'authenticate-first');
+  }
+
+  function decodeMessage(socket, raw) {
+    const isTooLarge = typeof raw !== 'string'
+      || new TextEncoder().encode(raw).byteLength > MAX_MESSAGE_BYTES;
+    if (isTooLarge) {
+      sendError(socket, 'invalid-message');
+      return null;
+    }
+
+    try {
+      const message = JSON.parse(raw);
+      if (message && typeof message.type === 'string') return message;
+    } catch {
+      // The caller receives the same private error for all malformed payloads.
+    }
+
+    sendError(socket, 'invalid-message');
+    return null;
+  }
+
+  function eventFromMessage(message, session) {
+    const event = {
+      ...message,
+      role: session.role,
+      actorId: session.participantId,
+      participantId: message.type === 'request-submitted'
+        ? session.participantId
+        : message.participantId,
+      at: now()
+    };
+
+    if (message.type === 'request-submitted') {
+      event.requestId = createParticipantId();
+    }
+    if (message.type === 'song-ready') {
+      event.startedAt = now() + SONG_START_DELAY_MS;
+    }
+    return event;
+  }
+
+  async function dispatchClientEvent(socket, message, session) {
+    if (!CLIENT_EVENT_TYPES.has(message.type)) {
+      sendError(socket, 'unknown-message');
+      return;
+    }
+
+    const kickedDigest = message.type === 'kicked'
+      ? metadata.resumeDigests[message.participantId]
+      : null;
+    const accepted = await apply(socket, eventFromMessage(message, session));
+
+    if (accepted && kickedDigest) {
+      metadata.kickedDigests.push(kickedDigest);
+      delete metadata.resumeDigests[message.participantId];
+      await storage.put('meta', metadata);
+    }
+  }
+
   return {
-    async initialize({ roomId, hostDigest, openedAt = now(), expiresAt = openedAt + ABSOLUTE_ROOM_MS }) {
+    async initialize({
+      roomId,
+      hostDigest,
+      openedAt = now(),
+      expiresAt = openedAt + ABSOLUTE_ROOM_MS
+    }) {
       if (await storage.get('state')) return false;
+
       state = createRoomState({ roomId, openedAt, expiresAt });
-      meta = { hostDigest, absoluteDeadline: expiresAt, emptyDeadline: openedAt + EMPTY_GRACE_MS, resumeDigests: {}, kickedDigests: [] };
-      await storage.put('state', state); await storage.put('meta', meta); await setAlarm(Math.min(expiresAt, meta.emptyDeadline));
+      metadata = {
+        hostDigest,
+        absoluteDeadline: expiresAt,
+        emptyDeadline: openedAt + EMPTY_GRACE_MS,
+        resumeDigests: {},
+        kickedDigests: []
+      };
+
+      await storage.put('state', state);
+      await storage.put('meta', metadata);
+      await storage.setAlarm(Math.min(expiresAt, metadata.emptyDeadline));
       return true;
     },
+
     async connect(socket) {
-      await load(); sockets.add(socket);
+      await load();
+      localSockets.add(socket);
       await expireIfDue();
-      if (!state || !meta || state.expiredAt) { close(socket, 4004, 'room-unavailable'); return false; }
-      setAttachment(socket, { authenticated: false, connectedAt: now() }); return true;
+
+      if (!state || !metadata || state.expiredAt) {
+        connections.close(socket, 4004, 'room-unavailable');
+        return false;
+      }
+
+      connections.setSession(socket, {
+        authenticated: false,
+        connectedAt: now()
+      });
+      return true;
     },
+
     async message(socket, raw) {
-      await load(); sockets.add(socket); await expireIfDue();
-      if (!state || !meta || state.expiredAt) { close(socket, 4004, 'room-unavailable'); return; }
-      if (typeof raw !== 'string' || new TextEncoder().encode(raw).byteLength > MAX_MESSAGE_BYTES) return privateError(socket, 'invalid-message');
-      let message; try { message = JSON.parse(raw); } catch { return privateError(socket, 'invalid-message'); }
-      if (!message || typeof message.type !== 'string') return privateError(socket, 'invalid-message');
-      const attachment = getAttachment(socket) || {};
-      if (!attachment.authenticated) {
-        if (message.type === 'auth-host') {
-          const provided = await sha256(message.secret || '');
-          if (!constantTimeEqual(provided, meta.hostDigest)) { privateError(socket, 'auth-failed'); close(socket, 4001, 'auth-failed'); return; }
-          const result = transitionRoom(state, { type: 'joined', role: 'host', participantId: 'host', at: now() });
-          if (result.error) { privateError(socket, result.error.code); close(socket, 4004, 'room-unavailable'); return; }
-          setAttachment(socket, { authenticated: true, role: 'host', participantId: 'host' }); await commit(result);
-          await schedule(); return;
-        }
-        if (message.type === 'join') {
-          let participantId; let credential;
-          if (message.resume) {
-            const digest = await sha256(message.resume);
-            participantId = Object.keys(meta.resumeDigests).find(id => constantTimeEqual(meta.resumeDigests[id], digest));
-            if (!participantId || meta.kickedDigests.some(item => constantTimeEqual(item, digest))) return privateError(socket, 'resume-invalid');
-          } else {
-            participantId = randomId(); credential = randomCredential();
-          }
-          const result = transitionRoom(state, { type:'joined', role:'listener', participantId, actorId:participantId, name:message.name, at:now() });
-          if (result.error) {
-            privateError(socket, result.error.code);
-            if (result.error.code === 'room-full') close(socket, 4002, 'room-full');
-            if (result.error.code === 'room-expired') close(socket, 4004, 'room-unavailable');
-            return;
-          }
-          setAttachment(socket, { authenticated: true, role: 'listener', participantId }); await commit(result);
-          if (credential) {
-            meta.resumeDigests[participantId] = await sha256(credential); await storage.put('meta', meta);
-            send(socket, { type:'resume-credential', credential });
-          }
-          await schedule(); return;
-        }
-        return privateError(socket, 'authenticate-first');
+      await load();
+      localSockets.add(socket);
+      await expireIfDue();
+
+      if (!state || !metadata || state.expiredAt) {
+        connections.close(socket, 4004, 'room-unavailable');
+        return;
       }
-      const allowed = new Set(['request-submitted','request-accepted','request-reordered','request-declined','recording-started','lyrics-ready','recording-failed','song-ready','kicked','room-expired']);
-      if (!allowed.has(message.type)) return privateError(socket, 'unknown-message');
-      const event = { ...message, role: attachment.role, actorId: attachment.participantId, participantId: message.type === 'request-submitted' ? attachment.participantId : message.participantId, at: now() };
-      if (message.type === 'request-submitted') event.requestId = randomId();
-      if (message.type === 'song-ready') event.startedAt = now() + SONG_START_DELAY_MS;
-      const kickedDigest = message.type === 'kicked' ? meta.resumeDigests[message.participantId] : null;
-      const accepted = await apply(socket, event);
-      if (accepted.accepted && kickedDigest) {
-        meta.kickedDigests.push(kickedDigest); delete meta.resumeDigests[message.participantId]; await storage.put('meta', meta);
+
+      const message = decodeMessage(socket, raw);
+      if (!message) return;
+
+      const session = connections.getSession(socket) || {};
+      if (!session.authenticated) {
+        await authenticate(socket, message);
+        return;
       }
+
+      await dispatchClientEvent(socket, message, session);
     },
+
     async disconnect(socket) {
-      await load(); const attachment = getAttachment(socket) || {}; sockets.delete(socket);
-      if (!state || !meta) return;
-      const stillConnected = [...activeSockets()].some(candidate => candidate !== socket && getAttachment(candidate)?.authenticated && getAttachment(candidate)?.role === attachment.role && getAttachment(candidate)?.participantId === attachment.participantId);
-      if (attachment.authenticated && !stillConnected) await apply(socket, { type:'left', role:attachment.role, participantId:attachment.participantId, actorId:attachment.participantId, at:now() });
-      await schedule();
+      await load();
+      const session = connections.getSession(socket) || {};
+      localSockets.delete(socket);
+      if (!state || !metadata) return;
+
+      const participantStillConnected = [...activeSockets()].some(candidate => {
+        if (candidate === socket) return false;
+        const candidateSession = connections.getSession(candidate);
+        return candidateSession?.authenticated
+          && candidateSession.role === session.role
+          && candidateSession.participantId === session.participantId;
+      });
+
+      if (session.authenticated && !participantStillConnected) {
+        await apply(socket, {
+          type: 'left',
+          role: session.role,
+          participantId: session.participantId,
+          actorId: session.participantId,
+          at: now()
+        });
+      }
+
+      await scheduleExpiry();
     },
-    async checkAuthenticationTimeout(socket) { if (!getAttachment(socket)?.authenticated && now() - (getAttachment(socket)?.connectedAt || 0) >= AUTH_TIMEOUT_MS) close(socket, 4001, 'authentication-timeout'); },
+
+    checkAuthenticationTimeout(socket) {
+      const session = connections.getSession(socket);
+      const waited = now() - (session?.connectedAt || 0);
+      if (!session?.authenticated && waited >= AUTH_TIMEOUT_MS) {
+        connections.close(socket, 4001, 'authentication-timeout');
+      }
+    },
+
     async alarm() {
       await load();
-      if (!state || !meta) return;
-      if (now() < meta.absoluteDeadline && (!meta.emptyDeadline || now() < meta.emptyDeadline)) return setAlarm(Math.min(meta.absoluteDeadline, meta.emptyDeadline || Infinity));
-      await apply(null, { type:'room-expired', role:'host', trustedAlarm:true, at:now() });
-    },
-    snapshot
+      if (!state || !metadata) return;
+
+      const roomIsStillLive = now() < metadata.absoluteDeadline
+        && (!metadata.emptyDeadline || now() < metadata.emptyDeadline);
+      if (roomIsStillLive) {
+        await storage.setAlarm(
+          Math.min(metadata.absoluteDeadline, metadata.emptyDeadline || Infinity)
+        );
+        return;
+      }
+
+      await apply(null, {
+        type: 'room-expired',
+        role: 'host',
+        trustedAlarm: true,
+        at: now()
+      });
+    }
   };
 }

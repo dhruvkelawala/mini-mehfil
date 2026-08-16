@@ -811,47 +811,148 @@ shareButton.addEventListener('click', async () => {
 });
 
 function roomSend(message) {
-  if (roomSocket?.readyState !== WebSocket.OPEN || !roomAuthenticated) return false;
+  if (roomSocket?.readyState !== WebSocket.OPEN || !roomAuthenticated) {
+    return false;
+  }
   roomSocket.send(JSON.stringify(message));
   return true;
 }
 
 function roomSession() {
-  try { return JSON.parse(sessionStorage.getItem(ROOM_SESSION_KEY)); } catch { return null; }
+  try {
+    return JSON.parse(sessionStorage.getItem(ROOM_SESSION_KEY));
+  } catch {
+    return null;
+  }
 }
 
 function clearRoomSession() {
   roomClosing = false;
   roomTerminal = true;
   sessionStorage.removeItem(ROOM_SESSION_KEY);
-  roomSocket?.close(); roomSocket = null; roomSnapshot = null;
-  roomAuthenticated = false; activeRoomDetails = null;
-  roomPanel.hidden = true; openRoomButton.hidden = false;
+  roomSocket?.close();
+  roomSocket = null;
+  roomSnapshot = null;
+  roomAuthenticated = false;
+  activeRoomDetails = null;
+  roomPanel.hidden = true;
+  openRoomButton.hidden = false;
 }
 
 function roomButton(label, action, value) {
-  const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
-  button.addEventListener('click', () => action(value)); return button;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  button.addEventListener('click', () => action(value));
+  return button;
 }
 
 function roomReorderTargets(queue, itemId) {
-  const movable = queue.filter(item => !['declined','ready'].includes(item.status));
+  const movable = queue.filter(item => !['declined', 'ready'].includes(item.status));
   const position = movable.findIndex(item => item.id === itemId);
   const fullIndex = queue.findIndex(item => item.id === itemId);
   return {
-    up: position > 0 ? queue.findIndex(item => item.id === movable[position - 1].id) : fullIndex,
-    down: position >= 0 && position < movable.length - 1 ? queue.findIndex(item => item.id === movable[position + 1].id) : fullIndex
+    up: position > 0
+      ? queue.findIndex(item => item.id === movable[position - 1].id)
+      : fullIndex,
+    down: position >= 0 && position < movable.length - 1
+      ? queue.findIndex(item => item.id === movable[position + 1].id)
+      : fullIndex
   };
 }
 
 function hostRoomView(state, joinUrl) {
   const origin = new URL(joinUrl).origin;
-  const names = new Map(state.participants.map(participant => [participant.id, participant.name || 'Listener']));
+  const names = new Map(state.participants.map(participant => [
+    participant.id,
+    participant.name || 'Listener'
+  ]));
   return {
-    participants: state.participants.map(participant => ({ id:participant.id, name:participant.name || 'Listener' })),
-    queue: state.queue.map(item => ({ ...item, requesterName:names.get(item.participantId) || 'Listener' })),
-    setlist: state.setlist.map(item => ({ ...item, url:`${origin}/s/${item.shareId}` }))
+    participants: state.participants.map(participant => ({
+      id: participant.id,
+      name: participant.name || 'Listener'
+    })),
+    queue: state.queue.map(item => ({
+      ...item,
+      requesterName: names.get(item.participantId) || 'Listener'
+    })),
+    setlist: state.setlist.map(item => ({
+      ...item,
+      url: `${origin}/s/${item.shareId}`
+    }))
   };
+}
+
+function participantRow(participant) {
+  const row = document.createElement('li');
+  row.append(
+    participant.name,
+    roomButton(
+      'Kick',
+      participantId => roomSend({ type: 'kicked', participantId }),
+      participant.id
+    )
+  );
+  return row;
+}
+
+function setlistRow(song) {
+  const row = document.createElement('li');
+  const link = document.createElement('a');
+  link.href = song.url;
+  link.target = '_blank';
+  link.rel = 'noreferrer';
+  link.textContent = song.title;
+  row.append(link);
+  return row;
+}
+
+function queueRow(item, queue) {
+  const targets = roomReorderTargets(queue, item.id);
+  const row = document.createElement('li');
+  row.append(
+    `${item.requesterName}: ${item.idea} · ${item.status}`,
+    document.createElement('br')
+  );
+
+  if (item.status === 'pending') {
+    row.append(roomButton(
+      'Accept',
+      requestId => roomSend({ type: 'request-accepted', requestId }),
+      item.id
+    ));
+  }
+
+  if (['pending', 'accepted'].includes(item.status)) {
+    row.append(roomButton(
+      '↑',
+      requestId => roomSend({
+        type: 'request-reordered',
+        requestId,
+        toIndex: targets.up
+      }),
+      item.id
+    ));
+    row.append(roomButton(
+      '↓',
+      requestId => roomSend({
+        type: 'request-reordered',
+        requestId,
+        toIndex: targets.down
+      }),
+      item.id
+    ));
+    row.append(roomButton(
+      'Decline',
+      requestId => roomSend({ type: 'request-declined', requestId }),
+      item.id
+    ));
+  }
+
+  if (item.status === 'accepted') {
+    row.append(roomButton('Record', recordRoomRequest, item.id));
+  }
+  return row;
 }
 
 function renderHostRoom(state) {
@@ -859,53 +960,112 @@ function renderHostRoom(state) {
   const view = hostRoomView(state, activeRoomDetails.joinUrl);
   roomStateLabel.textContent = state.expiredAt ? 'expired' : 'connected';
   roomPresence.textContent = `${state.listenerCount} listener${state.listenerCount === 1 ? '' : 's'}`;
-  hostParticipants.replaceChildren(...view.participants.map(participant => {
-    const row=document.createElement('li'); row.append(participant.name, roomButton('Kick', id => roomSend({type:'kicked',participantId:id}), participant.id)); return row;
-  }));
-  hostSetlist.replaceChildren(...view.setlist.map(song => { const row=document.createElement('li'),link=document.createElement('a');link.href=song.url;link.target='_blank';link.rel='noreferrer';link.textContent=song.title;row.append(link);return row; }));
-  const movableQueue = view.queue.filter(item => !['declined','ready'].includes(item.status));
-  hostQueue.replaceChildren(...movableQueue.map((item, index) => {
-    const targets = roomReorderTargets(state.queue, item.id);
-    const row = document.createElement('li'); row.append(`${item.requesterName}: ${item.idea} · ${item.status}`, document.createElement('br'));
-    if (item.status === 'pending') row.append(roomButton('Accept', id => roomSend({ type:'request-accepted', requestId:id }), item.id));
-    if (['pending','accepted'].includes(item.status)) {
-      row.append(roomButton('↑', id => roomSend({ type:'request-reordered', requestId:id, toIndex:targets.up }), item.id));
-      row.append(roomButton('↓', id => roomSend({ type:'request-reordered', requestId:id, toIndex:targets.down }), item.id));
-      row.append(roomButton('Decline', id => roomSend({ type:'request-declined', requestId:id }), item.id));
-    }
-    if (item.status === 'accepted') row.append(roomButton('Record', recordRoomRequest, item.id));
-    return row;
-  }));
+  hostParticipants.replaceChildren(...view.participants.map(participantRow));
+  hostSetlist.replaceChildren(...view.setlist.map(setlistRow));
+
+  const activeQueue = view.queue.filter(
+    item => !['declined', 'ready'].includes(item.status)
+  );
+  hostQueue.replaceChildren(...activeQueue.map(item => queueRow(item, state.queue)));
   if (state.expiredAt) clearRoomSession();
 }
 
 function connectHostRoom(details) {
   roomTerminal = false;
-  roomAuthenticated = false; activeRoomDetails = details;
-  roomPanel.hidden = false; openRoomButton.hidden = true; roomCode.textContent = details.roomId; roomLink.value = details.joinUrl;
+  roomAuthenticated = false;
+  activeRoomDetails = details;
+  roomPanel.hidden = false;
+  openRoomButton.hidden = true;
+  roomCode.textContent = details.roomId;
+  roomLink.value = details.joinUrl;
   roomStateLabel.textContent = roomRetry ? 'reconnecting' : 'connecting';
   roomSocket = new WebSocket(details.socketUrl);
-  roomSocket.addEventListener('open', () => { roomRetry = 0; roomSocket.send(JSON.stringify({ type:'auth-host', secret:details.hostSecret })); });
-  roomSocket.addEventListener('message', event => { let message; try { message=JSON.parse(event.data); } catch { return; } if (message.type === 'snapshot') { roomAuthenticated=true; renderHostRoom(message.state); } if (message.type === 'error') { notice.textContent = message.code; if (message.code === 'auth-failed' || message.code === 'room-expired') clearRoomSession(); } });
-  roomSocket.addEventListener('close', event => { roomAuthenticated=false; if (roomTerminal) return; if (event.code === 4001 || event.code === 4004 || Date.now() >= details.expiresAt) return clearRoomSession(); if (roomClosing) return; roomStateLabel.textContent='reconnecting'; const delay=Math.min(1000*2**roomRetry,30000); roomRetry=Math.min(roomRetry+1,6); setTimeout(()=>{if(!roomTerminal)connectHostRoom(details)},delay); });
+
+  roomSocket.addEventListener('open', () => {
+    roomRetry = 0;
+    roomSocket.send(JSON.stringify({
+      type: 'auth-host',
+      secret: details.hostSecret
+    }));
+  });
+
+  roomSocket.addEventListener('message', event => {
+    let message;
+    try {
+      message = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+
+    if (message.type === 'snapshot') {
+      roomAuthenticated = true;
+      renderHostRoom(message.state);
+    }
+    if (message.type === 'error') {
+      notice.textContent = message.code;
+      if (message.code === 'auth-failed' || message.code === 'room-expired') {
+        clearRoomSession();
+      }
+    }
+  });
+
+  roomSocket.addEventListener('close', event => {
+    roomAuthenticated = false;
+    if (roomTerminal) return;
+    const roomUnavailable = event.code === 4001
+      || event.code === 4004
+      || Date.now() >= details.expiresAt;
+    if (roomUnavailable) {
+      clearRoomSession();
+      return;
+    }
+    if (roomClosing) return;
+
+    roomStateLabel.textContent = 'reconnecting';
+    const delay = Math.min(1_000 * 2 ** roomRetry, 30_000);
+    roomRetry = Math.min(roomRetry + 1, 6);
+    setTimeout(() => {
+      if (!roomTerminal) connectHostRoom(details);
+    }, delay);
+  });
 }
 
-async function runRoomRecordingLifecycle({ requestId, run, isCurrent, generate, upload, send }) {
-  if (!send({ type:'recording-started', requestId })) return 'disconnected';
+async function runRoomRecordingLifecycle({
+  requestId,
+  run,
+  isCurrent,
+  generate,
+  upload,
+  send
+}) {
+  if (!send({ type: 'recording-started', requestId })) return 'disconnected';
   try {
-    await generate({ onLyrics: sheet => {
-      if (!isCurrent(run)) return;
-      send({ type:'lyrics-ready', requestId, lyrics:{ title:sheet.title, language:sheet.language, nativeScriptName:sheet.nativeScriptName, isLatinScript:sheet.isLatinScript, lyricsNative:sheet.lyricsNative, lyricsRoman:sheet.lyricsRoman } });
-    } });
+    await generate({
+      onLyrics: sheet => {
+        if (!isCurrent(run)) return;
+        send({
+          type: 'lyrics-ready',
+          requestId,
+          lyrics: {
+            title: sheet.title,
+            language: sheet.language,
+            nativeScriptName: sheet.nativeScriptName,
+            isLatinScript: sheet.isLatinScript,
+            lyricsNative: sheet.lyricsNative,
+            lyricsRoman: sheet.lyricsRoman
+          }
+        });
+      }
+    });
     if (!isCurrent(run)) return 'stale';
     const url = await upload();
     if (!isCurrent(run)) return 'stale';
     const match = /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(url).pathname);
     if (!match) throw new Error('The share service returned an invalid link.');
-    send({ type:'song-ready', requestId, shareId:match[1] });
+    send({ type: 'song-ready', requestId, shareId: match[1] });
     return 'ready';
   } catch {
-    if (isCurrent(run)) send({ type:'recording-failed', requestId });
+    if (isCurrent(run)) send({ type: 'recording-failed', requestId });
     return 'failed';
   }
 }
@@ -913,27 +1073,77 @@ async function runRoomRecordingLifecycle({ requestId, run, isCurrent, generate, 
 async function recordRoomRequest(requestId) {
   const item = roomSnapshot?.queue.find(value => value.id === requestId);
   if (!item || item.status !== 'accepted' || generating) return;
-  ideaInput.value = item.idea; vibeInput.value = item.vibe; languageSelect.value = [...languageSelect.options].some(option => option.value === item.language) ? item.language : 'auto';
-  clearLoadedSong(); resetPeek();
+
+  ideaInput.value = item.idea;
+  vibeInput.value = item.vibe;
+  languageSelect.value = [...languageSelect.options]
+    .some(option => option.value === item.language)
+    ? item.language
+    : 'auto';
+  clearLoadedSong();
+  resetPeek();
   const run = generationRun;
   const outcome = await runRoomRecordingLifecycle({
-    requestId, run,
+    requestId,
+    run,
     isCurrent: value => value === generationRun,
-    generate: hooks => generateSong({ idea:item.idea, vibe:item.vibe, language:item.language || 'auto' }, hooks),
-    upload: () => uploadCurrentSong({ copy:false, requestRun:run, requestReference:shareReference }),
+    generate: hooks => generateSong({
+      idea: item.idea,
+      vibe: item.vibe,
+      language: item.language || 'auto'
+    }, hooks),
+    upload: () => uploadCurrentSong({
+      copy: false,
+      requestRun: run,
+      requestReference: shareReference
+    }),
     send: roomSend
   });
   if (outcome === 'disconnected') {
-    notice.className='notice'; notice.textContent='The room is reconnecting. Wait for it to reconnect, then press Record again.';
+    notice.className = 'notice';
+    notice.textContent = 'The room is reconnecting. Wait for it to reconnect, then press Record again.';
   }
 }
 
 openRoomButton.addEventListener('click', async () => {
   openRoomButton.disabled = true;
-  try { const details = await post('/api/rooms', {}); sessionStorage.setItem(ROOM_SESSION_KEY, JSON.stringify({ roomId:details.roomId, socketUrl:details.socketUrl, joinUrl:details.joinUrl, hostSecret:details.hostSecret, expiresAt:details.expiresAt })); connectHostRoom(details); }
-  catch (error) { notice.textContent=error.message; }
-  finally { openRoomButton.disabled=false; }
+  try {
+    const details = await post('/api/rooms', {});
+    sessionStorage.setItem(ROOM_SESSION_KEY, JSON.stringify({
+      roomId: details.roomId,
+      socketUrl: details.socketUrl,
+      joinUrl: details.joinUrl,
+      hostSecret: details.hostSecret,
+      expiresAt: details.expiresAt
+    }));
+    connectHostRoom(details);
+  } catch (error) {
+    notice.textContent = error.message;
+  } finally {
+    openRoomButton.disabled = false;
+  }
 });
-document.querySelector('#copy-room').addEventListener('click',()=>copyShareLink(roomLink.value));
-document.querySelector('#close-room').addEventListener('click',()=>{if(roomClosing)return;if(!roomSend({type:'room-expired'})){notice.className='notice';notice.textContent='The room is reconnecting. Wait for it to reconnect, then close it again.';roomStateLabel.textContent='reconnecting';return}roomClosing=true;roomStateLabel.textContent='closing';setTimeout(()=>{if(roomClosing)clearRoomSession()},1500)});
-const savedRoom=roomSession();if(savedRoom&&savedRoom.expiresAt>Date.now())connectHostRoom(savedRoom);else if(savedRoom)clearRoomSession();
+
+document.querySelector('#copy-room').addEventListener('click', () => {
+  copyShareLink(roomLink.value);
+});
+
+document.querySelector('#close-room').addEventListener('click', () => {
+  if (roomClosing) return;
+  if (!roomSend({ type: 'room-expired' })) {
+    notice.className = 'notice';
+    notice.textContent = 'The room is reconnecting. Wait for it to reconnect, then close it again.';
+    roomStateLabel.textContent = 'reconnecting';
+    return;
+  }
+
+  roomClosing = true;
+  roomStateLabel.textContent = 'closing';
+  setTimeout(() => {
+    if (roomClosing) clearRoomSession();
+  }, 1_500);
+});
+
+const savedRoom = roomSession();
+if (savedRoom && savedRoom.expiresAt > Date.now()) connectHostRoom(savedRoom);
+else if (savedRoom) clearRoomSession();
