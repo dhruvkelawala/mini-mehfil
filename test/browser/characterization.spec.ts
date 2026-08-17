@@ -600,6 +600,106 @@ test('a listener joins, resumes, renders synchronized lyrics, and stops on expir
   expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
 });
 
+test('listener playback advances its progress, lyrics, and record between room updates', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const media = window as typeof window & {
+      __mediaCurrentTime?: number;
+      __mediaPaused?: boolean;
+    };
+    media.__mediaCurrentTime = 0;
+    media.__mediaPaused = true;
+    Object.defineProperties(HTMLMediaElement.prototype, {
+      currentTime: {
+        configurable: true,
+        get: () => media.__mediaCurrentTime ?? 0,
+        set: (value: number) => {
+          media.__mediaCurrentTime = value;
+        },
+      },
+      duration: { configurable: true, get: () => 120 },
+      paused: { configurable: true, get: () => media.__mediaPaused ?? true },
+      ended: { configurable: true, get: () => false },
+      readyState: { configurable: true, get: () => 4 },
+    });
+    HTMLMediaElement.prototype.play = function () {
+      media.__mediaPaused = false;
+      this.dispatchEvent(new Event('play'));
+      return Promise.resolve();
+    };
+    HTMLMediaElement.prototype.pause = function () {
+      media.__mediaPaused = true;
+      this.dispatchEvent(new Event('pause'));
+    };
+  });
+  await installWebSocketHarness(page);
+  await page.goto('/r/ABCDEFGH');
+  await page.getByLabel('Your name').fill('Listener');
+  await page.getByRole('button', { name: 'Join the mehfil' }).click();
+  await page.evaluate(() => {
+    const fixtureWindow = window as typeof window & {
+      __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
+    };
+    fixtureWindow.__mehfilSockets[0]?.serverMessage({
+      type: 'snapshot',
+      state: {
+        hostPresent: true,
+        listenerCount: 1,
+        queue: [],
+        currentRecording: null,
+        currentSong: {
+          shareId: 'abcdefghijklmnop',
+          title: 'Four-line Song',
+          language: 'Hindi',
+          startedAt: 1,
+          playback: {
+            status: 'playing',
+            positionMs: 0,
+            changedAt: Date.now(),
+          },
+          lyrics: {
+            title: 'Four-line Song',
+            language: 'Hindi',
+            nativeScriptName: 'Devanagari',
+            isLatinScript: false,
+            lyricsNative:
+              '[Verse]\nपहली पंक्ति\nदूसरी पंक्ति\nतीसरी पंक्ति\nचौथी पंक्ति',
+            lyricsRoman:
+              '[Verse]\nPehli pankti\nDoosri pankti\nTeesri pankti\nChauthi pankti',
+          },
+        },
+        setlist: [],
+      },
+    });
+  });
+  const audio = page.locator('audio');
+  await audio.evaluate((element) =>
+    element.dispatchEvent(new Event('loadedmetadata')),
+  );
+  await expect(page.getByText('Playing with the host')).toBeVisible();
+
+  await page.evaluate(() => {
+    (
+      window as typeof window & { __mediaCurrentTime?: number }
+    ).__mediaCurrentTime = 70;
+  });
+
+  await expect(
+    page.getByRole('progressbar', { name: 'Song progress' }),
+  ).toHaveAttribute('aria-valuenow', '70');
+  await expect(page.getByText('1:10 / 2:00')).toBeVisible();
+  await expect(page.locator('.lyric-primary')).not.toHaveText('पहली पंक्ति');
+  await expect(page.locator('.record-mark')).toHaveText('M');
+  await expect
+    .poll(() =>
+      page
+        .locator('.record')
+        .evaluate((element) => getComputedStyle(element).animationPlayState),
+    )
+    .toBe('running');
+});
+
 test('the browser does not expose the token outside the paid request body', async ({
   page,
 }) => {
