@@ -31,8 +31,8 @@ The share lifecycle rule applies to both the MP3 and JSON object, so expired sha
 fail with the same polite missing-song page. Change the retention period to suit
 the account's storage budget. The separate `jobs/` prefix rule must remain at one
 day or less because recovered MiniMax source URLs expire after 24 hours. Job JSON
-contains only the version, job ID, state/timestamps, finished source and optional
-trace ID, or a stable public failure. It never contains a MiniMax token, prompt,
+contains only the version, job ID, state/timestamps, finished source, optional
+trace ID and normalized section timing, or a stable public failure. It never contains a MiniMax token, prompt,
 lyrics, request headers, raw upstream error, or public share metadata.
 Pending is an execution state, not a day-long outcome: after five minutes without
 a terminal checkpoint, the Worker atomically records a stable interrupted failure.
@@ -57,9 +57,15 @@ npm start
 1. Make a real song on the production app and press **Share**. Confirm the copied
    URL uses the production Vercel origin with an `/s/` path and does not contain
    the MiniMax token or Worker hostname.
-2. Open the share URL in a private desktop window and on a phone. Tap once to
-   play, seek to the middle, and confirm the native and romanized lyrics advance.
-3. Verify a byte-range response against the copied URL's `/audio` suffix:
+2. Open a timed share URL in a private desktop window and on a phone. Confirm it
+   says **Section timing from MiniMax analysis**, shows the whole matching native
+   and romanized section at verse/chorus boundaries, clears stale sung lyrics for
+   an instrumental or quiet span, and updates immediately after a backward seek.
+3. Open an older untimed share (or force a provider-duration mismatch in a test
+   deployment). Confirm it says **Atmospheric reveal · timing is approximate**
+   and retains the original cumulative lyric reveal rather than stretching or
+   guessing section boundaries.
+4. Verify a byte-range response against the copied URL's `/audio` suffix:
 
    ```bash
    curl --fail --silent --show-error \
@@ -71,16 +77,16 @@ npm start
 
    Expect `206 Partial Content`, `Accept-Ranges: bytes`, and a matching
    `Content-Range` header.
-4. Run `npx wrangler r2 bucket lifecycle list mini-mehfil-shares` and verify the
+5. Run `npx wrangler r2 bucket lifecycle list mini-mehfil-shares` and verify the
    expiration rules cover `shares/` and retain `jobs/` no longer than one day. For a non-production expiration
    smoke test, temporarily use a short lifecycle, wait for R2's lifecycle window,
    and confirm the link returns the “left the mehfil” page before restoring the
    production retention period.
-5. On a physical iPhone, begin generation and background Safari for at least 60
+6. On a physical iPhone, begin generation and background Safari for at least 60
    seconds after lyrics finish. Return, then repeat with a refresh and with Chrome
    on iPhone. The same recording should load through status recovery, with exactly
    one MiniMax music-generation call for its job ID.
-6. Temporarily make status storage unavailable after a claim. The tab should keep
+7. Temporarily make status storage unavailable after a claim. The tab should keep
    its checkpoint, offer **Check generation**, and never POST generation again.
    Inspect the R2 job and logs to confirm no token, prompt, lyrics, request body,
    or signed URL query appears outside the private completed `source` field.

@@ -15,6 +15,24 @@ const SONG = {
   lyricsNative: '[Verse]\nઆ સાંજ ધીમે',
   lyricsRoman: '[Verse]\naa saanj dhime'
 };
+const TIMED_SONG = {
+  ...SONG,
+  lyricsNative: '[Verse]\nપહેલી પંક્તિ\n[Chorus]\nધ્રુવ પંક્તિ\n[Interlude]\nવાદ્ય\n[Verse 2]\nબીજી પંક્તિ',
+  lyricsRoman: '[Verse]\npaheli pankti\n[Chorus]\ndhruv pankti\n[Interlude]\nvaadya\n[Verse 2]\nbiji pankti',
+  lyricTiming: {
+    version: 1,
+    mode: 'minimax-section-asr',
+    durationSeconds: 80,
+    segments: [
+      { start: 0, end: 20, label: 'verse', providerDetail: 'drop-me' },
+      { start: 20, end: 40, label: 'chorus' },
+      { start: 40, end: 50, label: 'silence' },
+      { start: 50, end: 60, label: 'inst' },
+      { start: 60, end: 80, label: 'verse' }
+    ],
+    rawAsr: 'do-not-serialize'
+  }
+};
 
 function memoryStorage() {
   const shares = new Map();
@@ -125,12 +143,126 @@ test('upload to playback round trip preserves title, language, and both lyric sc
   assert.match(html, /property="og:audio:type" content="audio\/mpeg"/);
   assert.match(html, /name="twitter:card" content="player"/);
   assert.match(html, /name="twitter:image" content="https:\/\/share\.example\/preview\.png"/);
+  assert.match(html, /Atmospheric reveal · timing is approximate/);
 
   const audio = await handle(new Request(`https://share.example/s/${ID}/audio`));
   assert.equal(audio.status, 200);
   assert.equal(audio.headers.get('content-type'), 'audio/mpeg');
   assert.equal(audio.headers.get('x-content-type-options'), 'nosniff');
   assert.deepEqual(new Uint8Array(await audio.arrayBuffer()), new Uint8Array([73, 68, 51]));
+});
+
+test('a stored share from before timing metadata still uses the approximate reveal', async () => {
+  const storage = memoryStorage();
+  await storage.put(ID, {
+    audio: new Uint8Array([73, 68, 51]).buffer,
+    contentType: 'audio/mpeg',
+    metadata: SONG
+  });
+  const handle = createShareHandler({ storage });
+  const page = await handle(new Request(`https://share.example/s/${ID}`));
+  const html = await page.text();
+  assert.equal(page.status, 200);
+  assert.match(html, /Atmospheric reveal · timing is approximate/);
+  const dataText = html.match(/<script id="song-data" type="application\/json">([^<]+)<\/script>/)?.[1];
+  assert.equal(JSON.parse(dataText).timeline, null);
+});
+
+test('timed uploads are normalized in storage and rendered as safe section-synchronized pages', async () => {
+  const storage = memoryStorage();
+  let stored;
+  const originalPut = storage.put;
+  storage.put = async (id, value) => { stored = value; await originalPut(id, value); };
+  const handle = createShareHandler({ storage, idGenerator: () => ID, uploadSecret: SECRET });
+
+  const upload = await handle(uploadRequest(undefined, TIMED_SONG));
+  assert.equal(upload.status, 201);
+  assert.deepEqual(stored.metadata.lyricTiming, {
+    version: 1,
+    mode: 'minimax-section-asr',
+    durationSeconds: 80,
+    segments: [
+      { start: 0, end: 20, label: 'verse' },
+      { start: 20, end: 40, label: 'chorus' },
+      { start: 40, end: 50, label: 'silence' },
+      { start: 50, end: 60, label: 'inst' },
+      { start: 60, end: 80, label: 'verse' }
+    ]
+  });
+
+  const page = await handle(new Request(`https://share.example/s/${ID}`));
+  const html = await page.text();
+  const dataText = html.match(/<script id="song-data" type="application\/json">([^<]+)<\/script>/)?.[1];
+  assert.ok(dataText, 'sanitized song data is serialized');
+  const data = JSON.parse(dataText);
+  assert.deepEqual(Object.keys(data).sort(), ['expectedDurationSeconds', 'lines', 'sections', 'timeline']);
+  assert.equal(data.expectedDurationSeconds, 80);
+  assert.equal(data.timeline.length, 5);
+  assert.equal(data.sections.length, 4);
+  assert.match(html, /Section timing from MiniMax analysis/);
+  assert.match(html, /lyric-section-current/);
+  assert.match(html, /aria-current/);
+  assert.match(html, /Math\.max\(1,audio\.duration\*\.02\)/);
+  assert.match(html, /activeTimelineEntry/);
+  assert.doesNotMatch(html, /rawAsr|providerDetail|do-not-serialize|drop-me|cover_feature|trace_id|formatted_lyrics/);
+  assert.doesNotMatch(html, /music_cover_preprocess|music_generation/);
+  const inlineScript = html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/)?.[1];
+  assert.doesNotThrow(() => new Function(inlineScript));
+});
+
+test('share metadata rejects malformed timing and accepts the maximum compact timing contract within 16 KiB', async () => {
+  const invalidTiming = [
+    { ...TIMED_SONG.lyricTiming, segments: [{ start: 0, end: 81, label: 'verse' }] },
+    { ...TIMED_SONG.lyricTiming, segments: [{ start: 0, end: 40, label: 'verse' }, { start: 39, end: 60, label: 'chorus' }] },
+    { ...TIMED_SONG.lyricTiming, segments: [{ start: 0, end: 20, label: 'hook' }] },
+    { ...TIMED_SONG.lyricTiming, segments: Array.from({ length: 65 }, (_, index) => ({ start: index, end: index + 1, label: 'verse' })) }
+  ];
+  for (const lyricTiming of invalidTiming) {
+    const handle = createShareHandler({ storage: memoryStorage(), idGenerator: () => ID, uploadSecret: SECRET });
+    const response = await handle(uploadRequest(undefined, { ...SONG, lyricTiming }));
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, 'Invalid song details.');
+  }
+
+  const maximum = {
+    ...SONG,
+    lyricsNative: 'n'.repeat(5000),
+    lyricsRoman: 'r'.repeat(5000),
+    lyricTiming: {
+      version: 1,
+      mode: 'minimax-section-asr',
+      durationSeconds: 320,
+      segments: Array.from({ length: 64 }, (_, index) => ({ start: index * 5, end: index * 5 + 5, label: 'verse' }))
+    }
+  };
+  const encodedSize = JSON.stringify(maximum).length;
+  assert.ok(encodedSize < 16 * 1024, `maximum compact metadata measured ${encodedSize} characters`);
+  const handle = createShareHandler({ storage: memoryStorage(), idGenerator: () => ID, uploadSecret: SECRET });
+  assert.equal((await handle(uploadRequest(undefined, maximum))).status, 201);
+});
+
+test('shared playback suppresses a structurally mismatched romanization without losing native lyrics', async () => {
+  const handle = createShareHandler({
+    storage: memoryStorage(),
+    idGenerator: () => ID,
+    uploadSecret: SECRET
+  });
+  const malformed = {
+    ...SONG,
+    lyricsNative: '[Verse]\nપહેલી પંક્તિ\nબીજી પંક્તિ\n[Chorus]\nધ્રુવ પંક્તિ',
+    lyricsRoman: '[Verse]\nBAD_ROMAN_FIRST\n[Chorus]\nBAD_ROMAN_CHORUS'
+  };
+
+  const upload = await handle(uploadRequest(undefined, malformed));
+  assert.equal(upload.status, 201);
+  const page = await handle(new Request(`https://share.example/s/${ID}`));
+  const html = await page.text();
+
+  assert.equal(page.status, 200);
+  assert.match(html, /પહેલી પંક્તિ/);
+  assert.match(html, /બીજી પંક્તિ/);
+  assert.match(html, /ધ્રુવ પંક્તિ/);
+  assert.doesNotMatch(html, /BAD_ROMAN_FIRST|BAD_ROMAN_CHORUS/);
 });
 
 test('rejects audio over 10 MB', async () => {
@@ -219,6 +351,7 @@ test('stored metadata is whitelisted and never includes credentials', async () =
   assert.equal(response.status, 201);
   assert.equal(stored.metadata.token, undefined);
   assert.equal(stored.metadata.apiKey, undefined);
+  assert.equal(stored.metadata.lyricTiming, null);
   assert.doesNotMatch(JSON.stringify(stored.metadata), /secret/);
 });
 
@@ -284,6 +417,79 @@ test('generation job completion is whitelisted, conditional, and idempotent', as
   assert.equal(value.prompt, undefined);
   assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body }))).status, 200);
   assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body: { status: 'failed', error: { code: 'GENERATION_FAILED', message: 'No song.' } } }))).status, 409);
+});
+
+test('generation jobs normalize, persist, return, and compare optional lyric timing', async () => {
+  const storage = memoryStorage();
+  const handle = createShareHandler({ storage, uploadSecret: SECRET, now: () => Date.parse('2026-08-15T12:00:00Z') });
+  await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST' }));
+  const lyricTiming = {
+    version: 1,
+    mode: 'minimax-section-asr',
+    durationSeconds: 60,
+    segments: [
+      { start: 0, end: 20, label: 'intro', unknown: 'drop-me' },
+      { start: 20, end: 60, label: 'verse' }
+    ],
+    raw: 'drop-me'
+  };
+  const body = { status: 'complete', source: 'https://cdn.example/song.mp3', lyricTiming };
+  const completed = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body }));
+  assert.equal(completed.status, 200);
+  const value = await completed.json();
+  assert.deepEqual(value.lyricTiming, {
+    version: 1,
+    mode: 'minimax-section-asr',
+    durationSeconds: 60,
+    segments: [{ start: 0, end: 20, label: 'intro' }, { start: 20, end: 60, label: 'verse' }]
+  });
+  assert.equal(value.raw, undefined);
+  assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body }))).status, 200);
+
+  const differentTiming = {
+    ...body,
+    lyricTiming: { ...lyricTiming, segments: [{ start: 0, end: 60, label: 'chorus' }] }
+  };
+  assert.equal((await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, { method: 'PUT', body: differentTiming }))).status, 409);
+});
+
+test('generation jobs omit absent timing and reject malformed timing without transitioning', async () => {
+  const storage = memoryStorage();
+  const handle = createShareHandler({ storage, uploadSecret: SECRET, now: () => Date.parse('2026-08-15T12:00:00Z') });
+  await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}/claim`, { method: 'POST' }));
+
+  const malformed = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, {
+    method: 'PUT',
+    body: {
+      status: 'complete',
+      source: 'https://cdn.example/song.mp3',
+      lyricTiming: {
+        version: 1,
+        mode: 'minimax-section-asr',
+        durationSeconds: 30,
+        segments: [{ start: 0, end: 31, label: 'verse' }]
+      }
+    }
+  }));
+  assert.equal(malformed.status, 400);
+  assert.equal((await storage.getJob(IDEMPOTENCY_KEY)).record.status, 'pending');
+
+  const failedWithTiming = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, {
+    method: 'PUT',
+    body: {
+      status: 'failed',
+      error: { code: 'FAILED', message: 'Failed.' },
+      lyricTiming: { version: 1, mode: 'minimax-section-asr', durationSeconds: 1, segments: [{ start: 0, end: 1, label: 'verse' }] }
+    }
+  }));
+  assert.equal(failedWithTiming.status, 400);
+  assert.equal((await storage.getJob(IDEMPOTENCY_KEY)).record.status, 'pending');
+
+  const completed = await handle(jobRequest(`/generation-jobs/${IDEMPOTENCY_KEY}`, {
+    method: 'PUT', body: { status: 'complete', source: 'https://cdn.example/song.mp3' }
+  }));
+  assert.equal(completed.status, 200);
+  assert.equal((await completed.json()).lyricTiming, undefined);
 });
 
 test('generation jobs reject non-HTTPS and malformed audio sources', async () => {

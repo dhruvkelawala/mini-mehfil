@@ -1,4 +1,5 @@
 import { playbackPage } from './playback-page.mjs';
+import { normalizeLyricTiming } from '../public/lyric-sync.mjs';
 
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 const MAX_REQUEST_BYTES = MAX_AUDIO_BYTES + 128 * 1024;
@@ -100,6 +101,12 @@ function validateMetadata(raw) {
     return entry;
   };
 
+  let lyricTiming = null;
+  if (Object.hasOwn(value, 'lyricTiming') && value.lyricTiming !== null) {
+    lyricTiming = normalizeLyricTiming(value.lyricTiming);
+    if (!lyricTiming) throw new Error('Invalid song details.');
+  }
+
   const metadata = {
     title: text('title', 120, true),
     language: text('language', 80, true),
@@ -107,6 +114,7 @@ function validateMetadata(raw) {
     isLatinScript: Boolean(value.isLatinScript),
     lyricsNative: text('lyricsNative', 5000, true),
     lyricsRoman: text('lyricsRoman', 5000, true),
+    lyricTiming,
     createdAt: new Date().toISOString()
   };
   return metadata;
@@ -135,6 +143,7 @@ function validAudioSource(source) {
 
 function validStoredJob(value, jobId) {
   if (!value || value.version !== JOB_VERSION || value.jobId !== jobId || !['pending', 'complete', 'failed'].includes(value.status)) return null;
+  if (value.status !== 'complete' && Object.hasOwn(value, 'lyricTiming')) return null;
   if (![value.createdAt, value.updatedAt, value.expiresAt].every(entry => typeof entry === 'string' && Number.isFinite(Date.parse(entry)))) return null;
   const record = {
     version: JOB_VERSION,
@@ -148,6 +157,11 @@ function validStoredJob(value, jobId) {
     if (!validAudioSource(value.source)) return null;
     record.source = value.source;
     if (typeof value.traceId === 'string' && /^[A-Za-z0-9._:-]{1,200}$/.test(value.traceId)) record.traceId = value.traceId;
+    if (Object.hasOwn(value, 'lyricTiming')) {
+      const lyricTiming = normalizeLyricTiming(value.lyricTiming);
+      if (!lyricTiming) return null;
+      record.lyricTiming = lyricTiming;
+    }
   }
   if (value.status === 'failed') {
     if (!value.error || typeof value.error.code !== 'string' || typeof value.error.message !== 'string') return null;
@@ -173,9 +187,15 @@ function terminalJob(current, input, now) {
       const traceId = input.traceId.trim();
       if (/^[A-Za-z0-9._:-]{1,200}$/.test(traceId)) base.traceId = traceId;
     }
+    if (Object.hasOwn(input, 'lyricTiming')) {
+      const lyricTiming = normalizeLyricTiming(input.lyricTiming);
+      if (!lyricTiming) throw Object.assign(new Error('Valid lyric timing is required.'), { status: 400 });
+      base.lyricTiming = lyricTiming;
+    }
     return base;
   }
   if (input?.status === 'failed') {
+    if (Object.hasOwn(input, 'lyricTiming')) throw Object.assign(new Error('Lyric timing is only allowed for completed jobs.'), { status: 400 });
     const code = typeof input.error?.code === 'string' ? input.error.code.trim().slice(0, 80) : '';
     const message = typeof input.error?.message === 'string' ? input.error.message.trim().slice(0, 500) : '';
     if (!code || !message) throw Object.assign(new Error('A stable public error is required.'), { status: 400 });
@@ -187,6 +207,7 @@ function terminalJob(current, input, now) {
 
 function sameTerminal(left, right) {
   return left.status === right.status && left.source === right.source && left.traceId === right.traceId &&
+    JSON.stringify(left.lyricTiming) === JSON.stringify(right.lyricTiming) &&
     left.error?.code === right.error?.code && left.error?.message === right.error?.message;
 }
 

@@ -198,6 +198,9 @@ input::placeholder { color: #b3a08a; opacity: 1; }
 .performance-timing { display: block; margin: 4px 0 14px; color: #cfbda8; font-size: 10px; font-style: italic; letter-spacing: .03em; text-align: center; }
 .performance-timing[hidden] { display: none; }
 .performance .reveal-lines { max-height: max(140px, min(52svh, 430px, calc(100svh - 340px))); font-size: clamp(18px, 2.3vw, 25px); line-height: 1.55; text-align: center; }
+.lyric-section { display: block; padding: .25em .55em; border-radius: 5px; transition: background .25s, box-shadow .25s, opacity .25s; }
+.lyric-section + .lyric-section { margin-top: .7em; }
+.lyric-section-current { background: rgba(230,166,83,.09); box-shadow: inset 0 0 0 1px rgba(230,166,83,.18); }
 .lyric-line { display: block; color: rgba(249,237,218,.78); transition: color .35s, text-shadow .35s, transform .35s; }
 .lyric-line[hidden] { display: none; }
 .lyric-line + .lyric-line { margin-top: .2em; }

@@ -8,10 +8,12 @@ const MAX_SHARE_AUDIO_BYTES = 10 * 1024 * 1024;
 const JOB_ID_PATTERN = /^[A-Za-z0-9_-]{24}$/;
 const RECOVERY_TIMEOUT_MS = 15 * 1000;
 const GENERATION_TIMEOUT_MS = 4 * 60 * 1000;
+const ANALYSIS_TIMEOUT_MS = 30 * 1000;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon'
@@ -59,6 +61,55 @@ function audioSource(result) {
     const url = new URL(source);
     return url.protocol === 'https:' && !url.username && !url.password ? source : null;
   } catch { return null; }
+}
+
+let lyricTimingNormalizerPromise;
+function loadLyricTimingNormalizer() {
+  lyricTimingNormalizerPromise = lyricTimingNormalizerPromise || import('./public/lyric-sync.mjs')
+    .then(module => module.normalizeLyricTiming);
+  return lyricTimingNormalizerPromise;
+}
+
+async function analyzeLyricTiming({ source, token, apiBase, fetchImpl, timeoutMs }) {
+  try {
+    const audioUrl = new URL(source);
+    if (audioUrl.protocol !== 'https:' || audioUrl.username || audioUrl.password) return null;
+  } catch {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(`${apiBase}/v1/music_cover_preprocess`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'music-cover', audio_url: source }),
+      signal: controller.signal
+    });
+    if (!response.ok) return null;
+
+    let value;
+    try { value = JSON.parse(await response.text()); } catch { return null; }
+    if (value?.base_resp?.status_code || typeof value?.structure_result !== 'string') return null;
+
+    let structure;
+    try { structure = JSON.parse(value.structure_result); } catch { return null; }
+    const normalizeLyricTiming = await loadLyricTimingNormalizer();
+    return normalizeLyricTiming({
+      version: 1,
+      mode: 'minimax-section-asr',
+      durationSeconds: value.audio_duration,
+      segments: structure?.segments
+    });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function readLimitedBody(response, limit) {
@@ -111,6 +162,7 @@ function completedGeneration(record) {
     share_ref: record.jobId
   };
   if (record.traceId) result.trace_id = record.traceId;
+  if (record.lyricTiming) result.lyric_timing = record.lyricTiming;
   return result;
 }
 
@@ -170,6 +222,7 @@ function createServer(options = {}) {
   const shareSecret = String(options.shareSecret ?? process.env.MEHFIL_SHARE_SECRET ?? '').trim();
   const sharingConfigured = Boolean(shareBaseUrl && shareSecret);
   const generationTimeoutMs = options.generationTimeoutMs ?? GENERATION_TIMEOUT_MS;
+  const analysisTimeoutMs = options.analysisTimeoutMs ?? ANALYSIS_TIMEOUT_MS;
   const sharedUrls = new Map();
 
   async function recoveryRequest(pathname, { method = 'GET', body } = {}) {
@@ -307,6 +360,7 @@ function createServer(options = {}) {
         const text = await upstream.text();
         let result;
         try { result = JSON.parse(text); } catch { result = { error: text || 'MiniMax returned an unreadable response.' }; }
+        if (result && typeof result === 'object') delete result.lyric_timing;
 
         if (!upstream.ok || result?.base_resp?.status_code) {
           const message = result?.base_resp?.status_msg || result?.error?.message || result?.error || `MiniMax request failed (${upstream.status})`;
@@ -321,14 +375,20 @@ function createServer(options = {}) {
           return sendJson(res, 502, { error: failure.message });
         }
         audioReady = true;
+        const lyricTiming = await analyzeLyricTiming({
+          source, token, apiBase, fetchImpl, timeoutMs: analysisTimeoutMs
+        });
         if (claimedJobId) {
           const traceId = result?.trace_id || result?.traceId || result?.data?.trace_id;
           const checkpoint = await checkpointComplete(claimedJobId, {
-            status: 'complete', source, ...(typeof traceId === 'string' ? { traceId } : {})
+            status: 'complete', source,
+            ...(typeof traceId === 'string' ? { traceId } : {}),
+            ...(lyricTiming ? { lyricTiming } : {})
           });
           if (!checkpoint) return sendJson(res, 503, { error: 'Your recording finished, but its recovery checkpoint could not be saved. Start a new song when you are ready.' });
           return sendJson(res, 200, completedGeneration(checkpoint));
         }
+        if (lyricTiming) result.lyric_timing = lyricTiming;
         return sendJson(res, 200, result);
       } catch (error) {
         if (error.name === 'AbortError') {
@@ -378,7 +438,8 @@ function createServer(options = {}) {
           nativeScriptName: typeof body.nativeScriptName === 'string' ? body.nativeScriptName : '',
           isLatinScript: Boolean(body.isLatinScript),
           lyricsNative: typeof body.lyricsNative === 'string' ? body.lyricsNative : '',
-          lyricsRoman: typeof body.lyricsRoman === 'string' ? body.lyricsRoman : ''
+          lyricsRoman: typeof body.lyricsRoman === 'string' ? body.lyricsRoman : '',
+          lyricTiming: recovered.value.lyricTiming ?? null
         };
 
         let audio = decodeAudioSource(entry.source);

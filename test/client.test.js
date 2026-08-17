@@ -9,6 +9,7 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'),
 const recovery = fs.readFileSync(path.join(__dirname, '..', 'public', 'generation-recovery.js'), 'utf8');
 const diagnostics = fs.readFileSync(path.join(__dirname, '..', 'public', 'media-diagnostics.js'), 'utf8');
 const playbackPage = fs.readFileSync(path.join(__dirname, '..', 'share', 'playback-page.mjs'), 'utf8');
+const executableApp = app.replace(/^import .*?;\n\n/, '');
 
 function functionBody(name) {
   const start = app.indexOf(`function ${name}(`);
@@ -121,7 +122,7 @@ function browserHarness({ deferFirstLyrics = false } = {}) {
     headers: { get() { return 'application/json'; } },
     async json() { return value; }
   });
-  vm.runInNewContext(app, {
+  vm.runInNewContext(executableApp, {
     Blob, console, document, fetch: async url => {
       if (url === '/api/write-lyrics') {
         state.writeLyricsPosts += 1;
@@ -141,7 +142,20 @@ function browserHarness({ deferFirstLyrics = false } = {}) {
     },
     Intl, performance: { now: () => 0 }, Promise, setInterval: () => 1,
     clearInterval() {}, setTimeout: () => 1, sessionStorage: {}, URL: TestURL,
-    Uint8Array, window
+    Uint8Array, window,
+    parseLyricSheet(sheet) {
+      const primary = String(sheet?.lyricsNative || sheet?.lyricsRoman || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean);
+      return {
+        lines: primary.map(line => ({
+          cue: /^\[.+\]$/.test(line),
+          primary: line,
+          secondary: ''
+        }))
+      };
+    }
   }, { filename: 'public/app.js' });
 
   return {
@@ -223,6 +237,38 @@ test('the opt-in diagnostic panel loads before the application', () => {
   assert.match(html, /id="media-diagnostics-download"/);
   assert.ok(html.indexOf('/media-diagnostics.js') < html.indexOf('/app.js'));
   assert.ok(html.indexOf('/generation-recovery.js') < html.indexOf('/app.js'));
+  assert.match(html, /<script type="module" src="\/app\.js"><\/script>/);
+  assert.match(app, /^import \{ parseLyricSheet, buildSectionTimeline, activeTimelineEntry \} from ['"]\.\/lyric-sync\.mjs['"];$/m);
+});
+
+test('local playback uses section timing from the media clock with an explicit approximate fallback', () => {
+  const render = functionBody('renderPlaybackLyrics');
+  const fallback = functionBody('renderApproximatePlaybackLyrics');
+  const timed = functionBody('renderSectionPlaybackLyrics');
+  const metadata = app.slice(app.indexOf("audio.addEventListener('loadedmetadata'"), app.indexOf("seek.addEventListener('input'"));
+
+  assert.match(render, /sectionTimelineValidated[\s\S]*renderSectionPlaybackLyrics\(\)/);
+  assert.match(render, /renderApproximatePlaybackLyrics\(\)/);
+  assert.match(fallback, /audio\.duration \* \.9/);
+  assert.match(fallback, /Math\.ceil\(progress \* spokenLineCount\)/);
+  assert.match(timed, /activeTimelineEntry\(sectionTimeline, audio\.currentTime\)/);
+  assert.match(timed, /lyric-section-current/);
+  assert.match(timed, /aria-current/);
+  assert.match(timed, /Instrumental/);
+  assert.match(timed, /Pause/);
+  assert.doesNotMatch(timed, /setTimeout|setInterval|pacedDuration|Math\.ceil/);
+  assert.match(metadata, /Math\.max\(1, audio\.duration \* \.02\)/);
+  assert.match(metadata, /renderPlaybackLyrics\(\)/);
+  assert.match(app, /Section timing from MiniMax analysis/);
+  assert.match(app, /Atmospheric reveal · timing is approximate/);
+});
+
+test('local timing is generation-scoped and never enters the browser share payload', () => {
+  assert.match(functionBody('resetPeek'), /parsedLyricSheet\s*=\s*null[\s\S]*clearSectionTimeline\(\)/);
+  assert.match(functionBody('clearLoadedSong'), /clearSectionTimeline\(\)/);
+  assert.match(functionBody('finalizeGeneration'), /result\.lyric_timing/);
+  const shareHandler = app.slice(app.indexOf("shareButton.addEventListener('click'"));
+  assert.doesNotMatch(shareHandler, /lyricTiming|lyric_timing/);
 });
 
 test('generation recovery is wired without retrying the paid request', () => {

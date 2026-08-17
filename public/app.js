@@ -1,3 +1,5 @@
+import { parseLyricSheet, buildSectionTimeline, activeTimelineEntry } from './lyric-sync.mjs';
+
 const form = document.querySelector('#song-form');
 const tokenInput = document.querySelector('#token');
 const ideaInput = document.querySelector('#idea');
@@ -38,6 +40,8 @@ const diagnostics = window.MehfilMediaDiagnostics || {
   snapshot() { return null; }, redactUrl() { return '[diagnostics unavailable]'; }
 };
 const recoveryApi = window.MehfilGenerationRecovery;
+const APPROXIMATE_TIMING_COPY = 'Atmospheric reveal · timing is approximate';
+const SECTION_TIMING_COPY = 'Section timing from MiniMax analysis';
 
 const writingLines = [
   'Listening to your idea…',
@@ -56,6 +60,10 @@ const recordingLines = [
 let waitingTimer;
 let objectUrl;
 let lyricSheet = null;
+let parsedLyricSheet = null;
+let sectionTimeline = null;
+let sectionTimelineValidated = false;
+let expectedTimingDuration = null;
 let hasRevealed = false;
 let generating = false;
 let typingRun = 0;
@@ -67,6 +75,18 @@ let performanceOpener = null;
 let generationRequestInFlight = false;
 let lifecycleBackgroundVersion = 0;
 const foregroundWaiters = [];
+
+function clearSectionTimeline() {
+  sectionTimeline = null;
+  sectionTimelineValidated = false;
+  expectedTimingDuration = null;
+  delete revealLines.dataset.timelineEntry;
+}
+
+function cacheLyricSheet(sheet) {
+  lyricSheet = sheet;
+  parsedLyricSheet = parseLyricSheet(sheet);
+}
 
 function updateClock() {
   document.querySelector('#clock').textContent = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(new Date()).toLowerCase();
@@ -110,6 +130,8 @@ revealButton.addEventListener('click', () => {
 function resetPeek() {
   typingRun += 1;
   lyricSheet = null;
+  parsedLyricSheet = null;
+  clearSectionTimeline();
   hasRevealed = false;
   peek.hidden = true;
   lyricReveal.hidden = true;
@@ -164,6 +186,24 @@ function buildLyricLines(lines, mode) {
   revealLines.dataset.render = mode;
 }
 
+function createLyricSection(section, current = false) {
+  const element = document.createElement('span');
+  element.className = current ? 'lyric-section lyric-section-current' : 'lyric-section';
+  element.dataset.sectionIndex = String(section.index);
+  if (current) element.setAttribute('aria-current', 'true');
+  section.lines.forEach(line => element.append(createLyricLine(line)));
+  return element;
+}
+
+function buildLyricSections(currentSectionIndex = null) {
+  const fragment = document.createDocumentFragment();
+  parsedLyrics().sections.forEach(section => {
+    fragment.append(createLyricSection(section, section.index === currentSectionIndex));
+  });
+  revealLines.replaceChildren(fragment);
+  revealLines.dataset.render = 'sections-full';
+}
+
 function showFullLyrics() {
   typingRun += 1;
   const lines = lyricLines();
@@ -171,19 +211,12 @@ function showFullLyrics() {
 }
 
 function lyricLines() {
-  const roman = (lyricSheet?.lyricsRoman || '').split('\n').filter(line => line.trim());
-  const native = (lyricSheet?.lyricsNative || '').split('\n').filter(line => line.trim());
-  const useNative = !lyricSheet?.isLatinScript && native.length;
-  const primary = useNative ? native : roman;
-  return primary.map((primaryLine, index) => {
-    const romanLine = roman[index] || '';
-    const cue = /^\[.+\]$/.test(romanLine || primaryLine);
-    return {
-      cue,
-      primary: cue ? (romanLine || primaryLine) : primaryLine,
-      secondary: useNative && !cue && romanLine && romanLine !== primaryLine ? romanLine : ''
-    };
-  });
+  return parsedLyrics().lines;
+}
+
+function parsedLyrics() {
+  parsedLyricSheet = parsedLyricSheet || parseLyricSheet(lyricSheet);
+  return parsedLyricSheet;
 }
 
 function languageLabel() {
@@ -242,7 +275,16 @@ function renderPlaybackLyrics() {
   peek.hidden = true;
   lyricReveal.hidden = false;
   revealLanguage.textContent = languageLabel();
-  performanceTiming.hidden = hasRevealed;
+  performanceTiming.textContent = sectionTimelineValidated ? SECTION_TIMING_COPY : APPROXIMATE_TIMING_COPY;
+  performanceTiming.hidden = hasRevealed && !sectionTimelineValidated;
+  if (sectionTimelineValidated) {
+    renderSectionPlaybackLyrics();
+    return;
+  }
+  renderApproximatePlaybackLyrics();
+}
+
+function renderApproximatePlaybackLyrics() {
   if (hasRevealed) {
     if (revealLines.dataset.render !== 'full') showFullLyrics();
     return;
@@ -267,6 +309,45 @@ function renderPlaybackLyrics() {
     const isTrailingCue = spokenSeen === spokenLineCount;
     line.hidden = isTrailingCue ? shownSpokenCount < spokenLineCount : shownSpokenCount <= spokenSeen;
   });
+  revealLines.scrollTop = revealLines.scrollHeight;
+}
+
+function renderSectionPlaybackLyrics() {
+  const entry = activeTimelineEntry(sectionTimeline, audio.currentTime);
+  const entryKey = entry
+    ? `${entry.start}:${entry.end}:${entry.label}:${entry.sectionIndex}`
+    : 'gap';
+  const renderKey = `${hasRevealed ? 'full' : 'single'}:${entryKey}`;
+  if (revealLines.dataset.timelineEntry === renderKey) return;
+  revealLines.dataset.timelineEntry = renderKey;
+
+  if (hasRevealed) {
+    if (revealLines.dataset.render !== 'sections-full') buildLyricSections();
+    const renderedSections = [...revealLines.querySelectorAll('.lyric-section')];
+    renderedSections.forEach(section => {
+      const current = Boolean(entry && entry.sectionIndex !== null
+        && Number(section.dataset.sectionIndex) === entry.sectionIndex);
+      section.classList.toggle('lyric-section-current', current);
+      if (current) section.setAttribute('aria-current', 'true');
+      else section.removeAttribute('aria-current');
+    });
+    return;
+  }
+
+  const section = entry?.sectionIndex === null
+    ? null
+    : parsedLyrics().sections.find(value => value.index === entry?.sectionIndex);
+  if (section) {
+    revealLines.replaceChildren(createLyricSection(section, true));
+    revealLines.dataset.render = 'section-current';
+  } else if (entry?.label === 'inst' || entry?.label === 'silence') {
+    const label = entry.label === 'inst' ? 'Instrumental' : 'Pause';
+    revealLines.replaceChildren(createLyricLine({ cue: true, primary: `[${label}]`, secondary: '' }));
+    revealLines.dataset.render = 'section-cue';
+  } else {
+    revealLines.replaceChildren();
+    revealLines.dataset.render = 'section-gap';
+  }
   revealLines.scrollTop = revealLines.scrollHeight;
 }
 
@@ -363,6 +444,8 @@ function setShareLabel(label) {
 
 function clearLoadedSong() {
   generationRun += 1;
+  parsedLyricSheet = null;
+  clearSectionTimeline();
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = null;
   audio.pause();
@@ -400,8 +483,11 @@ async function attemptPlayback(trigger) {
 diagnostics.attachMedia(audio);
 diagnostics.setRetryHandler(() => { void attemptPlayback('diagnostic-retry'); });
 
-function loadSong(source, title, reference) {
+function loadSong(source, title, reference, lyricTiming) {
   if (objectUrl) URL.revokeObjectURL(objectUrl);
+  clearSectionTimeline();
+  sectionTimeline = buildSectionTimeline(parsedLyrics().sections, lyricTiming);
+  if (sectionTimeline) expectedTimingDuration = lyricTiming.durationSeconds;
   const isUrl = /^https?:\/\//i.test(source);
   objectUrl = isUrl ? null : decodeHexAudio(source);
   audio.src = isUrl ? source : objectUrl;
@@ -447,11 +533,11 @@ function finalizeGeneration(result, pending) {
     generationError('MiniMax succeeded but did not return an audio file.');
     return false;
   }
-  lyricSheet = pending.lyricSheet;
+  cacheLyricSheet(pending.lyricSheet);
   peek.hidden = false;
   checkGenerationButton.hidden = true;
   diagnostics.record('generation-recovery-complete', { jobIdPrefix: pending.jobId.slice(0, 6) });
-  loadSong(source, lyricSheet.title, result.share_ref || null);
+  loadSong(source, lyricSheet.title, result.share_ref || null, result.lyric_timing);
   recovery.clear();
   generating = false;
   updateScenePerformance();
@@ -512,7 +598,7 @@ function resumePendingGeneration(reason, pendingRecord = recovery.read()) {
   }
   generationRun += 1;
   const pending = { ...pendingRecord, run: generationRun };
-  lyricSheet = pending.lyricSheet;
+  cacheLyricSheet(pending.lyricSheet);
   performanceAvailable = true;
   generating = true;
   peek.hidden = false;
@@ -551,12 +637,12 @@ form.addEventListener('submit', async event => {
 
   try {
     setBusy(true, writingLines);
-    lyricSheet = await writeLyricsAcrossLifecycle({
+    cacheLyricSheet(await writeLyricsAcrossLifecycle({
       token: tokenInput.value,
       idea: ideaInput.value,
       vibe: vibeInput.value,
       language: languageSelect.value
-    });
+    }));
 
     // The words exist now. Offer the peek, then record whether or not it is taken.
     peek.hidden = false;
@@ -696,6 +782,17 @@ audio.addEventListener('timeupdate', () => {
 });
 audio.addEventListener('loadedmetadata', () => {
   timecode.textContent = `0:00 / ${formatTime(audio.duration)}`;
+  if (sectionTimeline) {
+    const tolerance = Math.max(1, audio.duration * .02);
+    if (!Number.isFinite(audio.duration)
+      || Math.abs(expectedTimingDuration - audio.duration) > tolerance) {
+      clearSectionTimeline();
+    } else {
+      sectionTimelineValidated = true;
+      delete revealLines.dataset.timelineEntry;
+    }
+  }
+  renderPlaybackLyrics();
 });
 seek.addEventListener('input', () => {
   if (audio.duration) {

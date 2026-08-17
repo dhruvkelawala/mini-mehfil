@@ -14,12 +14,12 @@ Then open [http://127.0.0.1:4173](http://127.0.0.1:4173) and paste your MiniMax 
 
 ## Cost
 
-Bring your own key. Lyrics cost roughly a tenth of a cent (MiniMax M3 text model); each recorded song is about **$0.15** (MiniMax Music 3). Both calls use the same key.
+Bring your own key. Lyrics cost roughly a tenth of a cent (MiniMax M3 text model); each recorded song is about **$0.15** (MiniMax Music 3). All MiniMax calls use the same key; no extra credential is needed for the best-effort section analysis that follows URL generation.
 
 ## Privacy
 
 - Your token lives only in the browser field. It is sent to the local Node proxy per request, forwarded to `api.minimax.io`, and never logged or stored.
-- Lyrics and prompts stay local unless you explicitly share a finished song. A share stores the MP3 and its lyric sheet in the configured R2 bucket until its lifecycle rule expires them.
+- Lyrics and prompts stay local unless you explicitly share a finished song. A share stores the MP3, its lyric sheet, and optional normalized section timing in the configured R2 bucket until its lifecycle rule expires them.
 - Generated MiniMax audio URLs expire after 24 hours; use **Save** to download tracks you want to keep. If the optional share Worker is configured, **Share** copies a production `/s/…` courtyard link after an explicit click.
 - Hosted deployments should configure the Worker so a finished recording can be recovered when iOS suspends the page or drops the original response. Recovery stores only a private 24-hour job checkpoint; it never stores the MiniMax token, prompt, or lyrics.
 
@@ -43,9 +43,9 @@ Sharing remains opt-in for each finished song. The proxy resolves a completed pr
 
 ## How it works
 
-- `server.js` — zero-dependency Node proxy. `POST /api/write-lyrics` asks MiniMax M3 (via their Anthropic-compatible endpoint) to turn your keywords into structured, singable lyrics in the detected language — native script for the singer, romanized for you to read. `POST /api/generate` sends the native-script lyrics plus an expanded production prompt to MiniMax Music 3.
+- `server.js` — zero-dependency Node proxy. `POST /api/write-lyrics` asks MiniMax M3 (via their Anthropic-compatible endpoint) to turn your keywords into structured, singable lyrics in the detected language — native script for the singer, romanized for you to read. `POST /api/generate` sends the native-script lyrics plus an expanded production prompt to MiniMax Music 3. When generation returns an HTTPS recording, the same key also requests best-effort MiniMax section analysis and keeps only validated intro, verse, chorus, bridge, outro, instrumental, and silence boundaries.
 - `lyricist.mjs` — everything provider-specific, quarantined in one file.
-- `public/` — one page, plain HTML/CSS/JS. The courtyard scene is a single hand-built SVG.
+- `public/` — one page, plain HTML/CSS/JS. The courtyard scene is a single hand-built SVG. Valid section timing follows the audio element's playback position; missing, mismatched, or unmappable timing retains the original atmospheric approximate reveal. This is section synchronization, not line- or word-level karaoke.
 
 ## Test
 
