@@ -20,6 +20,8 @@ npx wrangler deploy
 Use the same long, random value for the Worker secret and the local proxy's
 `MEHFIL_SHARE_SECRET`. The secret is server-only: never add it to browser code,
 HTML, a public environment file, or Wrangler's plaintext `vars` section.
+`MEHFIL_PUBLIC_URL` is a non-secret Worker variable set in `wrangler.jsonc`; it
+keeps playback metadata on the canonical production Vercel origin.
 
 Once a stable public PNG or JPEG is deployed, set `SHARE_PREVIEW_IMAGE_URL` as a
 Worker variable to its absolute HTTPS URL. Shared pages then include it in their
@@ -52,8 +54,9 @@ npm start
 
 ## Release smoke test
 
-1. Make a real song locally and press **Share**. Confirm the copied URL uses the
-   expected Worker origin and does not contain the MiniMax token.
+1. Make a real song on the production app and press **Share**. Confirm the copied
+   URL uses the production Vercel origin with an `/s/` path and does not contain
+   the MiniMax token or Worker hostname.
 2. Open the share URL in a private desktop window and on a phone. Tap once to
    play, seek to the middle, and confirm the native and romanized lyrics advance.
 3. Verify a byte-range response against the copied URL's `/audio` suffix:
@@ -63,7 +66,7 @@ npm start
      --header 'Range: bytes=0-1023' \
      --dump-header - \
      --output /dev/null \
-     https://mini-mehfil-share.example.workers.dev/s/SHARE_ID/audio
+     https://minimehfil.wtf/s/SHARE_ID/audio
    ```
 
    Expect `206 Partial Content`, `Accept-Ranges: bytes`, and a matching

@@ -85,6 +85,7 @@ test('upload to playback round trip preserves title, language, and both lyric sc
     storage: memoryStorage(),
     idGenerator: () => ID,
     uploadSecret: SECRET,
+    publicBaseUrl: 'https://minimehfil.wtf',
     previewImageUrl: 'https://share.example/preview.png'
   });
   const upload = await handle(uploadRequest());
@@ -118,8 +119,9 @@ test('upload to playback round trip preserves title, language, and both lyric sc
   assert.doesNotMatch(html, /share\.innerHTML/);
   assert.doesNotMatch(html, /<audio[^>]+controls/);
   assert.doesNotMatch(html, /class="courtyard"/);
-  assert.match(html, /property="og:url" content="https:\/\/share\.example\/s\/AbCdEfGhIjKlMnOp"/);
-  assert.match(html, /property="og:audio" content="https:\/\/share\.example\/s\/AbCdEfGhIjKlMnOp\/audio"/);
+  assert.match(html, /property="og:url" content="https:\/\/minimehfil\.wtf\/s\/AbCdEfGhIjKlMnOp"/);
+  assert.match(html, /property="og:audio" content="https:\/\/minimehfil\.wtf\/s\/AbCdEfGhIjKlMnOp\/audio"/);
+  assert.match(html, /href="https:\/\/minimehfil\.wtf">Make your own song/);
   assert.match(html, /property="og:audio:type" content="audio\/mpeg"/);
   assert.match(html, /name="twitter:card" content="player"/);
   assert.match(html, /name="twitter:image" content="https:\/\/share\.example\/preview\.png"/);

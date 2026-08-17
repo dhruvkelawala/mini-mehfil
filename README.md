@@ -20,7 +20,7 @@ Bring your own key. Lyrics cost roughly a tenth of a cent (MiniMax M3 text model
 
 - Your token lives only in the browser field. It is sent to the local Node proxy per request, forwarded to `api.minimax.io`, and never logged or stored.
 - Lyrics and prompts stay local unless you explicitly share a finished song. A share stores the MP3 and its lyric sheet in the configured R2 bucket until its lifecycle rule expires them.
-- Generated MiniMax audio URLs expire after 24 hours; use **Save** to download tracks you want to keep. If the optional share Worker is configured, **Share** copies a hosted courtyard link after an explicit click.
+- Generated MiniMax audio URLs expire after 24 hours; use **Save** to download tracks you want to keep. If the optional share Worker is configured, **Share** copies a production `/s/…` courtyard link after an explicit click.
 - Hosted deployments should configure the Worker so a finished recording can be recovered when iOS suspends the page or drops the original response. Recovery stores only a private 24-hour job checkpoint; it never stores the MiniMax token, prompt, or lyrics.
 
 ## Sharing and lifecycle-safe recovery
@@ -34,6 +34,8 @@ npm start
 ```
 
 Both variables are optional for local-only use, where synchronous generation continues to work normally. They are required together for lifecycle-safe hosted deployments: before the paid MiniMax call, the server atomically claims the browser's job ID in the Worker; it checkpoints the finished source before replying. A suspended or refreshed tab checks that same job instead of paying for another generation. If the Worker is not configured and the browser loses the response, the app explains that this deployment cannot recover it.
+
+On Vercel, `vercel.mjs` reads `MEHFIL_SHARE_URL` at build time and reverse-proxies `/s/:path*` to that Worker without changing the browser URL. Set `MEHFIL_PUBLIC_URL` to the canonical HTTPS origin (currently `https://minimehfil.wtf`) so preview and production deployments copy the same public link. Vercel's `VERCEL_PROJECT_PRODUCTION_URL` is used only as a fallback; keep automatic system environment variables enabled.
 
 The Vercel deployment gives the paid request a five-minute function window and stops the upstream generation after four minutes so there is time to save its final status. A claimed job that still has no final status after five minutes becomes a stable failed checkpoint; it never remains pending indefinitely and is never automatically charged again.
 

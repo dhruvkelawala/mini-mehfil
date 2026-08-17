@@ -3,6 +3,9 @@
   "name": "mini-mehfil-share",
   "main": "worker.mjs",
   "compatibility_date": "2026-08-14",
+  "vars": {
+    "MEHFIL_PUBLIC_URL": "https://minimehfil.wtf"
+  },
   "r2_buckets": [
     {
       "binding": "SHARES",

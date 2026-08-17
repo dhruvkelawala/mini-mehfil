@@ -139,8 +139,13 @@ test('shares only server-issued recordings and forwards no token', async () => {
       })
     });
     assert.equal(shared.status, 201);
-    assert.equal((await shared.json()).url, 'https://share.example/s/AbCdEfGhIjKlMnOp');
-  }, { shareBaseUrl: 'https://share.example', shareSecret: 'worker-upload-secret' });
+    assert.equal((await shared.json()).url, 'https://minimehfil.wtf/s/AbCdEfGhIjKlMnOp');
+  }, {
+    shareBaseUrl: 'https://share.example',
+    publicBaseUrl: 'https://minimehfil.wtf',
+    vercelProjectProductionUrl: 'mini-mehfil.vercel.app',
+    shareSecret: 'worker-upload-secret'
+  });
 
   assert.deepEqual(uploaded.audio, new Uint8Array([73, 68, 51]));
   assert.equal(uploaded.metadata.title, 'Aloopuri Khavsa');
