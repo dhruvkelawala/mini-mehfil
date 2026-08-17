@@ -17,6 +17,10 @@ test('the selected folk-modern scene ships with all four background candidates',
     new URL('../../../src/client/host/index.html', import.meta.url),
     'utf8',
   );
+  const app = readFileSync(
+    new URL('../../../src/client/host/App.tsx', import.meta.url),
+    'utf8',
+  );
 
   assert.deepEqual(backgrounds, [
     '01-lantern-courtyard.png',
@@ -33,4 +37,12 @@ test('the selected folk-modern scene ships with all four background candidates',
     /rel="preload"[\s\S]*href="\/backgrounds\/04-folk-modern-dusk\.png"/,
   );
   assert.doesNotMatch(html, /background-prototype/);
+  assert.match(
+    app,
+    /class="topbar-docs"[\s\S]*href="https:\/\/platform\.minimax\.io\/docs\/api-reference\/music-generation"/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 560px\)[\s\S]*\.topbar-docs\s*\{\s*display:\s*none;\s*\}/,
+  );
 });

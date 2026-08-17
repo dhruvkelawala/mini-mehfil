@@ -1601,11 +1601,8 @@ input::placeholder {
   .topbar-actions {
     gap: 10px;
   }
-  .topbar-actions a {
-    font-size: 0;
-  }
-  .topbar-actions a span {
-    font-size: 14px;
+  .topbar-docs {
+    display: none;
   }
   .room-open {
     min-height: 44px;
