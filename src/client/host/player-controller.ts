@@ -17,6 +17,8 @@ export interface PlayerController {
   duration: () => number;
   currentTime: () => number;
   source: () => string;
+  /** Decoded generation payload bytes, present only for the inline-hex path. */
+  analysisBytes: () => ArrayBuffer | null;
   shareReference: () => string | null;
   /**
    * Section timing for the loaded recording, or `null` until the media element
@@ -40,8 +42,13 @@ export interface PlayerController {
   replay(): Promise<void>;
 }
 
-function sourceUrl(source: string): { url: string; disposable: boolean } {
-  if (/^https:\/\//i.test(source)) return { url: source, disposable: false };
+function sourceUrl(source: string): {
+  url: string;
+  disposable: boolean;
+  bytes: ArrayBuffer | null;
+} {
+  if (/^https:\/\//i.test(source))
+    return { url: source, disposable: false, bytes: null };
   const hex = source.replace(/^0x/i, '');
   if (!hex || hex.length % 2 || !/^[0-9a-f]+$/i.test(hex))
     throw new Error('The finished recording is unavailable.');
@@ -51,6 +58,10 @@ function sourceUrl(source: string): { url: string; disposable: boolean } {
   return {
     url: URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' })),
     disposable: true,
+    bytes: bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ) as ArrayBuffer,
   };
 }
 
@@ -65,6 +76,9 @@ export function createPlayerController(
   const [duration, setDuration] = createSignal(0);
   const [currentTime, setCurrentTime] = createSignal(0);
   const [source, setSource] = createSignal('');
+  const [analysisBytes, setAnalysisBytes] = createSignal<ArrayBuffer | null>(
+    null,
+  );
   const [shareReference, setShareReference] = createSignal<string | null>(null);
   const [loadedTiming, setLoadedTiming] = createSignal<LyricTiming | null>(
     null,
@@ -131,6 +145,7 @@ export function createPlayerController(
     setDuration(0);
     setCurrentTime(0);
     setSource('');
+    setAnalysisBytes(null);
     setShareReference(null);
     setLoadedTiming(null);
     setTimingMatchesMedia(false);
@@ -147,6 +162,7 @@ export function createPlayerController(
     duration,
     currentTime,
     source,
+    analysisBytes,
     shareReference,
     timing: () => (timingMatchesMedia() ? loadedTiming() : null),
     bindAudio(element) {
@@ -184,6 +200,7 @@ export function createPlayerController(
         audio.load();
       }
       setSource(resolved.url);
+      setAnalysisBytes(resolved.bytes);
       setTitle(lyrics.title || 'Your Mehfil recording');
       setSubtitle('Fresh from MiniMax Music 3');
       setShareReference(reference);
@@ -195,6 +212,7 @@ export function createPlayerController(
     },
     loadRoomSong(song, origin) {
       releaseObjectUrl();
+      setAnalysisBytes(null);
       setLoadedTiming(null);
       setTimingMatchesMedia(false);
       const url = `${origin}/s/${song.shareId}/audio`;

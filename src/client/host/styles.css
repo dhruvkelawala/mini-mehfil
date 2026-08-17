@@ -1267,10 +1267,20 @@ input::placeholder {
 .lyric-line {
   display: block;
   color: rgba(249, 237, 218, 0.78);
+  opacity: 0.72;
   transition:
     color 0.35s,
+    opacity 0.35s,
     text-shadow 0.35s,
     transform 0.35s;
+}
+.lyric-line.lyric-line-upcoming {
+  opacity: 0.42;
+}
+.lyric-line.lyric-line-current {
+  opacity: 1;
+  text-shadow: 0 0 18px rgba(249, 237, 218, 0.3);
+  transform: scale(1.015);
 }
 .lyric-line[hidden] {
   display: none;
@@ -1290,6 +1300,7 @@ input::placeholder {
     sans-serif;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+  opacity: 1;
 }
 .lyric-section {
   display: block;

@@ -49,6 +49,7 @@ function player(): PlayerController {
     duration: () => 0,
     currentTime: () => 0,
     source: () => '',
+    analysisBytes: () => null,
     shareReference: () => null,
     timing: () => null,
     bindAudio: vi.fn(),

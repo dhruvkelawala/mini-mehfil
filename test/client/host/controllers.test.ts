@@ -2,6 +2,10 @@ import { describe, expect, test, vi } from 'vitest';
 
 import { createGenerationController } from '../../../src/client/host/generation-controller.ts';
 import {
+  activePacedLine,
+  buildLinePacing,
+} from '../../../src/lyrics/line-pacing.ts';
+import {
   clearPendingGeneration,
   createJobId,
   GENERATION_STORAGE_KEY,
@@ -63,6 +67,7 @@ function fakePlayer(load = vi.fn(() => Promise.resolve())): PlayerController {
     duration: () => 0,
     currentTime: () => 0,
     source: () => '',
+    analysisBytes: () => null,
     shareReference: () => null,
     timing: () => null,
     bindAudio: vi.fn(),
@@ -270,6 +275,39 @@ describe('host section timing', () => {
     // Past the end of the analyzed audio nothing is active, so no stale
     // section can linger on screen.
     expect(activeTimelineEntry(timeline, 90)).toBeNull();
+  });
+
+  test('activates derived line pacing only with a validated section timeline', async () => {
+    const { player } = await loadedPlayer(SECTION_TIMING, 90);
+    const sheet = parseLyricSheet({
+      isLatinScript: true,
+      lyricsNative: '',
+      lyricsRoman:
+        '[Intro]\nSoftly now\n[Verse]\nbanana papaya\nsoft rain\n[Inst]\n—\n[Chorus]\nSing it back',
+    });
+    const timeline = buildSectionTimeline(sheet.sections, player.timing());
+    const pacing = buildLinePacing(sheet.sections, timeline);
+    expect(activePacedLine(pacing, 19)?.sectionIndex).toBe(1);
+    expect(buildLinePacing(sheet.sections, null)).toEqual([]);
+  });
+
+  test('exposes analysis bytes only for inline-hex audio and skips remote URLs', async () => {
+    const audio = new FakeAudio();
+    const player = createPlayerController(createMediaDiagnostics());
+    player.bindAudio(audio as unknown as HTMLAudioElement);
+
+    await player.load('49443304', lyrics, null, SECTION_TIMING);
+    expect(
+      new Uint8Array(player.analysisBytes() ?? new ArrayBuffer(0)),
+    ).toEqual(new Uint8Array([73, 68, 51, 4]));
+
+    await player.load(
+      'https://cdn.example/song.mp3',
+      lyrics,
+      null,
+      SECTION_TIMING,
+    );
+    expect(player.analysisBytes()).toBeNull();
   });
 
   test('drops timing when a different recording is loaded or the player clears', async () => {

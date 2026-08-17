@@ -9,6 +9,7 @@ import {
   Show,
 } from 'solid-js';
 
+import { activePacedLine, buildLinePacing } from '../../lyrics/line-pacing.ts';
 import {
   activeTimelineEntry,
   buildSectionTimeline,
@@ -27,6 +28,7 @@ import {
 } from './host-room-controller.ts';
 import { createMediaDiagnostics } from './media-diagnostics.ts';
 import { createPlayerController } from './player-controller.ts';
+import { detectVocalEntry, vocalGateSeconds } from './vocal-onset.ts';
 
 const languages = [
   'auto',
@@ -52,10 +54,21 @@ const formatTime = (seconds: number) =>
  * One rendered lyric line. Shared by the untimed reveal and both timed views so
  * they cannot drift apart in markup.
  */
-const LyricLineView = (props: { line: LyricLine; hidden?: boolean }) => (
+const LyricLineView = (props: {
+  line: LyricLine;
+  hidden?: boolean;
+  current?: boolean;
+  upcoming?: boolean;
+}) => (
   <span
-    class={props.line.cue ? 'lyric-line lyric-cue' : 'lyric-line'}
+    classList={{
+      'lyric-line': true,
+      'lyric-cue': props.line.cue,
+      'lyric-line-current': props.current,
+      'lyric-line-upcoming': props.upcoming,
+    }}
     hidden={props.hidden}
+    aria-current={props.current ? 'true' : undefined}
   >
     <Show when={!props.line.cue} fallback={props.line.primary}>
       <span class="lyric-primary">{props.line.primary}</span>
@@ -88,6 +101,9 @@ export function App() {
   const [tokenVisible, setTokenVisible] = createSignal(false);
   const [hasToken, setHasToken] = createSignal(false);
   const [roomError, setRoomError] = createSignal('');
+  const [vocalGate, setVocalGate] = createSignal<number | null | undefined>(
+    null,
+  );
   const [clock, setClock] = createSignal('--:--');
   const [idea, setIdea] = createSignal('');
   const [vibe, setVibe] = createSignal('');
@@ -109,8 +125,22 @@ export function App() {
   const sectionTimeline = createMemo(() =>
     buildSectionTimeline(lyricSheet().sections, player.timing()),
   );
+  const linePacing = createMemo(() =>
+    buildLinePacing(lyricSheet().sections, sectionTimeline()),
+  );
   const activeEntry = createMemo(() =>
     activeTimelineEntry(sectionTimeline(), player.currentTime()),
+  );
+  const activeLine = createMemo(() =>
+    activePacedLine(linePacing(), player.currentTime()),
+  );
+  const firstVocalEntry = createMemo(() =>
+    sectionTimeline()?.find(
+      (entry) =>
+        entry.sectionIndex !== null &&
+        entry.label !== 'inst' &&
+        entry.label !== 'silence',
+    ),
   );
   const activeSection = createMemo(() => {
     const index = activeEntry()?.sectionIndex;
@@ -123,6 +153,20 @@ export function App() {
     if (!entry || entry.sectionIndex !== null) return '';
     if (entry.label === 'inst') return 'Instrumental';
     return entry.label === 'silence' ? 'Pause' : '';
+  });
+  const firstVocalLinesHeld = createMemo(() => {
+    const active = activeEntry();
+    const first = firstVocalEntry();
+    if (
+      !active ||
+      !first ||
+      active.start !== first.start ||
+      active.end !== first.end ||
+      active.sectionIndex !== first.sectionIndex
+    )
+      return false;
+    const gate = vocalGate();
+    return gate === undefined || (gate !== null && player.currentTime() < gate);
   });
   const shownSpoken = createMemo(() => {
     if (hasRevealed()) return Number.POSITIVE_INFINITY;
@@ -392,6 +436,24 @@ export function App() {
   createEffect(() => {
     void roomSongKey();
     if (player.playing() && activeLyrics()) setLyricsOpen(true);
+  });
+  let vocalAnalysisRun = 0;
+  createEffect(() => {
+    const bytes = player.analysisBytes();
+    const timeline = sectionTimeline();
+    const first = firstVocalEntry();
+    const run = ++vocalAnalysisRun;
+    if (!bytes || !timeline || !first) {
+      setVocalGate(null);
+      return;
+    }
+    setVocalGate(undefined);
+    void detectVocalEntry(bytes, Math.max(0, first.start - 1), first.end).then(
+      (onset) => {
+        if (run === vocalAnalysisRun)
+          setVocalGate(vocalGateSeconds(timeline, onset));
+      },
+    );
   });
   createEffect(() => {
     document.body.classList.toggle('performance-open', performanceOpen());
@@ -1033,7 +1095,7 @@ export function App() {
                 <Show when={sectionTimeline() || !hasRevealed()}>
                   <span class="performance-timing" id="performance-timing">
                     {sectionTimeline()
-                      ? 'Section timing from MiniMax analysis'
+                      ? 'Lines follow MiniMax sections · timing is approximate'
                       : 'Atmospheric reveal · timing is approximate'}
                   </span>
                 </Show>
@@ -1077,12 +1139,40 @@ export function App() {
                             </Show>
                           }
                         >
-                          <span
-                            class="lyric-section lyric-section-current"
-                            aria-current="true"
-                          >
-                            <For each={activeSection()?.lines ?? []}>
-                              {(line) => <LyricLineView line={line} />}
+                          <span class="lyric-section lyric-section-current">
+                            <For
+                              each={(activeSection()?.lines ?? []).filter(
+                                (line) => !firstVocalLinesHeld() || line.cue,
+                              )}
+                            >
+                              {(line, index) => {
+                                const lineIndex = () =>
+                                  activeSection()?.lines.indexOf(line) ??
+                                  index();
+                                const current = () =>
+                                  !line.cue &&
+                                  activeLine()?.sectionIndex ===
+                                    activeSection()?.index &&
+                                  activeLine()?.lineIndexInSection ===
+                                    lineIndex();
+                                const upcoming = () => {
+                                  const paced = activeLine();
+                                  return Boolean(
+                                    !line.cue &&
+                                    paced &&
+                                    paced.sectionIndex ===
+                                      activeSection()?.index &&
+                                    lineIndex() > paced.lineIndexInSection,
+                                  );
+                                };
+                                return (
+                                  <LyricLineView
+                                    line={line}
+                                    current={current()}
+                                    upcoming={upcoming()}
+                                  />
+                                );
+                              }}
                             </For>
                           </span>
                         </Show>
