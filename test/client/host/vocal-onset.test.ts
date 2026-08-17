@@ -2,8 +2,11 @@ import { describe, expect, test } from 'vitest';
 
 import {
   firstSustainedOnset,
+  reconcileVocalAnalysisResult,
   rmsEnvelope,
+  vocalAnalysisRelease,
   vocalGateSeconds,
+  type VocalAnalysisResult,
   VOCAL_ONSET_BASELINE_WINDOWS,
   VOCAL_ONSET_RISE_FACTOR,
   VOCAL_ONSET_SUSTAIN_WINDOWS,
@@ -116,5 +119,64 @@ describe('vocal gate policy', () => {
         2,
       ),
     ).toBeNull();
+  });
+});
+
+describe('vocal analysis result state', () => {
+  const timeline: TimelineEntry[] = [
+    { start: 0, end: 20, label: 'verse', sectionIndex: 0 },
+  ];
+  const result: VocalAnalysisResult = {
+    source: 'blob:recording-one',
+    timeline,
+    release: 8,
+  };
+
+  test('clears resolved state when audio bytes become unavailable', () => {
+    expect(
+      reconcileVocalAnalysisResult(
+        result,
+        'https://cdn.example/next.mp3',
+        timeline,
+        false,
+      ),
+    ).toBeNull();
+    expect(
+      vocalAnalysisRelease(
+        result,
+        'https://cdn.example/next.mp3',
+        timeline,
+        false,
+      ),
+    ).toBeNull();
+  });
+
+  test('clears stale identity and reports a new eligible input as pending', () => {
+    expect(
+      reconcileVocalAnalysisResult(
+        result,
+        'blob:recording-two',
+        timeline,
+        true,
+      ),
+    ).toBeNull();
+    expect(
+      vocalAnalysisRelease(result, 'blob:recording-two', timeline, true),
+    ).toBeUndefined();
+  });
+
+  test('retains and releases only a matching lightweight identity', () => {
+    expect(
+      reconcileVocalAnalysisResult(
+        result,
+        'blob:recording-one',
+        timeline,
+        true,
+      ),
+    ).toBe(result);
+    expect(
+      vocalAnalysisRelease(result, 'blob:recording-one', timeline, true),
+    ).toBe(8);
+    expect(Object.hasOwn(result, 'bytes')).toBe(false);
   });
 });

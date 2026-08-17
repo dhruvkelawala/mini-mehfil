@@ -21,7 +21,6 @@ import {
   parseLyricSheet,
   type LyricLine,
   type LyricSection,
-  type TimelineEntry,
 } from '../../lyrics/lyric-sync.ts';
 import type { LyricsSheet, SongRequest } from '../../room/protocol.ts';
 import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
@@ -35,7 +34,13 @@ import {
 } from './host-room-controller.ts';
 import { createMediaDiagnostics } from './media-diagnostics.ts';
 import { createPlayerController } from './player-controller.ts';
-import { detectVocalEntry, vocalGateSeconds } from './vocal-onset.ts';
+import {
+  detectVocalEntry,
+  reconcileVocalAnalysisResult,
+  vocalAnalysisRelease,
+  vocalGateSeconds,
+  type VocalAnalysisResult,
+} from './vocal-onset.ts';
 
 const languages = [
   'auto',
@@ -142,11 +147,8 @@ export function App() {
   const [tokenVisible, setTokenVisible] = createSignal(false);
   const [hasToken, setHasToken] = createSignal(false);
   const [roomError, setRoomError] = createSignal('');
-  const [vocalAnalysisResult, setVocalAnalysisResult] = createSignal<{
-    bytes: ArrayBuffer;
-    timeline: TimelineEntry[];
-    release: number | null;
-  } | null>(null);
+  const [vocalAnalysisResult, setVocalAnalysisResult] =
+    createSignal<VocalAnalysisResult | null>(null);
   const [clock, setClock] = createSignal('--:--');
   const [idea, setIdea] = createSignal('');
   const [vibe, setVibe] = createSignal('');
@@ -187,11 +189,12 @@ export function App() {
   const vocalRelease = createMemo<number | null | undefined>(() => {
     const bytes = player.analysisBytes();
     const timeline = sectionTimeline();
-    if (!bytes || !timeline || !firstVocalEntry()) return null;
-    const result = vocalAnalysisResult();
-    return result?.bytes === bytes && result.timeline === timeline
-      ? result.release
-      : undefined;
+    return vocalAnalysisRelease(
+      vocalAnalysisResult(),
+      player.source(),
+      timeline,
+      Boolean(bytes && timeline && firstVocalEntry()),
+    );
   });
   const linePacing = createMemo(() =>
     buildLinePacing(lyricSheet().sections, sectionTimeline(), vocalRelease()),
@@ -500,16 +503,21 @@ export function App() {
   let vocalAnalysisRun = 0;
   createEffect(() => {
     const bytes = player.analysisBytes();
+    const source = player.source();
     const timeline = sectionTimeline();
     const first = firstVocalEntry();
+    const eligible = Boolean(bytes && timeline && first);
     const run = ++vocalAnalysisRun;
+    setVocalAnalysisResult((result) =>
+      reconcileVocalAnalysisResult(result, source, timeline, eligible),
+    );
     if (!bytes || !timeline || !first) return;
     void detectVocalEntry(bytes, Math.max(0, first.start - 1), first.end).then(
       (onset) => {
         if (run !== vocalAnalysisRun) return;
         const gate = vocalGateSeconds(timeline, onset);
         setVocalAnalysisResult({
-          bytes,
+          source,
           timeline,
           release: effectiveFirstVocalRelease(
             timeline,

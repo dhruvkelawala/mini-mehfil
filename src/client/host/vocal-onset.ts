@@ -1,5 +1,40 @@
 import type { TimelineEntry } from '../../lyrics/lyric-sync.ts';
 
+/** Lightweight identity/result state; never retains decoded or source audio. */
+export interface VocalAnalysisResult {
+  source: string;
+  timeline: TimelineEntry[];
+  release: number | null;
+}
+
+/**
+ * Keeps a result only while it still belongs to the eligible recording input.
+ * Invalid/no-byte and new-input transitions return null so stale state is
+ * released immediately without making the analysis effect depend on itself.
+ */
+export function reconcileVocalAnalysisResult(
+  result: VocalAnalysisResult | null,
+  source: string,
+  timeline: TimelineEntry[] | null,
+  eligible: boolean,
+): VocalAnalysisResult | null {
+  if (!eligible || !source || !Array.isArray(timeline)) return null;
+  return result?.source === source && result.timeline === timeline
+    ? result
+    : null;
+}
+
+/** Resolves the pending/null/value tri-state for the current analysis input. */
+export function vocalAnalysisRelease(
+  result: VocalAnalysisResult | null,
+  source: string,
+  timeline: TimelineEntry[] | null,
+  eligible: boolean,
+): number | null | undefined {
+  if (!eligible) return null;
+  return reconcileVocalAnalysisResult(result, source, timeline, true)?.release;
+}
+
 export const VOCAL_ONSET_WINDOW_MS = 20;
 export const VOCAL_ONSET_BASELINE_WINDOWS = 25;
 export const VOCAL_ONSET_RISE_FACTOR = 3;
