@@ -131,10 +131,19 @@ function clientEvent(
       };
     case 'request-accepted':
     case 'request-declined':
-    case 'recording-started':
+    case 'recording-enqueued':
+    case 'recording-removed':
     case 'recording-failed':
       return { ...base, type: message.type, requestId: message.requestId };
+    case 'recording-started':
+      return {
+        ...base,
+        type: message.type,
+        requestId: message.requestId,
+        coordinatorId: message.coordinatorId,
+      };
     case 'request-reordered':
+    case 'recording-reordered':
       return {
         ...base,
         type: message.type,
@@ -163,6 +172,12 @@ function clientEvent(
         shareId: message.shareId,
         lyrics: message.lyrics,
         startedAt: at,
+      };
+    case 'song-selected':
+      return {
+        ...base,
+        type: message.type,
+        shareId: message.shareId,
       };
     case 'playback-updated':
       return {

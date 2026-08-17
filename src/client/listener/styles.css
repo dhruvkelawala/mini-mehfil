@@ -274,8 +274,17 @@ textarea {
   color: var(--amber);
   font-size: 20px;
 }
+.lyric-cue {
+  min-height: 1.4em;
+  margin: 15px 0 0;
+  color: #dfc39a;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
 .lyric-primary {
-  margin: 18px 0 0;
+  margin: 8px 0 0;
   color: #fff8ec;
   font:
     700 clamp(27px, 3.3vw, 44px)/1.22 'Iowan Old Style',
@@ -307,18 +316,97 @@ textarea {
   transform: translateX(-50%);
 }
 .record {
+  position: relative;
   width: 68px;
   height: 68px;
+  display: grid;
+  place-items: center;
   border-radius: 50%;
   background: repeating-radial-gradient(circle, #202322 0 3px, #101313 4px 6px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 4px 12px rgba(7, 18, 17, 0.35);
+}
+.record::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(249, 237, 218, 0.52);
+  transform: translateX(-50%);
+}
+.record-mark {
+  width: 31px;
+  height: 31px;
+  display: grid;
+  place-items: center;
+  border: 2px solid rgba(230, 166, 83, 0.55);
+  border-radius: 50%;
+  color: #512820;
+  background: #e6a653;
+  font:
+    italic 700 15px/1 'Iowan Old Style',
+    Georgia,
+    serif;
 }
 .is-playing .record {
   animation: spin 4s linear infinite;
+}
+.player-track {
+  min-width: 0;
 }
 .player-track p {
   margin: 4px 0;
   color: var(--muted);
   font-size: 10px;
+}
+.player-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  margin-top: 7px;
+}
+.player-progress-bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(249, 237, 218, 0.2);
+}
+.player-progress-bar span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: #f1d7c4;
+  transition: width 0.25s linear;
+}
+.player-progress time {
+  min-width: 68px;
+  color: #f1d7c4;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.player-state {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(249, 237, 218, 0.24);
+  border-radius: 50%;
+  color: #f1d7c4;
+}
+.player-state svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
 }
 .player-shell audio {
   display: none;
@@ -378,11 +466,24 @@ textarea {
   }
   .player-shell {
     bottom: 12px;
-    grid-template-columns: 50px 1fr;
+    grid-template-columns: 50px minmax(0, 1fr) 40px;
   }
   .record {
     width: 50px;
     height: 50px;
+  }
+  .record-mark {
+    width: 25px;
+    height: 25px;
+    font-size: 12px;
+  }
+  .player-state {
+    width: 40px;
+    height: 40px;
+  }
+  .player-progress time {
+    min-width: 60px;
+    font-size: 8px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

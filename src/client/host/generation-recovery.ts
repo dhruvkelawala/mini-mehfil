@@ -11,11 +11,20 @@ export interface HostLyrics extends LyricsSheet {
   prompt: string;
 }
 
+export interface RoomGenerationContext {
+  kind: 'room-recording';
+  roomId: string;
+  requestId: string;
+}
+
+export type GenerationContext = RoomGenerationContext | null;
+
 export interface PendingGeneration {
   version: 1;
   jobId: string;
   createdAt: string;
   lyricSheet: HostLyrics;
+  context?: GenerationContext;
 }
 
 export interface ActiveGeneration extends PendingGeneration {
@@ -31,7 +40,11 @@ export interface StatusResponse {
 
 export interface RecoveryCoordinator {
   createJobId(): string;
-  save(value: { jobId: string; lyricSheet: HostLyrics }): PendingGeneration;
+  save(value: {
+    jobId: string;
+    lyricSheet: HostLyrics;
+    context?: GenerationContext;
+  }): PendingGeneration;
   read(): PendingGeneration | null;
   clear(): void;
   start(pending: PendingGeneration, run: number): boolean;
@@ -95,6 +108,26 @@ function cleanSheet(value: unknown): HostLyrics | null {
     : null;
 }
 
+function cleanContext(value: unknown): GenerationContext | undefined {
+  if (value === undefined || value === null) return null;
+  if (
+    !isRecord(value) ||
+    value.kind !== 'room-recording' ||
+    typeof value.roomId !== 'string' ||
+    !/^[A-Za-z0-9_-]{8}$/.test(value.roomId) ||
+    typeof value.requestId !== 'string' ||
+    !value.requestId ||
+    value.requestId.length > 120
+  ) {
+    return undefined;
+  }
+  return {
+    kind: 'room-recording',
+    roomId: value.roomId,
+    requestId: value.requestId,
+  };
+}
+
 export function createJobId(cryptoSource: Crypto = crypto): string {
   if (typeof cryptoSource.getRandomValues !== 'function')
     throw new Error('Secure randomness is unavailable.');
@@ -106,15 +139,22 @@ export function savePendingGeneration(
   jobId: string,
   lyricSheet: HostLyrics,
   now: () => number = Date.now,
+  context: GenerationContext = null,
 ): PendingGeneration {
   const clean = cleanSheet(lyricSheet);
-  if (!JOB_PATTERN.test(jobId) || !clean)
+  const cleanGenerationContext = cleanContext(context);
+  if (
+    !JOB_PATTERN.test(jobId) ||
+    !clean ||
+    cleanGenerationContext === undefined
+  )
     throw new Error('A valid pending generation is required.');
   const record: PendingGeneration = {
     version: 1,
     jobId,
     createdAt: new Date(now()).toISOString(),
     lyricSheet: clean,
+    context: cleanGenerationContext,
   };
   storage.setItem(GENERATION_STORAGE_KEY, JSON.stringify(record));
   return record;
@@ -140,12 +180,14 @@ export function readPendingGeneration(
     return null;
   }
   const sheet = isRecord(value) ? cleanSheet(value.lyricSheet) : null;
+  const context = isRecord(value) ? cleanContext(value.context) : undefined;
   const created = isRecord(value) ? Date.parse(String(value.createdAt)) : NaN;
   if (
     !isRecord(value) ||
     value.version !== 1 ||
     !JOB_PATTERN.test(String(value.jobId)) ||
     !sheet ||
+    context === undefined ||
     !Number.isFinite(created) ||
     created + TTL_MS <= now()
   ) {
@@ -157,6 +199,7 @@ export function readPendingGeneration(
     jobId: String(value.jobId),
     createdAt: new Date(created).toISOString(),
     lyricSheet: sheet,
+    context,
   };
 }
 
@@ -269,7 +312,13 @@ export function createRecoveryCoordinator(
     },
     save(value) {
       if (!storage) throw new Error('A valid pending generation is required.');
-      return savePendingGeneration(storage, value.jobId, value.lyricSheet, now);
+      return savePendingGeneration(
+        storage,
+        value.jobId,
+        value.lyricSheet,
+        now,
+        value.context ?? null,
+      );
     },
     read() {
       return storage ? readPendingGeneration(storage, now) : null;

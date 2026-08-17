@@ -1,17 +1,12 @@
 import { describe, expect, test, vi } from 'vitest';
 
-import type {
-  ClientMessage,
-  LyricsSheet,
-  RoomState,
-} from '../../../src/room/protocol.ts';
+import type { LyricsSheet, RoomState } from '../../../src/room/protocol.ts';
 import { projectRoomState } from '../../../src/room/state.ts';
 import {
   createHostRoomController,
   hostRoomView,
   ROOM_SESSION_KEY,
   roomReorderTargets,
-  runRoomRecordingLifecycle,
 } from '../../../src/client/host/host-room-controller.ts';
 
 class MemoryStorage implements Storage {
@@ -84,6 +79,7 @@ const state = (): RoomState => ({
   participants: [],
   kickedParticipantIds: [],
   queue: [],
+  recordingQueue: [],
   currentRecording: null,
   currentSong: null,
   setlist: [],
@@ -154,85 +150,6 @@ describe('typed host room parity', () => {
     );
   });
 
-  test('room recording lifecycle executes paid work and events in runtime order', async () => {
-    const sequence: string[] = [];
-    const result = await runRoomRecordingLifecycle<string>({
-      requestId: 'q1',
-      run: 1,
-      isCurrent: () => true,
-      send: (event: ClientMessage) => {
-        sequence.push(event.type);
-        return true;
-      },
-      generate: async ({ onLyrics }) => {
-        sequence.push('generate');
-        onLyrics(LYRICS);
-        sequence.push('generated');
-        return 'song';
-      },
-      upload: async () => {
-        sequence.push('upload');
-        return 'https://rooms.example/s/AbCdEfGhIjKlMnOp';
-      },
-    });
-    expect(result).toBe('ready');
-    expect(sequence).toEqual([
-      'recording-started',
-      'generate',
-      'lyrics-ready',
-      'generated',
-      'upload',
-      'song-ready',
-    ]);
-    const failed: string[] = [];
-    await runRoomRecordingLifecycle<string>({
-      requestId: 'q2',
-      run: 1,
-      isCurrent: () => true,
-      send: (event) => {
-        failed.push(event.type);
-        return true;
-      },
-      generate: async ({ onLyrics }) => {
-        onLyrics(LYRICS);
-        return 'song';
-      },
-      upload: async () => {
-        throw new Error('bucket');
-      },
-    });
-    expect(failed).toEqual([
-      'recording-started',
-      'lyrics-ready',
-      'recording-failed',
-    ]);
-  });
-
-  test('room recording waits for recovered generation before publishing', async () => {
-    const events: string[] = [];
-    let finish: ((song: string) => void) | undefined;
-    const lifecycle = runRoomRecordingLifecycle<string>({
-      requestId: 'q1',
-      run: 1,
-      isCurrent: () => true,
-      send: (event) => {
-        events.push(event.type);
-        return true;
-      },
-      generate: async (hooks) => {
-        hooks.onLyrics(LYRICS);
-        finish = hooks.onReady;
-        return undefined;
-      },
-      upload: async () => 'https://rooms.example/s/AbCdEfGhIjKlMnOp',
-    });
-    await Promise.resolve();
-    expect(events).toEqual(['recording-started', 'lyrics-ready']);
-    finish?.('recovered-song');
-    await expect(lifecycle).resolves.toBe('ready');
-    expect(events.at(-1)).toBe('song-ready');
-  });
-
   test('socket send failures return false and mark the room offline', () => {
     const storage = new MemoryStorage();
     storage.setItem(ROOM_SESSION_KEY, JSON.stringify(DETAILS));
@@ -247,29 +164,6 @@ describe('typed host room parity', () => {
     expect(room.accept('q1')).toBe(false);
     expect(room.status()).toBe('offline');
   });
-
-  test('a room upload keeps the finished audio paired with its own lyric sheet', async () => {
-    let uploaded = '';
-    await runRoomRecordingLifecycle<{
-      sheet: LyricsSheet;
-      reference: string;
-    }>({
-      requestId: 'q1',
-      run: 3,
-      isCurrent: (run) => run === 3,
-      send: () => true,
-      generate: async ({ onLyrics }) => {
-        onLyrics(LYRICS);
-        return { sheet: LYRICS, reference: 'original' };
-      },
-      upload: async (song) => {
-        uploaded = `${song.reference}:${song.sheet.title}`;
-        return 'https://rooms.example/s/AbCdEfGhIjKlMnOp';
-      },
-    });
-    expect(uploaded).toBe('original:Rain');
-  });
-
   test('host room treats auth close as terminal and waits for expiry acknowledgement', () => {
     vi.useFakeTimers();
     const storage = new MemoryStorage();
@@ -319,10 +213,12 @@ describe('typed host room parity', () => {
     ];
     current.setlist = [
       {
+        requestId: 'q1',
         shareId: 'AbCdEfGhIjKlMnOp',
         title: 'Rain',
         language: 'Hindi',
         startedAt: 4,
+        lyrics: LYRICS,
       },
     ];
     const view = hostRoomView(current, DETAILS.joinUrl);

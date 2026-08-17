@@ -7,6 +7,11 @@ import {
   type ListenerRoomController,
 } from './listener-room-controller.ts';
 
+const formatTime = (seconds: number) =>
+  Number.isFinite(seconds)
+    ? `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
+    : '0:00';
+
 const languages = [
   'auto',
   'Gujarati',
@@ -27,18 +32,44 @@ const languages = [
 function lyricLines(controller: ListenerRoomController) {
   const lines = createMemo(() => {
     const sheet = controller.snapshot()?.currentSong?.lyrics;
-    if (!sheet) return { primary: '', secondary: '' };
-    const native = sheet.lyricsNative
-      .split('\n')
-      .find((line) => line.trim() && !/^\[.+\]$/.test(line));
-    const roman = sheet.lyricsRoman
-      .split('\n')
-      .find((line) => line.trim() && !/^\[.+\]$/.test(line));
-    return sheet.isLatinScript
-      ? { primary: roman ?? native ?? '', secondary: '' }
-      : { primary: native ?? roman ?? '', secondary: roman ?? '' };
+    if (!sheet) return [];
+    const native = sheet.lyricsNative.split('\n');
+    const roman = sheet.lyricsRoman.split('\n');
+    const primary = sheet.isLatinScript ? roman : native;
+    let cue = '';
+    return primary.flatMap((rawLine, index) => {
+      const line = rawLine.trim();
+      const romanLine = (roman[index] ?? '').trim();
+      const cueMatch = /^\[(.+)\]$/.exec(romanLine || line);
+      if (cueMatch) {
+        cue = cueMatch[1] ?? '';
+        return [];
+      }
+      if (!line) return [];
+      return [
+        {
+          cue,
+          primary: line,
+          secondary:
+            !sheet.isLatinScript && romanLine !== line ? romanLine : '',
+        },
+      ];
+    });
   });
-  return lines;
+  const current = createMemo(() => {
+    const timeline = lines();
+    if (!timeline.length) return { cue: '', primary: '', secondary: '' };
+    const duration = controller.duration();
+    const progress = duration
+      ? Math.min(controller.currentTime() / (duration * 0.9), 1)
+      : 0;
+    return (
+      timeline[
+        Math.min(Math.floor(progress * timeline.length), timeline.length - 1)
+      ] ?? { cue: '', primary: '', secondary: '' }
+    );
+  });
+  return current;
 }
 
 export function App(props: {
@@ -51,6 +82,11 @@ export function App(props: {
       createListenerRoomController({ roomId: props.roomId }),
   );
   const lyrics = lyricLines(controller);
+  const playbackProgress = createMemo(() => {
+    const duration = controller.duration();
+    if (!duration) return 0;
+    return Math.min(controller.currentTime() / duration, 1);
+  });
   let nameInput: HTMLInputElement | undefined;
   let requestForm: HTMLFormElement | undefined;
 
@@ -111,6 +147,7 @@ export function App(props: {
             {(song) => (
               <section class="lyric-stage">
                 <h2>{song().title}</h2>
+                <p class="lyric-cue">{lyrics().cue}</p>
                 <p class="lyric-primary">{lyrics().primary}</p>
                 <p class="lyric-secondary">{lyrics().secondary}</p>
               </section>
@@ -211,10 +248,12 @@ export function App(props: {
                 </div>
               </details>
               <section
-                class={`player-shell ${snapshot().currentSong?.playback.status === 'playing' ? 'is-playing' : ''}`}
+                class={`player-shell ${controller.playing() ? 'is-playing' : ''}`}
                 aria-label="Host-controlled song player"
               >
-                <div class="record" aria-hidden="true" />
+                <div class="record" aria-hidden="true">
+                  <span class="record-mark">M</span>
+                </div>
                 <div class="player-track">
                   <h2>
                     {snapshot().currentSong?.title ??
@@ -225,11 +264,47 @@ export function App(props: {
                       'The host controls playback'}
                   </p>
                   <p>{controller.playbackLabel()}</p>
+                  <Show when={snapshot().currentSong}>
+                    <div class="player-progress">
+                      <div
+                        class="player-progress-bar"
+                        role="progressbar"
+                        aria-label="Song progress"
+                        aria-valuemin="0"
+                        aria-valuemax={controller.duration()}
+                        aria-valuenow={controller.currentTime()}
+                      >
+                        <span
+                          style={{ width: `${playbackProgress() * 100}%` }}
+                        />
+                      </div>
+                      <time>
+                        {formatTime(controller.currentTime())} /{' '}
+                        {formatTime(controller.duration())}
+                      </time>
+                    </div>
+                  </Show>
                 </div>
                 <audio
                   ref={(element) => controller.bindAudio(element)}
                   preload="metadata"
                 />
+                <Show when={snapshot().currentSong}>
+                  <span class="player-state" aria-hidden="true">
+                    <Show
+                      when={controller.playing()}
+                      fallback={
+                        <svg viewBox="0 0 18 18">
+                          <path d="m6.5 4.5 7 4.5-7 4.5z" />
+                        </svg>
+                      }
+                    >
+                      <svg viewBox="0 0 18 18">
+                        <path d="M6.5 5v8M11.5 5v8" />
+                      </svg>
+                    </Show>
+                  </span>
+                </Show>
                 <Show when={controller.audioBlocked()}>
                   <button
                     class="enable-audio"

@@ -110,6 +110,169 @@ describe('typed generation lifecycle parity', () => {
     expect(clearOrder).toBeLessThan(loadOrder);
   });
 
+  test('room recording generation never clears or loads the active player', async () => {
+    const target = player();
+    const ready = vi.fn();
+    const controller = createGenerationController({
+      player: target,
+      storage: new MemoryStorage(),
+      fetcher: completeFetch,
+    });
+    await controller.generate(INPUT, {
+      context: {
+        kind: 'room-recording',
+        roomId: 'ABCDEFGH',
+        requestId: 'request-b',
+      },
+      onReady: ready,
+    });
+    expect((target.clear as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
+      0,
+    );
+    expect((target.load as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
+      0,
+    );
+    expect(controller.lyrics()).toBeNull();
+    expect(controller.pendingContext()).toEqual({
+      kind: 'room-recording',
+      roomId: 'ABCDEFGH',
+      requestId: 'request-b',
+    });
+    expect(ready).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: {
+          kind: 'room-recording',
+          roomId: 'ABCDEFGH',
+          requestId: 'request-b',
+        },
+      }),
+    );
+    expect(controller.acknowledgeRoomOutcome('ABCDEFGH', 'request-b')).toBe(
+      true,
+    );
+    expect(controller.pendingContext()).toBeNull();
+  });
+
+  test('a recovered room job requires matching room hooks and does not issue another paid call', async () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      GENERATION_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        jobId: 'AbCdEfGhIjKlMnOpQrStUvWx',
+        createdAt: new Date().toISOString(),
+        lyricSheet: SHEET,
+        context: {
+          kind: 'room-recording',
+          roomId: 'ABCDEFGH',
+          requestId: 'request-b',
+        },
+      }),
+    );
+    const target = player();
+    const urls: string[] = [];
+    const ready = vi.fn();
+    const controller = createGenerationController({
+      player: target,
+      storage,
+      fetcher: async (input) => {
+        urls.push(input);
+        return Response.json({
+          jobId: 'AbCdEfGhIjKlMnOpQrStUvWx',
+          status: 'complete',
+          data: { audio: '49443304' },
+          share_ref: 'reference',
+        });
+      },
+    });
+    expect(controller.resumePending('page-load')).toBe(false);
+    expect(
+      controller.resumePending('page-load', {
+        context: {
+          kind: 'room-recording',
+          roomId: 'ABCDEFGH',
+          requestId: 'request-b',
+        },
+        onReady: ready,
+      }),
+    ).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(urls).toEqual([
+      '/api/generation-status?id=AbCdEfGhIjKlMnOpQrStUvWx',
+    ]);
+    expect((target.load as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
+      0,
+    );
+    expect(ready).toHaveBeenCalledOnce();
+    expect(controller.pendingContext()).toEqual({
+      kind: 'room-recording',
+      roomId: 'ABCDEFGH',
+      requestId: 'request-b',
+    });
+  });
+
+  test('room delivery failure retains the completed checkpoint for reconnect retry', async () => {
+    const storage = new MemoryStorage();
+    const failed = vi.fn();
+    let paidCalls = 0;
+    const controller = createGenerationController({
+      player: player(),
+      storage,
+      fetcher: async (input) => {
+        if (input === '/api/write-lyrics') return Response.json(SHEET);
+        if (input === '/api/generate') {
+          paidCalls += 1;
+          return Response.json({
+            data: { audio: '49443304' },
+            share_ref: 'reference',
+          });
+        }
+        const jobId = new URL(input, 'https://fixture.test').searchParams.get(
+          'id',
+        );
+        return Response.json({
+          jobId,
+          status: 'complete',
+          data: { audio: '49443304' },
+          share_ref: 'reference',
+        });
+      },
+    });
+    await expect(
+      controller.generate(INPUT, {
+        context: {
+          kind: 'room-recording',
+          roomId: 'ABCDEFGH',
+          requestId: 'request-b',
+        },
+        onReady: () => {
+          throw new Error('The live room lost its connection.');
+        },
+        onFailed: failed,
+      }),
+    ).rejects.toThrow('lost its connection');
+    expect(failed).toHaveBeenCalledOnce();
+    expect(controller.pendingContext()).toEqual({
+      kind: 'room-recording',
+      roomId: 'ABCDEFGH',
+      requestId: 'request-b',
+    });
+    const delivered = vi.fn();
+    expect(
+      controller.resumePending('page-load', {
+        context: {
+          kind: 'room-recording',
+          roomId: 'ABCDEFGH',
+          requestId: 'request-b',
+        },
+        onReady: delivered,
+      }),
+    ).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(delivered).toHaveBeenCalledOnce();
+    expect(paidCalls).toBe(1);
+  });
+
   test('generation recovery is wired without retrying the paid request', async () => {
     const storage = new MemoryStorage();
     storage.setItem(

@@ -18,7 +18,6 @@ export interface ListenerSnapshot {
   currentRecording: {
     requestId: string;
     startedAt: number;
-    lyrics: LyricsSheet | null;
   } | null;
   currentSong: ListenerSong | null;
   setlist: Array<{ shareId: string; title: string }>;
@@ -31,6 +30,9 @@ export interface ListenerRoomController {
   snapshot: () => ListenerSnapshot | null;
   audioBlocked: () => boolean;
   playbackLabel: () => string;
+  currentTime: () => number;
+  duration: () => number;
+  playing: () => boolean;
   bindAudio(element: HTMLAudioElement): void;
   enableAudio(): Promise<void>;
   connect(name: string): void;
@@ -114,15 +116,9 @@ function parseSnapshot(value: unknown): ListenerSnapshot | null {
     ) {
       return null;
     }
-    const lyrics =
-      value.currentRecording.lyrics === null
-        ? null
-        : parseLyricsSheet(value.currentRecording.lyrics);
-    if (value.currentRecording.lyrics !== null && !lyrics) return null;
     currentRecording = {
       requestId: value.currentRecording.requestId,
       startedAt: value.currentRecording.startedAt,
-      lyrics,
     };
   }
   return {
@@ -160,15 +156,34 @@ export function createListenerRoomController({
   const [playbackLabel, setPlaybackLabel] = createSignal(
     'Waiting for the host',
   );
+  const [currentTime, setCurrentTime] = createSignal(0);
+  const [duration, setDuration] = createSignal(0);
+  const [playing, setPlaying] = createSignal(false);
   let socket: WebSocket | null = null;
   let audio: HTMLAudioElement | null = null;
   let lastShareId: string | null = null;
   let playbackRevision: string | null = null;
   let playbackTimer: ReturnType<typeof setTimeout> | undefined;
+  let playbackClock: ReturnType<typeof setInterval> | undefined;
   let metadataHandler: (() => void) | null = null;
   let retryCount = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let lastName = '';
+
+  const syncPlaybackClock = () => {
+    if (!audio) return;
+    setCurrentTime(Number.isFinite(audio.currentTime) ? audio.currentTime : 0);
+    setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
+  };
+  const stopPlaybackClock = () => {
+    if (playbackClock) clearInterval(playbackClock);
+    playbackClock = undefined;
+    syncPlaybackClock();
+  };
+  const startPlaybackClock = () => {
+    syncPlaybackClock();
+    if (!playbackClock) playbackClock = setInterval(syncPlaybackClock, 250);
+  };
 
   const stop = (
     code: string,
@@ -187,9 +202,13 @@ export function createListenerRoomController({
       await audio.play();
       setAudioBlocked(false);
       setPlaybackLabel('Playing with the host');
+      setPlaying(true);
+      startPlaybackClock();
     } catch {
       setAudioBlocked(true);
       setPlaybackLabel('Your browser needs sound enabled once.');
+      setPlaying(false);
+      stopPlaybackClock();
     }
   };
 
@@ -205,6 +224,8 @@ export function createListenerRoomController({
     metadataHandler = null;
     if (lastShareId !== song.shareId) {
       lastShareId = song.shareId;
+      setCurrentTime(0);
+      setDuration(0);
       audio.src = `/s/${song.shareId}/audio`;
       audio.load();
     }
@@ -223,6 +244,8 @@ export function createListenerRoomController({
       else {
         audio.pause();
         setPlaybackLabel('Host paused');
+        setPlaying(false);
+        stopPlaybackClock();
       }
     };
     if (playback.status === 'playing' && playback.changedAt > Date.now()) {
@@ -323,6 +346,7 @@ export function createListenerRoomController({
     setTerminal(true);
     if (reconnectTimer) clearTimeout(reconnectTimer);
     if (playbackTimer) clearTimeout(playbackTimer);
+    stopPlaybackClock();
     if (audio && metadataHandler)
       audio.removeEventListener('loadedmetadata', metadataHandler);
     metadataHandler = null;
@@ -332,13 +356,24 @@ export function createListenerRoomController({
 
   const bindAudio = (element: HTMLAudioElement) => {
     audio = element;
-    audio.addEventListener('play', () =>
-      setPlaybackLabel('Playing with the host'),
-    );
+    audio.addEventListener('loadedmetadata', syncPlaybackClock);
+    audio.addEventListener('durationchange', syncPlaybackClock);
+    audio.addEventListener('timeupdate', syncPlaybackClock);
+    audio.addEventListener('play', () => {
+      setPlaybackLabel('Playing with the host');
+      setPlaying(true);
+      startPlaybackClock();
+    });
     audio.addEventListener('pause', () => {
       if (!audio?.ended) setPlaybackLabel('Host paused');
+      setPlaying(false);
+      stopPlaybackClock();
     });
-    audio.addEventListener('ended', () => setPlaybackLabel('Song finished'));
+    audio.addEventListener('ended', () => {
+      setPlaybackLabel('Song finished');
+      setPlaying(false);
+      stopPlaybackClock();
+    });
     applyPlayback(snapshot()?.currentSong ?? null);
   };
 
@@ -356,6 +391,9 @@ export function createListenerRoomController({
     snapshot,
     audioBlocked,
     playbackLabel,
+    currentTime,
+    duration,
+    playing,
     bindAudio,
     enableAudio,
     connect,
