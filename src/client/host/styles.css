@@ -826,6 +826,15 @@ select option {
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
+.token-field > label {
+  display: block;
+  margin-bottom: 6px;
+  color: #dfc39a;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
 .field em {
   color: #b99f83;
   font-style: normal;
@@ -883,6 +892,142 @@ input::placeholder {
   margin-top: 5px;
   color: #b39a7f;
   font-size: 10px;
+}
+.token-field {
+  position: relative;
+}
+.token-support {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.token-support small {
+  margin-top: 0;
+}
+.token-help-open {
+  min-height: 34px;
+  margin-right: -6px;
+  padding: 0 6px;
+  border: 0;
+  color: #e6a653;
+  background: transparent;
+  opacity: 0.8;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 750;
+  text-decoration: none;
+  transition:
+    color 0.18s,
+    opacity 0.18s;
+}
+.token-help-open:hover {
+  color: #ffd394;
+  opacity: 1;
+}
+.token-help-backdrop {
+  position: fixed;
+  z-index: 19;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.token-help {
+  position: fixed;
+  z-index: 20;
+  top: var(--token-help-top);
+  right: var(--token-help-right);
+  width: min(340px, calc(100vw - 48px));
+  padding: 18px;
+  border: 1px solid rgba(230, 166, 83, 0.34);
+  border-radius: 8px;
+  color: var(--ink);
+  background: #173936;
+  box-shadow: 0 18px 45px rgba(4, 16, 15, 0.46);
+  animation: token-help-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.token-help-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.token-help h3 {
+  margin: 0;
+  font:
+    700 20px/1.15 'Iowan Old Style',
+    Georgia,
+    serif;
+  letter-spacing: -0.02em;
+}
+.token-help-close {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  margin: -8px -8px -8px 0;
+  padding: 0;
+  border: 0;
+  color: #d8c5ad;
+  background: transparent;
+  cursor: pointer;
+}
+.token-help-close svg,
+.token-help-cta svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+.token-help ol {
+  margin: 16px 0;
+  padding-left: 22px;
+  color: #ead8c1;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.token-help li + li {
+  margin-top: 7px;
+}
+.token-help li::marker {
+  color: #e6a653;
+  font-weight: 800;
+}
+.token-help-cta {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 13px;
+  border-radius: 4px;
+  color: #fff8ec;
+  background: #a83d34;
+  font-size: 12px;
+  font-weight: 750;
+  text-decoration: none;
+  transition:
+    background 0.18s,
+    transform 0.18s;
+}
+.token-help-cta:hover {
+  background: #b8463b;
+  transform: translateY(-1px);
+}
+@keyframes token-help-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
 }
 .notice {
   min-height: 18px;
@@ -1634,6 +1779,38 @@ input::placeholder {
   .composer h2 {
     font-size: 26px;
   }
+  .token-support {
+    min-height: 44px;
+  }
+  .token-help-open {
+    min-height: 44px;
+  }
+  .token-help-backdrop {
+    z-index: 29;
+    background: rgba(5, 18, 17, 0.62);
+    backdrop-filter: blur(3px);
+  }
+  .token-help {
+    position: fixed;
+    z-index: 30;
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    padding: 22px 20px calc(22px + env(safe-area-inset-bottom));
+    border-width: 1px 0 0;
+    border-radius: 12px 12px 0 0;
+    animation-name: token-help-sheet-in;
+  }
+  .token-help-close {
+    width: 44px;
+    height: 44px;
+    margin: -10px -10px -10px 0;
+  }
+  .token-help-cta {
+    min-height: 48px;
+  }
   .field-row,
   .modes {
     grid-template-columns: 1fr;
@@ -1685,6 +1862,12 @@ input::placeholder {
     max-height: max(140px, min(55svh, calc(100svh - 330px)));
     font-size: 18px;
     line-height: 1.55;
+  }
+}
+@keyframes token-help-sheet-in {
+  from {
+    opacity: 0.5;
+    transform: translateY(18px);
   }
 }
 @media (max-height: 500px) {
