@@ -3,9 +3,11 @@ import http from 'node:http';
 
 const require = createRequire(import.meta.url);
 const legacyRoomPagePath: string = '../../share/room-page.mjs';
-const { roomPage } = (await import(legacyRoomPagePath)) as {
-  roomPage(roomId: string, nonce: string): string;
+const roomPageModule = (await import(legacyRoomPagePath)) as {
+  roomPage: (roomId: string, nonce: string) => string;
 };
+const roomPage = (roomId: string, nonce: string) =>
+  roomPageModule.roomPage(roomId, nonce);
 const legacy = require('../../server.js') as {
   createServer(options: Record<string, unknown>): http.Server;
 };
@@ -21,12 +23,17 @@ const json = (value: unknown, status = 200): Response =>
     headers: { 'content-type': 'application/json' },
   });
 
-async function fakeFetch(input: string | URL | Request, init?: RequestInit) {
+function requestBody(body: BodyInit | null | undefined): string {
+  if (typeof body !== 'string') throw new Error('Fixture expected a JSON body');
+  return body;
+}
+
+function fakeFetch(input: string | URL | Request, init?: RequestInit) {
   const url = new URL(
     typeof input === 'string' || input instanceof URL ? input : input.url,
   );
   if (url.pathname === '/v1/music_generation') {
-    const body = JSON.parse(String(init?.body)) as { jobId?: string };
+    const body = JSON.parse(requestBody(init?.body)) as { jobId?: string };
     return json({
       jobId: body.jobId,
       data: { audio: generatedAudio },
@@ -56,7 +63,10 @@ async function fakeFetch(input: string | URL | Request, init?: RequestInit) {
       return json(record, 201);
     }
     if (init?.method === 'PUT') {
-      const update = JSON.parse(String(init.body)) as Record<string, unknown>;
+      const update = JSON.parse(requestBody(init.body)) as Record<
+        string,
+        unknown
+      >;
       const record = { jobId, ...update };
       jobRecords.set(jobId, record);
       return json(record);
@@ -75,7 +85,7 @@ async function fakeFetch(input: string | URL | Request, init?: RequestInit) {
 const app = legacy.createServer({
   apiBase: 'https://api.example.test',
   fetchImpl: fakeFetch,
-  writeLyrics: async ({ idea }: { idea: string }) => ({
+  writeLyrics: ({ idea }: { idea: string }) => ({
     title: idea,
     language: 'Hindi',
     nativeScriptName: 'Devanagari',

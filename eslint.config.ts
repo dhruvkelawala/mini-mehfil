@@ -66,4 +66,27 @@ export default tseslint.config(
     ],
     languageOptions: { globals: globals.node },
   },
+  {
+    files: ['src/room/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                '../client/**',
+                '../server/**',
+                '../worker/**',
+                '../../src/client/**',
+                '../../src/server/**',
+                '../../src/worker/**',
+              ],
+              message: 'The room core must remain platform-independent.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

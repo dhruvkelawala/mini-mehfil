@@ -7,10 +7,11 @@
     "start": "node server.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "eslint --max-warnings 0 eslint.config.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.tools.json",
+    "lint": "eslint --max-warnings 0 eslint.config.ts playwright.config.ts vitest.config.ts src test/room test/browser test/fixtures",
+    "typecheck": "tsc --noEmit -p tsconfig.tools.json && tsc --noEmit -p tsconfig.room.json",
     "test": "node --test test/*.test.js test/*.test.mjs",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "test:unit": "vitest run"
   },
   "engines": {
     "node": ">=24"
