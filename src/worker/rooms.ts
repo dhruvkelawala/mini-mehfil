@@ -1,4 +1,3 @@
-import { roomPage } from '../../share/room-page.mjs';
 import { constantTimeEqual, sha256 } from '../room/transport.ts';
 
 const ROOM_ID_PATTERN = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/;
@@ -15,9 +14,7 @@ export interface RoomDirectory {
   connect(roomId: string, request: Request): Promise<Response>;
 }
 
-type RoomPageRenderer = (roomId: string, nonce: string) => string;
-const renderLegacyRoomPage: RoomPageRenderer = (roomId, nonce) =>
-  String(roomPage(roomId, nonce));
+type RoomPageRenderer = (roomId: string) => Promise<string>;
 
 interface RoomRouterOptions {
   directory: RoomDirectory;
@@ -95,7 +92,7 @@ export function createRoomRouter({
   directory,
   rateLimit = () => Promise.resolve(true),
   secret = '',
-  renderPage = renderLegacyRoomPage,
+  renderPage,
   createCode = randomRoomCode,
   createHostSecret = () => randomBase64Url(32),
   now = Date.now,
@@ -169,8 +166,20 @@ export function createRoomRouter({
     if (join && (request.method === 'GET' || request.method === 'HEAD')) {
       const roomId = join[1];
       if (!roomId) return json({ error: 'Invalid room.' }, 400);
-      const nonce = randomBase64Url(12);
-      const html = renderPage(roomId, nonce);
+      if (!renderPage) {
+        return new Response('Listener assets are unavailable.', {
+          status: 503,
+        });
+      }
+      let html: string;
+      try {
+        html = await renderPage(roomId);
+      } catch {
+        return new Response('Listener assets are unavailable.', {
+          status: 503,
+          headers: { 'content-type': 'text/plain; charset=utf-8' },
+        });
+      }
       return new Response(request.method === 'HEAD' ? null : html, {
         headers: {
           'content-type': 'text/html; charset=utf-8',
@@ -179,8 +188,8 @@ export function createRoomRouter({
             "default-src 'none'",
             "connect-src 'self'",
             "media-src 'self' blob:",
-            `style-src 'nonce-${nonce}'`,
-            `script-src 'nonce-${nonce}'`,
+            "style-src 'self'",
+            "script-src 'self'",
             "base-uri 'none'",
             "form-action 'none'",
             "frame-ancestors 'none'",

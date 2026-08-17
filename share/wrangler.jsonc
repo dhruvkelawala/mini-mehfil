@@ -4,30 +4,31 @@
   "main": "../src/worker/index.ts",
   "compatibility_date": "2026-08-14",
   "vars": {
-    "MEHFIL_PUBLIC_URL": "https://minimehfil.wtf"
+    "MEHFIL_PUBLIC_URL": "https://minimehfil.wtf",
+  },
+  "assets": {
+    "directory": "../dist/listener",
+    "binding": "ASSETS",
+    "run_worker_first": true,
   },
   "r2_buckets": [
     {
       "binding": "SHARES",
-      "bucket_name": "mini-mehfil-shares"
-    }
+      "bucket_name": "mini-mehfil-shares",
+    },
   ],
   "durable_objects": {
-    "bindings": [
-      { "name": "ROOMS", "class_name": "MehfilRoom" }
-    ]
+    "bindings": [{ "name": "ROOMS", "class_name": "MehfilRoom" }],
   },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["MehfilRoom"] }
-  ],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MehfilRoom"] }],
   "ratelimits": [
     {
       "name": "UPLOAD_RATE_LIMIT",
       "namespace_id": "1001",
       "simple": {
         "limit": 5,
-        "period": 60
-      }
-    }
-  ]
+        "period": 60,
+      },
+    },
+  ],
 }

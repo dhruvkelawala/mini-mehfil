@@ -50,7 +50,9 @@ export default tseslint.config(
     languageOptions: {
       globals: globals.browser,
       parserOptions: {
-        projectService: true,
+        projectService: false,
+        project: ['./tsconfig.client.json'],
+        tsconfigRootDir: projectRoot,
       },
     },
   },

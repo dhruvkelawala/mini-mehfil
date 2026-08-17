@@ -9,6 +9,7 @@
     "verbatimModuleSyntax": true,
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true
   }
 }

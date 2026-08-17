@@ -8,11 +8,12 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint --max-warnings 0 eslint.config.ts playwright.config.ts vitest.config.ts vitest.worker.config.ts src test/room test/worker test/browser test/fixtures",
-    "typecheck": "tsc --noEmit -p tsconfig.tools.json && tsc --noEmit -p tsconfig.room.json && tsc --noEmit -p tsconfig.worker.json",
+    "typecheck": "tsc --noEmit -p tsconfig.tools.json && tsc --noEmit -p tsconfig.room.json && tsc --noEmit -p tsconfig.client.json && tsc --noEmit -p tsconfig.worker.json",
     "test": "node --test test/*.test.js test/*.test.mjs",
     "test:browser": "playwright test",
     "test:unit": "vitest run",
     "test:worker": "vitest run --config vitest.worker.config.ts --configLoader native",
+    "build:listener": "vite build --mode listener",
     "worker:types": "wrangler types worker-configuration.d.ts --config share/wrangler.jsonc",
     "worker:types:check": "wrangler types --check worker-configuration.d.ts --config share/wrangler.jsonc",
     "worker:dry-run": "wrangler deploy --dry-run --config share/wrangler.jsonc"
