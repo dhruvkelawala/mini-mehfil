@@ -31,7 +31,7 @@ export interface RoomStorage {
 export interface RoomConnections<Socket> {
   list?(): Iterable<Socket>;
   send(socket: Socket, message: unknown): void;
-  broadcast(createMessage: (socket: Socket) => unknown): void;
+  broadcast(createMessage: (session: RoomSession) => string): void;
   close(socket: Socket, code: number, reason: string): void;
   setSession(socket: Socket, session: RoomSession): void;
   getSession(socket: Socket): RoomSession | undefined;
@@ -214,19 +214,30 @@ export function createRoomTransport<Socket>({
   function broadcastSnapshots(): void {
     const currentState = state;
     if (!currentState) return;
-    connections.broadcast((socket) => ({
-      type: 'snapshot',
-      state: projectRoomState(currentState, connections.getSession(socket)),
-    }));
+    const serialized = new Map<string, string>();
+    connections.broadcast((session) => {
+      const key = `${session.role ?? ''}:${session.participantId ?? ''}`;
+      let message = serialized.get(key);
+      if (!message) {
+        message = JSON.stringify({
+          type: 'snapshot',
+          state: projectRoomState(currentState, session),
+        });
+        serialized.set(key, message);
+      }
+      return message;
+    });
   }
 
   async function scheduleExpiry(): Promise<void> {
     if (!metadata) return;
+    const previousDeadline = metadata.emptyDeadline;
     const someoneIsPresent = [...activeSockets()].some(
       (socket) => connections.getSession(socket)?.authenticated,
     );
     if (someoneIsPresent) metadata.emptyDeadline = null;
     else metadata.emptyDeadline ??= now() + EMPTY_GRACE_MS;
+    if (metadata.emptyDeadline === previousDeadline) return;
     await storage.put('meta', metadata);
     await storage.setAlarm(
       Math.min(metadata.absoluteDeadline, metadata.emptyDeadline ?? Infinity),

@@ -148,10 +148,20 @@ describe('host generation modules', () => {
   });
 
   test('records a sanitized playback failure', () => {
+    vi.stubGlobal('location', new URL('https://example.test/?mediaDebug=1'));
     const diagnostics = createMediaDiagnostics();
     diagnostics.recordFailure(new Error('autoplay blocked'));
     expect(diagnostics.visible()).toBe(true);
     expect(diagnostics.report()).toContain('autoplay blocked');
     expect(diagnostics.report()).not.toContain('token');
+    vi.unstubAllGlobals();
+  });
+
+  test('keeps playback diagnostics hidden unless media debug is enabled', () => {
+    const diagnostics = createMediaDiagnostics();
+    diagnostics.recordFailure(new Error('autoplay blocked'));
+    expect(diagnostics.available()).toBe(false);
+    expect(diagnostics.visible()).toBe(false);
+    expect(diagnostics.report()).toBe('');
   });
 });

@@ -1,3 +1,7 @@
+import { isRecord } from './primitives.ts';
+
+export { isRecord } from './primitives.ts';
+
 export type RoomRole = 'host' | 'listener';
 export type RequestStatus =
   'pending' | 'accepted' | 'recording' | 'declined' | 'ready';
@@ -10,6 +14,36 @@ export interface LyricsSheet {
   isLatinScript: boolean;
   lyricsNative: string;
   lyricsRoman: string;
+}
+
+export function parseLyricsSheet(
+  value: unknown,
+  fallback: Partial<Pick<LyricsSheet, 'title' | 'language'>> = {},
+): LyricsSheet | null {
+  if (
+    !isRecord(value) ||
+    typeof value.nativeScriptName !== 'string' ||
+    typeof value.isLatinScript !== 'boolean' ||
+    typeof value.lyricsNative !== 'string' ||
+    typeof value.lyricsRoman !== 'string'
+  ) {
+    return null;
+  }
+  const title =
+    typeof value.title === 'string' ? value.title : (fallback.title ?? '');
+  const language =
+    typeof value.language === 'string'
+      ? value.language
+      : (fallback.language ?? '');
+  if (!title || !language) return null;
+  return {
+    title,
+    language,
+    nativeScriptName: value.nativeScriptName,
+    isLatinScript: value.isLatinScript,
+    lyricsNative: value.lyricsNative,
+    lyricsRoman: value.lyricsRoman,
+  };
 }
 
 export interface Participant {
@@ -71,6 +105,10 @@ export interface RoomState {
   currentSong: RoomSong | null;
   setlist: SetlistSong[];
 }
+
+export type HostRoomProjection = Omit<RoomState, 'kickedParticipantIds'> & {
+  listenerCount: number;
+};
 
 interface EventBase {
   role: RoomRole;
@@ -211,10 +249,6 @@ const CLIENT_TYPES = new Set<ClientMessage['type']>([
   'kicked',
   'room-expired',
 ]);
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function isRequestStatus(value: string): value is RequestStatus {
   return (
@@ -369,27 +403,6 @@ export function parseRoomState(value: unknown): RoomState | null {
       submittedAt: item.submittedAt,
     });
   }
-  const parseLyrics = (item: unknown): LyricsSheet | null => {
-    if (
-      !isRecord(item) ||
-      typeof item.title !== 'string' ||
-      typeof item.language !== 'string' ||
-      typeof item.nativeScriptName !== 'string' ||
-      typeof item.isLatinScript !== 'boolean' ||
-      typeof item.lyricsNative !== 'string' ||
-      typeof item.lyricsRoman !== 'string'
-    ) {
-      return null;
-    }
-    return {
-      title: item.title,
-      language: item.language,
-      nativeScriptName: item.nativeScriptName,
-      isLatinScript: item.isLatinScript,
-      lyricsNative: item.lyricsNative,
-      lyricsRoman: item.lyricsRoman,
-    };
-  };
   const parseSetlist = (item: unknown): SetlistSong | null => {
     if (
       !isRecord(item) ||
@@ -425,7 +438,7 @@ export function parseRoomState(value: unknown): RoomState | null {
     const lyrics =
       value.currentRecording.lyrics === null
         ? null
-        : parseLyrics(value.currentRecording.lyrics);
+        : parseLyricsSheet(value.currentRecording.lyrics);
     if (value.currentRecording.lyrics !== null && !lyrics) return null;
     currentRecording = {
       requestId: value.currentRecording.requestId,
@@ -437,7 +450,7 @@ export function parseRoomState(value: unknown): RoomState | null {
   if (value.currentSong !== null) {
     if (!isRecord(value.currentSong)) return null;
     const base = parseSetlist(value.currentSong);
-    const lyrics = parseLyrics(value.currentSong.lyrics);
+    const lyrics = parseLyricsSheet(value.currentSong.lyrics);
     const playback = value.currentSong.playback;
     if (
       !base ||
@@ -480,4 +493,15 @@ export function parseRoomState(value: unknown): RoomState | null {
     currentSong,
     setlist,
   };
+}
+
+export function parseHostRoomProjection(
+  value: unknown,
+): HostRoomProjection | null {
+  if (!isRecord(value) || typeof value.listenerCount !== 'number') return null;
+  const parsed = parseRoomState({ ...value, kickedParticipantIds: [] });
+  if (!parsed) return null;
+  const { kickedParticipantIds, ...projection } = parsed;
+  void kickedParticipantIds;
+  return { ...projection, listenerCount: value.listenerCount };
 }

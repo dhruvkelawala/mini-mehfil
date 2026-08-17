@@ -1,7 +1,14 @@
 import { constantTimeEqual, sha256 } from '../room/transport.ts';
+import {
+  isRoomId,
+  randomBase64Url,
+  ROOM_ID_ALPHABET,
+  ROOM_ID_SOURCE,
+} from '../room/primitives.ts';
 
-const ROOM_ID_PATTERN = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/;
 const ROOM_LIFETIME_MS = 6 * 60 * 60 * 1000;
+const JOIN_ROUTE_PATTERN = new RegExp(`^/r/(${ROOM_ID_SOURCE})$`);
+const SOCKET_ROUTE_PATTERN = new RegExp(`^/rooms/(${ROOM_ID_SOURCE})/ws$`);
 
 type RoomInitialization = {
   hostDigest: string;
@@ -41,20 +48,12 @@ function json(
   });
 }
 
-function randomBase64Url(byteLength: number): string {
-  const bytes = new Uint8Array(byteLength);
-  crypto.getRandomValues(bytes);
-  return btoa(String.fromCharCode(...bytes))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replaceAll('=', '');
-}
-
 function randomRoomCode(): string {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);
-  return [...bytes].map((byte) => alphabet[byte % alphabet.length]).join('');
+  return [...bytes]
+    .map((byte) => ROOM_ID_ALPHABET[byte % ROOM_ID_ALPHABET.length])
+    .join('');
 }
 
 /**
@@ -132,7 +131,7 @@ export function createRoomRouter({
 
       for (let attempt = 0; attempt < 5; attempt += 1) {
         const roomId = createCode();
-        if (!ROOM_ID_PATTERN.test(roomId)) continue;
+        if (!isRoomId(roomId)) continue;
 
         const hostSecret = createHostSecret();
         const openedAt = now();
@@ -160,9 +159,7 @@ export function createRoomRouter({
       return json({ error: 'Could not open a room. Please retry.' }, 503);
     }
 
-    const join = url.pathname.match(
-      /^\/r\/([ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8})$/,
-    );
+    const join = url.pathname.match(JOIN_ROUTE_PATTERN);
     if (join && (request.method === 'GET' || request.method === 'HEAD')) {
       const roomId = join[1];
       if (!roomId) return json({ error: 'Invalid room.' }, 400);
@@ -200,9 +197,7 @@ export function createRoomRouter({
       });
     }
 
-    const socket = url.pathname.match(
-      /^\/rooms\/([ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8})\/ws$/,
-    );
+    const socket = url.pathname.match(SOCKET_ROUTE_PATTERN);
     if (socket && request.method === 'GET') {
       const roomId = socket[1];
       if (!roomId) return json({ error: 'Invalid room.' }, 400);

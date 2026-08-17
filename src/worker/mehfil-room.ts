@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 
+import { randomBase64Url } from '../room/primitives.ts';
 import { isRecord } from '../room/protocol.ts';
 import type { RoomSession } from '../room/protocol.ts';
 import type {
@@ -9,19 +10,27 @@ import type {
 } from '../room/transport.ts';
 import { createRoomTransport } from '../room/transport.ts';
 
-function randomBase64Url(byteLength: number): string {
-  const bytes = new Uint8Array(byteLength);
-  crypto.getRandomValues(bytes);
-  return btoa(String.fromCharCode(...bytes))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replaceAll('=', '');
-}
-
 function createCloudflareRoomAdapters(ctx: DurableObjectState): {
   storage: RoomStorage;
   connections: RoomConnections<WebSocket>;
 } {
+  const parseSession = (value: unknown): RoomSession | undefined => {
+    if (!isRecord(value) || typeof value.authenticated !== 'boolean') {
+      return undefined;
+    }
+    return {
+      authenticated: value.authenticated,
+      ...(typeof value.connectedAt === 'number'
+        ? { connectedAt: value.connectedAt }
+        : {}),
+      ...(value.role === 'host' || value.role === 'listener'
+        ? { role: value.role }
+        : {}),
+      ...(typeof value.participantId === 'string'
+        ? { participantId: value.participantId }
+        : {}),
+    };
+  };
   const storage: RoomStorage = {
     get: (key) => ctx.storage.get(key),
     put: (key, value) => ctx.storage.put(key, value),
@@ -33,10 +42,8 @@ function createCloudflareRoomAdapters(ctx: DurableObjectState): {
     },
     broadcast(createMessage) {
       for (const socket of ctx.getWebSockets()) {
-        const session: unknown = socket.deserializeAttachment();
-        if (isRecord(session) && session.authenticated === true) {
-          socket.send(JSON.stringify(createMessage(socket)));
-        }
+        const session = parseSession(socket.deserializeAttachment());
+        if (session?.authenticated) socket.send(createMessage(session));
       }
     },
     close(socket, code, reason) {
@@ -46,23 +53,7 @@ function createCloudflareRoomAdapters(ctx: DurableObjectState): {
       socket.serializeAttachment(value);
     },
     getSession(socket) {
-      const value: unknown = socket.deserializeAttachment();
-      if (!isRecord(value) || typeof value.authenticated !== 'boolean') {
-        return undefined;
-      }
-      const session: RoomSession = {
-        authenticated: value.authenticated,
-        ...(typeof value.connectedAt === 'number'
-          ? { connectedAt: value.connectedAt }
-          : {}),
-        ...(value.role === 'host' || value.role === 'listener'
-          ? { role: value.role }
-          : {}),
-        ...(typeof value.participantId === 'string'
-          ? { participantId: value.participantId }
-          : {}),
-      };
-      return session;
+      return parseSession(socket.deserializeAttachment());
     },
     list: () => ctx.getWebSockets(),
   };

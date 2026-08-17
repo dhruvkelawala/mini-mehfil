@@ -40,5 +40,12 @@ test('the default Worker and named Durable Object load with local bindings', asy
       state.storage.get('state'),
     ),
   ).resolves.toMatchObject({ roomId: 'ABCDEFGH', version: 1 });
+  const upgrade = await SELF.fetch('https://worker.test/rooms/ABCDEFGH/ws', {
+    headers: { upgrade: 'websocket' },
+  });
+  expect(upgrade.status).toBe(101);
+  expect(upgrade.webSocket).toBeTruthy();
+  upgrade.webSocket?.accept();
+  upgrade.webSocket?.close(1000, 'fixture complete');
   await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
 });

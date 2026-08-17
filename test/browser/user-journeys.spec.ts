@@ -1,6 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { installWebSocketHarness } from '../fixtures/websocket-harness.ts';
+import { createRoomState } from '../../src/room/state.ts';
+import {
+  installWebSocketHarness,
+  projectHostFixture,
+} from '../fixtures/websocket-harness.ts';
 
 const sharedSongId = 'AbCdEfGhIjKlMnOp';
 
@@ -47,9 +51,9 @@ test('a generated song can be revealed, shared, and reopened', async ({
   await expect(page.getByText('Your recording is ready.')).toBeVisible();
   const lyricToggle = page.locator('#peek-toggle');
   await expect(lyricToggle).toBeVisible();
-  if ((await lyricToggle.innerText()).includes('Reveal')) {
+  if ((await lyricToggle.innerText()).includes('Hide'))
     await lyricToggle.click();
-  }
+  await lyricToggle.click();
   await expect(page.getByText('बारिश की रात')).toBeVisible();
   await expect(page.getByText('Baarish ki raat')).toBeVisible();
 
@@ -90,52 +94,48 @@ test('a host manages a request through recording and publication', async ({
     .click();
   await expect(page.getByText('connected')).toBeVisible();
 
-  await page.evaluate(() => {
+  const timestamp = Date.now();
+  const roomState = createRoomState({
+    roomId: 'ABCDEFGH',
+    openedAt: timestamp,
+    expiresAt: timestamp + 60_000,
+  });
+  roomState.hostPresent = true;
+  roomState.participants.push({
+    id: 'listener-1',
+    name: 'Asha',
+    connected: true,
+    joinedAt: timestamp,
+  });
+  roomState.queue.push(
+    {
+      id: 'request-1',
+      participantId: 'listener-1',
+      idea: 'Rain on the old roof',
+      vibe: 'acoustic',
+      language: 'Hindi',
+      status: 'pending',
+      submittedAt: timestamp,
+    },
+    {
+      id: 'request-2',
+      participantId: 'listener-1',
+      idea: 'Night drive home',
+      vibe: 'warm',
+      language: 'Gujarati',
+      status: 'accepted',
+      submittedAt: timestamp + 1,
+    },
+  );
+  await page.evaluate((state) => {
     const fixtureWindow = window as typeof window & {
       __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
     };
     fixtureWindow.__mehfilSockets[0]?.serverMessage({
       type: 'snapshot',
-      state: {
-        version: 1,
-        roomId: 'ABCDEFGH',
-        hostPresent: true,
-        participants: [
-          {
-            id: 'listener-1',
-            name: 'Asha',
-            connected: true,
-            joinedAt: Date.now(),
-          },
-        ],
-        queue: [
-          {
-            id: 'request-1',
-            participantId: 'listener-1',
-            requesterName: 'Asha',
-            idea: 'Rain on the old roof',
-            vibe: 'acoustic',
-            language: 'Hindi',
-            status: 'pending',
-            submittedAt: Date.now(),
-          },
-          {
-            id: 'request-2',
-            participantId: 'listener-1',
-            requesterName: 'Asha',
-            idea: 'Night drive home',
-            vibe: 'warm',
-            language: 'Gujarati',
-            status: 'accepted',
-            submittedAt: Date.now() + 1,
-          },
-        ],
-        currentRecording: null,
-        currentSong: null,
-        setlist: [],
-      },
+      state,
     });
-  });
+  }, projectHostFixture(roomState));
 
   const participant = page
     .locator('#host-participants li')

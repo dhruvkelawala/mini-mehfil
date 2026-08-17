@@ -110,6 +110,22 @@ test('shared playback uses the exact courtyard artwork from the app', () => {
   assert.equal(html.includes(COURTYARD_SCENE), true);
 });
 
+test('shared playback safely embeds titles containing slashes and newlines', () => {
+  const html = playbackPage(
+    ID,
+    { ...SONG, title: 'Rain \\ refrain\nsecond line' },
+    'nonce',
+    'https://share.example',
+    '',
+  );
+  const inlineScript = html.match(
+    /<script nonce="nonce">([\s\S]*)<\/script>/,
+  )?.[1];
+  assert.ok(inlineScript);
+  assert.doesNotThrow(() => new vm.Script(inlineScript));
+  assert.equal(html.includes("'Play Rain \\ refrain\nsecond line'"), false);
+});
+
 test('shared playback advances progress and lyrics without relying on timeupdate', async () => {
   class Element {
     constructor() {

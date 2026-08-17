@@ -12,7 +12,7 @@ interface Reservation {
 }
 
 class TopologyFailure extends Error {
-  readonly output: string;
+  output: string;
 
   constructor(message: string, output: string) {
     super(message);
@@ -234,21 +234,43 @@ async function runAttempt(): Promise<void> {
   activeChild = child;
   child.stdout?.on('data', append);
   child.stderr?.on('data', append);
+  let primaryFailure: TopologyFailure | null = null;
+  const cleanupFailures: unknown[] = [];
   try {
     await waitForTopology(child, webPort, apiPort);
     await assertTokenValidation(webPort);
     await assertTokenValidation(apiPort);
   } catch (error) {
-    throw new TopologyFailure(
+    primaryFailure = new TopologyFailure(
       error instanceof Error ? error.message : String(error),
       output,
     );
   } finally {
-    await terminateOwnedTree(child);
+    try {
+      await terminateOwnedTree(child);
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
     activeChild = null;
-    await assertPortsReleased([webPort, apiPort]);
+    try {
+      await assertPortsReleased([webPort, apiPort]);
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
     activePorts = [];
   }
+  if (primaryFailure) {
+    if (cleanupFailures.length) {
+      primaryFailure.output = `${primaryFailure.output}\nCleanup errors:\n${cleanupFailures
+        .map((error) =>
+          error instanceof Error ? error.message : String(error),
+        )
+        .join('\n')}`;
+    }
+    throw primaryFailure;
+  }
+  if (cleanupFailures.length)
+    throw new AggregateError(cleanupFailures, 'Development cleanup failed.');
 }
 
 async function main(): Promise<void> {

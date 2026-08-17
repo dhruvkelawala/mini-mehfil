@@ -56,6 +56,7 @@ export function playbackPage(
   const shareUrl = `${origin}/s/${id}`;
   const audioUrl = `${shareUrl}/audio`;
   const description = `Listen to ${song.title} in the Mini Mehfil courtyard.`;
+  const playLabel = scriptJson(`Play ${song.title}`);
   const imageMetadata = previewImageUrl
     ? `<meta property="og:image" content="${escapeHtml(previewImageUrl)}"><meta name="twitter:image" content="${escapeHtml(previewImageUrl)}">`
     : '';
@@ -82,7 +83,7 @@ let visualFrame=0;
 function refreshWhilePlaying(){sync();if(audio.paused||audio.ended){visualFrame=0;return}visualFrame=requestAnimationFrame(refreshWhilePlaying)}
 function startVisualRefresh(){if(!visualFrame)visualFrame=requestAnimationFrame(refreshWhilePlaying)}
 function stopVisualRefresh(){if(visualFrame){cancelAnimationFrame(visualFrame);visualFrame=0}sync()}
-function setPlaying(playing){player.classList.toggle('playing',playing);scene.classList.toggle('is-performing',playing);play.setAttribute('aria-label',playing?'Pause':'Play ${escapeHtml(song.title)}')}
+function setPlaying(playing){player.classList.toggle('playing',playing);scene.classList.toggle('is-performing',playing);play.setAttribute('aria-label',playing?'Pause':${playLabel})}
 play.addEventListener('click',()=>audio.paused?audio.play():audio.pause());audio.addEventListener('play',()=>{replay.hidden=true;setPlaying(true);sync();startVisualRefresh()});audio.addEventListener('pause',()=>{setPlaying(false);stopVisualRefresh()});audio.addEventListener('timeupdate',sync);audio.addEventListener('loadedmetadata',sync);audio.addEventListener('ended',()=>{replay.hidden=false;setPlaying(false);stopVisualRefresh()});seek.addEventListener('input',()=>{if(audio.duration){replay.hidden=true;audio.currentTime=(Number(seek.value)/100)*audio.duration;sync()}});replay.addEventListener('click',()=>{replay.hidden=true;audio.currentTime=0;sync();audio.play()});share.addEventListener('click',async()=>{const label=share.querySelector('span');try{await navigator.clipboard.writeText(location.href);label.textContent='Copied'}catch{label.textContent='Share'}});document.querySelector('#clock').textContent=new Intl.DateTimeFormat([],{hour:'numeric',minute:'2-digit'}).format(new Date()).toLowerCase();sync();
 </script></body></html>`;
 }

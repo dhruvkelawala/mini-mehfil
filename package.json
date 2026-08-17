@@ -7,8 +7,6 @@
   "description": "Mini Mehfil — a tiny local song room for MiniMax Music 3",
   "scripts": {
     "start": "node src/server/index.ts",
-    "dev:api": "node --watch src/server/index.ts --port 4174",
-    "dev:web": "vite --mode host --host 127.0.0.1 --port 4173",
     "dev": "node scripts/dev.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

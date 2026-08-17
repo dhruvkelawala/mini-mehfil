@@ -1,14 +1,14 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { Buffer } from 'node:buffer';
 
+import { isDirectEntry, parseTcpPort } from '../config/runtime.ts';
+import { isRoomId } from '../room/primitives.ts';
+import { isRecord } from '../room/protocol.ts';
 import type { LyricsResult, WriteLyricsOptions } from './lyricist.ts';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-const DEFAULT_STATIC_ROOT = path.resolve(__dirname, '../../dist/host');
+const DEFAULT_STATIC_ROOT = path.resolve(process.cwd(), 'dist/host');
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_SHARE_AUDIO_BYTES = 10 * 1024 * 1024;
 const JOB_ID_PATTERN = /^[A-Za-z0-9_-]{24}$/;
@@ -45,10 +45,6 @@ export type ServerFetch = (
   input: string | URL | Request,
   init?: RequestInit,
 ) => Promise<Response>;
-
-function isRecord(value: unknown): value is JsonRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function errorDetails(error: unknown): HttpError {
   return error instanceof Error ? error : new Error('Unexpected server error.');
@@ -342,30 +338,15 @@ export function createServer(options: ServerOptions = {}): http.Server {
     return { response, value };
   }
 
-  async function checkpointFailure(jobId: string, failure: unknown) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const checkpoint = await recoveryRequest(`/generation-jobs/${jobId}`, {
-          method: 'PUT',
-          body: { status: 'failed', error: failure },
-        });
-        if (checkpoint.response.ok) return true;
-      } catch {
-        // A second bounded checkpoint attempt follows.
-      }
-    }
-    return false;
-  }
-
-  async function checkpointComplete(
+  async function checkpoint(
     jobId: string,
-    completion: unknown,
+    body: unknown,
   ): Promise<JsonRecord | null> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const checkpoint = await recoveryRequest(`/generation-jobs/${jobId}`, {
           method: 'PUT',
-          body: completion,
+          body,
         });
         if (checkpoint.response.ok) return checkpoint.value;
       } catch {
@@ -374,6 +355,11 @@ export function createServer(options: ServerOptions = {}): http.Server {
     }
     return null;
   }
+
+  const checkpointFailure = (jobId: string, failure: unknown) =>
+    checkpoint(jobId, { status: 'failed', error: failure }).then(Boolean);
+  const checkpointComplete = (jobId: string, completion: unknown) =>
+    checkpoint(jobId, completion);
   const roomTimeoutMs = options.roomTimeoutMs || 2 * 60 * 1000;
   const handleRequest = async (
     req: http.IncomingMessage,
@@ -825,7 +811,7 @@ export function createServer(options: ServerOptions = {}): http.Server {
             error: result.error || 'The room could not be opened.',
           });
         const roomId = typeof result.roomId === 'string' ? result.roomId : '';
-        if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/.test(roomId))
+        if (!isRoomId(roomId))
           throw Object.assign(
             new Error('The room service returned invalid room details.'),
             { status: 502 },
@@ -914,17 +900,6 @@ export function assertHostBuild(staticRoot = DEFAULT_STATIC_ROOT): void {
   }
 }
 
-function parseTcpPort(value: string, source: string): number {
-  if (!/^\d+$/.test(value)) {
-    throw new Error(`${source} must be an integer TCP port from 1 to 65535.`);
-  }
-  const port = Number(value);
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`${source} must be an integer TCP port from 1 to 65535.`);
-  }
-  return port;
-}
-
 export function resolveDirectEntryPort(
   args: readonly string[],
   environmentPort?: string,
@@ -950,12 +925,9 @@ export function resolveDirectEntryPort(
 
 const server = createServer();
 
-if (
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
+if (isDirectEntry(import.meta.url)) {
   const port = resolveDirectEntryPort(process.argv.slice(2), process.env.PORT);
-  assertHostBuild();
+  if (!process.argv.includes('--api-only')) assertHostBuild();
   server.listen(port, '127.0.0.1', () => {
     console.log(`Mehfil is open at http://127.0.0.1:${port}`);
   });

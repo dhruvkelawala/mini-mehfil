@@ -127,22 +127,30 @@ export function transitionRoom(
   ) {
     return fail(state, 'host-only');
   }
-  const next = structuredClone(state);
   const participantIndex = (id: string) =>
-    next.participants.findIndex((item) => item.id === id);
+    state.participants.findIndex((item) => item.id === id);
   const requestIndex = (id: string) =>
-    next.queue.findIndex((item) => item.id === id);
+    state.queue.findIndex((item) => item.id === id);
 
   switch (event.type) {
     case 'room-opened':
-      return ok(next);
+      return ok(structuredClone(state));
     case 'joined': {
-      if (next.kickedParticipantIds.includes(event.participantId)) {
+      if (state.kickedParticipantIds.includes(event.participantId)) {
         return fail(state, 'kicked');
       }
       const existing = participantIndex(event.participantId);
       const name = clean(event.name, ROOM_LIMITS.name);
       if (name === null) return fail(state, 'invalid-name');
+      if (
+        event.role !== 'host' &&
+        existing < 0 &&
+        state.participants.filter((item) => item.connected).length >=
+          ROOM_LIMITS.listeners
+      ) {
+        return fail(state, 'room-full');
+      }
+      const next = structuredClone(state);
       if (event.role === 'host') next.hostPresent = true;
       else if (existing >= 0) {
         const participant = next.participants[existing];
@@ -153,12 +161,6 @@ export function transitionRoom(
           name: name || participant.name,
         };
       } else {
-        const listenerCount = next.participants.filter(
-          (item) => item.connected,
-        ).length;
-        if (listenerCount >= ROOM_LIMITS.listeners) {
-          return fail(state, 'room-full');
-        }
         next.participants.push({
           id: event.participantId,
           name: name || 'Listener',
@@ -169,9 +171,11 @@ export function transitionRoom(
       return ok(next);
     }
     case 'left': {
+      const index = participantIndex(event.participantId);
+      if (event.role !== 'host' && index < 0) return fail(state, 'not-found');
+      const next = structuredClone(state);
       if (event.role === 'host') next.hostPresent = false;
       else {
-        const index = participantIndex(event.participantId);
         const participant = next.participants[index];
         if (!participant) return fail(state, 'not-found');
         next.participants[index] = { ...participant, connected: false };
@@ -185,7 +189,7 @@ export function transitionRoom(
       if (participantIndex(event.participantId) < 0) {
         return fail(state, 'not-found');
       }
-      const activeRequestCount = next.queue.filter(
+      const activeRequestCount = state.queue.filter(
         (item) => !['declined', 'ready'].includes(item.status),
       ).length;
       if (activeRequestCount >= ROOM_LIMITS.queue) {
@@ -197,6 +201,7 @@ export function transitionRoom(
       if (idea === null || vibe === null || language === null) {
         return fail(state, 'invalid-request');
       }
+      const next = structuredClone(state);
       next.queue.push({
         id: event.requestId,
         participantId: event.participantId,
@@ -210,24 +215,26 @@ export function transitionRoom(
     }
     case 'request-accepted': {
       const index = requestIndex(event.requestId);
-      const request = next.queue[index];
+      const request = state.queue[index];
       if (!request || request.status !== 'pending') {
         return fail(state, 'invalid-transition');
       }
+      const next = structuredClone(state);
       next.queue[index] = { ...request, status: 'accepted' };
       return ok(next);
     }
     case 'request-reordered': {
       const from = requestIndex(event.requestId);
-      const request = next.queue[from];
+      const request = state.queue[from];
       const invalidTarget =
         !Number.isInteger(event.toIndex) ||
         event.toIndex < 0 ||
-        event.toIndex >= next.queue.length;
+        event.toIndex >= state.queue.length;
       const movable =
         request !== undefined &&
         ['pending', 'accepted'].includes(request.status);
       if (invalidTarget || !movable) return fail(state, 'invalid-transition');
+      const next = structuredClone(state);
       const [item] = next.queue.splice(from, 1);
       if (!item) return fail(state, 'invalid-transition');
       next.queue.splice(event.toIndex, 0, item);
@@ -235,20 +242,22 @@ export function transitionRoom(
     }
     case 'request-declined': {
       const index = requestIndex(event.requestId);
-      const request = next.queue[index];
+      const request = state.queue[index];
       if (!request || !['pending', 'accepted'].includes(request.status)) {
         return fail(state, 'invalid-transition');
       }
+      const next = structuredClone(state);
       next.queue[index] = { ...request, status: 'declined' };
       return ok(next);
     }
     case 'recording-started': {
-      if (next.currentRecording) return fail(state, 'recording-active');
+      if (state.currentRecording) return fail(state, 'recording-active');
       const index = requestIndex(event.requestId);
-      const request = next.queue[index];
+      const request = state.queue[index];
       if (!request || request.status !== 'accepted') {
         return fail(state, 'invalid-transition');
       }
+      const next = structuredClone(state);
       next.queue[index] = { ...request, status: 'recording' };
       next.currentRecording = {
         requestId: event.requestId,
@@ -258,21 +267,24 @@ export function transitionRoom(
       return ok(next);
     }
     case 'lyrics-ready': {
-      if (next.currentRecording?.requestId !== event.requestId) {
+      if (state.currentRecording?.requestId !== event.requestId) {
         return fail(state, 'invalid-transition');
       }
       const lyrics = cleanLyrics(event.lyrics);
       if (!lyrics) return fail(state, 'invalid-lyrics');
+      const next = structuredClone(state);
+      if (!next.currentRecording) return fail(state, 'invalid-transition');
       next.currentRecording.lyrics = lyrics;
       return ok(next);
     }
     case 'recording-failed': {
-      if (next.currentRecording?.requestId !== event.requestId) {
+      if (state.currentRecording?.requestId !== event.requestId) {
         return fail(state, 'invalid-transition');
       }
       const index = requestIndex(event.requestId);
-      const request = next.queue[index];
+      const request = state.queue[index];
       if (!request) return fail(state, 'invalid-transition');
+      const next = structuredClone(state);
       next.queue[index] = { ...request, status: 'accepted' };
       next.currentRecording = null;
       return ok(next);
@@ -280,9 +292,10 @@ export function transitionRoom(
     case 'song-shared': {
       const validShareId = /^[A-Za-z0-9_-]{16}$/.test(event.shareId);
       const lyrics = cleanLyrics(event.lyrics);
-      if (!validShareId || !lyrics || next.currentRecording) {
+      if (!validShareId || !lyrics || state.currentRecording) {
         return fail(state, 'invalid-song');
       }
+      const next = structuredClone(state);
       if (next.currentSong) {
         next.setlist.push({
           shareId: next.currentSong.shareId,
@@ -307,13 +320,17 @@ export function transitionRoom(
       return ok(next);
     }
     case 'song-ready': {
-      const recording = next.currentRecording;
+      const recording = state.currentRecording;
       const validShareId = /^[A-Za-z0-9_-]{16}$/.test(event.shareId);
       if (recording?.requestId !== event.requestId || !validShareId) {
         return fail(state, 'invalid-transition');
       }
       const lyrics = recording.lyrics ?? cleanLyrics(event.lyrics);
       if (!lyrics) return fail(state, 'invalid-lyrics');
+      const index = requestIndex(event.requestId);
+      const request = state.queue[index];
+      if (!request) return fail(state, 'invalid-transition');
+      const next = structuredClone(state);
       if (next.currentSong) {
         next.setlist.push({
           shareId: next.currentSong.shareId,
@@ -335,22 +352,21 @@ export function transitionRoom(
           changedAt: event.startedAt,
         },
       };
-      const index = requestIndex(event.requestId);
-      const request = next.queue[index];
-      if (!request) return fail(state, 'invalid-transition');
       next.queue[index] = { ...request, status: 'ready' };
       next.currentRecording = null;
       return ok(next);
     }
     case 'playback-updated': {
-      const validSong = next.currentSong?.shareId === event.shareId;
+      const validSong = state.currentSong?.shareId === event.shareId;
       const validPosition =
         Number.isFinite(event.positionMs) &&
         event.positionMs >= 0 &&
         event.positionMs <= 24 * 60 * 60 * 1000;
-      if (!validSong || !validPosition || !next.currentSong) {
+      if (!validSong || !validPosition || !state.currentSong) {
         return fail(state, 'invalid-playback');
       }
+      const next = structuredClone(state);
+      if (!next.currentSong) return fail(state, 'invalid-playback');
       next.currentSong.playback = {
         status: event.status,
         positionMs: Math.round(event.positionMs),
@@ -361,6 +377,7 @@ export function transitionRoom(
     case 'kicked': {
       const index = participantIndex(event.participantId);
       if (index < 0) return fail(state, 'not-found');
+      const next = structuredClone(state);
       next.participants.splice(index, 1);
       if (!next.kickedParticipantIds.includes(event.participantId)) {
         next.kickedParticipantIds.push(event.participantId);
@@ -369,7 +386,8 @@ export function transitionRoom(
         { type: 'close-participant', participantId: event.participantId },
       ]);
     }
-    case 'room-expired':
+    case 'room-expired': {
+      const next = structuredClone(state);
       next.expiredAt = event.at;
       next.hostPresent = false;
       next.participants = next.participants.map((item) => ({
@@ -377,6 +395,7 @@ export function transitionRoom(
         connected: false,
       }));
       return ok(next, [{ type: 'close-all' }]);
+    }
   }
 }
 
@@ -386,6 +405,7 @@ export function projectRoomState(
   state: RoomState,
   viewer: { role?: RoomEvent['role']; participantId?: string } = {},
 ) {
+  const connected = state.participants.filter((item) => item.connected);
   return {
     version: state.version,
     roomId: state.roomId,
@@ -393,20 +413,16 @@ export function projectRoomState(
     expiresAt: state.expiresAt,
     expiredAt: state.expiredAt,
     hostPresent: state.hostPresent,
-    participants: state.participants
-      .filter((item) => item.connected)
-      .map((item) =>
-        viewer.role === 'host' ? { ...item } : { name: item.name },
-      ),
-    listenerCount: state.participants.filter((item) => item.connected).length,
-    currentRecording: state.currentRecording
-      ? structuredClone(state.currentRecording)
-      : null,
-    currentSong: state.currentSong ? structuredClone(state.currentSong) : null,
-    setlist: structuredClone(state.setlist),
+    participants: connected.map((item) =>
+      viewer.role === 'host' ? item : { name: item.name },
+    ),
+    listenerCount: connected.length,
+    currentRecording: state.currentRecording,
+    currentSong: state.currentSong,
+    setlist: state.setlist,
     queue:
       viewer.role === 'host'
-        ? structuredClone(state.queue)
+        ? state.queue
         : state.queue.map((item) => ({
             id: item.id,
             status: item.status,

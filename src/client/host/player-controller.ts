@@ -23,7 +23,7 @@ export interface PlayerController {
   loadRoomSong(song: RoomSong, origin: string): void;
   syncRoomSong(song: RoomSong): void;
   clear(): void;
-  play(trigger?: string): Promise<boolean>;
+  play(): Promise<boolean>;
   pause(): void;
   toggle(): Promise<void>;
   seek(percent: number): void;
@@ -60,6 +60,7 @@ export function createPlayerController(
   let objectUrl: string | null = null;
   let roomTimer: ReturnType<typeof setTimeout> | null = null;
   let roomRevision = '';
+  let roomMetadataHandler: (() => void) | null = null;
 
   const releaseObjectUrl = () => {
     if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -68,10 +69,12 @@ export function createPlayerController(
   const dispose = () => {
     releaseObjectUrl();
     if (roomTimer) clearTimeout(roomTimer);
+    if (audio && roomMetadataHandler)
+      audio.removeEventListener('loadedmetadata', roomMetadataHandler);
   };
   if (getOwner()) onCleanup(dispose);
 
-  const play = async (trigger = 'play-button'): Promise<boolean> => {
+  const play = async (): Promise<boolean> => {
     if (!audio || !ready()) return false;
     try {
       await audio.play();
@@ -79,8 +82,7 @@ export function createPlayerController(
       return true;
     } catch (error) {
       setPlaying(false);
-      diagnostics.recordFailure(error);
-      void trigger;
+      diagnostics.recordFailure(error, audio);
       return false;
     }
   };
@@ -89,6 +91,9 @@ export function createPlayerController(
     if (roomTimer) clearTimeout(roomTimer);
     roomTimer = null;
     roomRevision = '';
+    if (audio && roomMetadataHandler)
+      audio.removeEventListener('loadedmetadata', roomMetadataHandler);
+    roomMetadataHandler = null;
     audio?.pause();
     audio?.removeAttribute('src');
     audio?.load();
@@ -131,6 +136,12 @@ export function createPlayerController(
         setDuration(Number.isFinite(element.duration) ? element.duration : 0);
         setCurrentTime(element.currentTime);
       });
+      element.addEventListener('error', () => {
+        diagnostics.recordFailure(
+          new Error(element.error?.message || 'The audio could not be loaded.'),
+          element,
+        );
+      });
     },
     async load(value, lyrics, reference = null) {
       releaseObjectUrl();
@@ -146,7 +157,7 @@ export function createPlayerController(
       setShareReference(reference);
       setReady(true);
       setEnded(false);
-      await play('generation-complete');
+      await play();
     },
     loadRoomSong(song, origin) {
       releaseObjectUrl();
@@ -169,8 +180,11 @@ export function createPlayerController(
       if (revision === roomRevision) return;
       roomRevision = revision;
       if (roomTimer) clearTimeout(roomTimer);
+      if (roomMetadataHandler)
+        audio.removeEventListener('loadedmetadata', roomMetadataHandler);
+      roomMetadataHandler = null;
       const apply = () => {
-        if (!audio) return;
+        if (!audio || revision !== roomRevision) return;
         const elapsed =
           playback.status === 'playing'
             ? Math.max(0, Date.now() - playback.changedAt)
@@ -179,14 +193,23 @@ export function createPlayerController(
         audio.currentTime = Number.isFinite(audio.duration)
           ? Math.min(desired, audio.duration)
           : desired;
-        if (playback.status === 'playing') void play('room-sync');
+        if (playback.status === 'playing') void play();
         else audio.pause();
       };
-      if (playback.status === 'playing' && playback.changedAt > Date.now()) {
-        audio.pause();
-        audio.currentTime = playback.positionMs / 1000;
-        roomTimer = setTimeout(apply, playback.changedAt - Date.now());
-      } else apply();
+      const scheduleApply = () => {
+        if (!audio || revision !== roomRevision) return;
+        roomMetadataHandler = null;
+        if (playback.status === 'playing' && playback.changedAt > Date.now()) {
+          audio.pause();
+          audio.currentTime = playback.positionMs / 1000;
+          roomTimer = setTimeout(apply, playback.changedAt - Date.now());
+        } else apply();
+      };
+      if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) scheduleApply();
+      else {
+        roomMetadataHandler = scheduleApply;
+        audio.addEventListener('loadedmetadata', scheduleApply, { once: true });
+      }
     },
     clear,
     play,
@@ -208,7 +231,7 @@ export function createPlayerController(
       if (!audio) return;
       setEnded(false);
       audio.currentTime = 0;
-      await play('replay-button');
+      await play();
     },
   };
 }

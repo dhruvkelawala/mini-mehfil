@@ -1,5 +1,6 @@
 import { createSignal, getOwner, onCleanup } from 'solid-js';
 
+import { isRecord, parseLyricsSheet } from '../../room/protocol.ts';
 import {
   createRecoveryCoordinator,
   type HostLyrics,
@@ -33,6 +34,10 @@ export interface GeneratedSong {
   shareReference: string | null;
   requestRun: number;
 }
+export interface ShareResult {
+  url: string;
+  copied: boolean;
+}
 export interface GenerationHooks {
   onLyrics?: (sheet: HostLyrics, run: number) => void;
   onReady?: (song: GeneratedSong) => void | Promise<void>;
@@ -45,22 +50,14 @@ export interface GenerationController {
   generating: () => boolean;
   lyrics: () => HostLyrics | null;
   shareReference: () => string | null;
-  shareUrl: () => string | null;
   checkGenerationVisible: () => boolean;
   performanceAvailable: () => boolean;
   generate(
     input: GenerateInput,
     hooks?: GenerationHooks,
   ): Promise<GeneratedSong | undefined>;
-  share(copy?: boolean, song?: GeneratedSong): Promise<string | undefined>;
-  resumePending(
-    reason:
-      | 'page-load'
-      | 'pageshow'
-      | 'visibilitychange'
-      | 'pending-response'
-      | 'generate-request-rejected',
-  ): boolean;
+  share(copy?: boolean, song?: GeneratedSong): Promise<ShareResult | undefined>;
+  resumePending(): boolean;
   checkGeneration(): void;
   lifecycleBackgrounded(): void;
   lifecycleForegrounded(): void;
@@ -75,30 +72,15 @@ interface HttpError extends Error {
   httpStatus?: number;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 function parseLyrics(value: unknown): HostLyrics | null {
-  if (!isRecord(value)) return null;
-  const strings = [
-    'title',
-    'language',
-    'nativeScriptName',
-    'lyricsNative',
-    'lyricsRoman',
-    'prompt',
-  ] as const;
-  if (strings.some((key) => typeof value[key] !== 'string')) return null;
+  const sheet = parseLyricsSheet(value);
+  if (!sheet || !isRecord(value) || typeof value.prompt !== 'string')
+    return null;
   return {
-    title: String(value.title),
-    language: String(value.language),
+    ...sheet,
     languageCode:
       typeof value.languageCode === 'string' ? value.languageCode : '',
-    nativeScriptName: String(value.nativeScriptName),
-    isLatinScript: value.isLatinScript === true,
-    lyricsNative: String(value.lyricsNative),
-    lyricsRoman: String(value.lyricsRoman),
-    prompt: String(value.prompt),
+    prompt: value.prompt,
   };
 }
 function audioSource(value: Record<string, unknown>): string | null {
@@ -127,14 +109,12 @@ export function createGenerationController({
   now = Date.now,
   visible = () =>
     typeof document === 'undefined' || document.visibilityState === 'visible',
-  onSongReady = () => undefined,
 }: {
   player: PlayerController;
   fetcher?: GenerationFetch;
   storage?: Storage;
   now?: () => number;
   visible?: () => boolean;
-  onSongReady?: (song: GeneratedSong) => void | Promise<void>;
 }): GenerationController {
   const [status, setStatus] = createSignal('');
   const [statusWorking, setStatusWorking] = createSignal(false);
@@ -233,8 +213,7 @@ export function createGenerationController({
       shareReference: reference,
       requestRun: run,
     };
-    if (activeHooks.onReady) await activeHooks.onReady(song);
-    else await onSongReady(song);
+    await activeHooks.onReady?.(song);
     return true;
   };
 
@@ -317,10 +296,7 @@ export function createGenerationController({
     }
   };
 
-  const resumePending = (
-    reason: Parameters<GenerationController['resumePending']>[0],
-    pending = recovery.read(),
-  ): boolean => {
+  const resumePending = (pending = recovery.read()): boolean => {
     if (generationRequestInFlight || !pending) return false;
     const current = recovery.current();
     if (current?.jobId === pending.jobId) {
@@ -335,7 +311,6 @@ export function createGenerationController({
     setStatusWorking(true);
     setStatus(RECORDING_LINES[0] ?? 'The band is recording…');
     setCheckGenerationVisible(false);
-    void reason;
     recovery.start(pending, run);
     return true;
   };
@@ -347,7 +322,6 @@ export function createGenerationController({
     generating,
     lyrics,
     shareReference,
-    shareUrl,
     checkGenerationVisible,
     performanceAvailable,
     async generate(input, hooks = {}) {
@@ -406,7 +380,7 @@ export function createGenerationController({
           generationRequestInFlight = false;
         }
         if (result.status === 'pending') {
-          resumePending('pending-response', pending);
+          resumePending(pending);
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
           return undefined;
         }
@@ -434,7 +408,7 @@ export function createGenerationController({
           pending &&
           !Number.isInteger((error as HttpError).httpStatus)
         ) {
-          resumePending('generate-request-rejected', pending);
+          resumePending(pending);
           return undefined;
         }
         if (pending) recovery.clear();
@@ -477,11 +451,12 @@ export function createGenerationController({
         try {
           await navigator.clipboard.writeText(url);
           setStatus('Share link copied. The mehfil can travel now.');
+          return { url, copied: true };
         } catch {
           setStatus(`Share link: ${url}`);
         }
       }
-      return url;
+      return { url, copied: false };
     },
     resumePending,
     checkGeneration() {

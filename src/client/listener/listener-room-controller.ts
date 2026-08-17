@@ -1,6 +1,6 @@
 import { createSignal, getOwner, onCleanup } from 'solid-js';
 
-import { isRecord } from '../../room/protocol.ts';
+import { isRecord, parseLyricsSheet } from '../../room/protocol.ts';
 import type { LyricsSheet, RoomPlayback } from '../../room/protocol.ts';
 
 export interface ListenerSong {
@@ -38,36 +38,11 @@ export interface ListenerRoomController {
   close(): void;
 }
 
-function parseLyrics(
-  value: unknown,
-  fallbackTitle = '',
-  fallbackLanguage = '',
-): LyricsSheet | null {
-  if (
-    !isRecord(value) ||
-    typeof value.nativeScriptName !== 'string' ||
-    typeof value.isLatinScript !== 'boolean' ||
-    typeof value.lyricsNative !== 'string' ||
-    typeof value.lyricsRoman !== 'string'
-  ) {
-    return null;
-  }
-  return {
-    title: typeof value.title === 'string' ? value.title : fallbackTitle,
-    language:
-      typeof value.language === 'string' ? value.language : fallbackLanguage,
-    nativeScriptName: value.nativeScriptName,
-    isLatinScript: value.isLatinScript,
-    lyricsNative: value.lyricsNative,
-    lyricsRoman: value.lyricsRoman,
-  };
-}
-
 function parseSong(value: unknown): ListenerSong | null {
   if (!isRecord(value)) return null;
   const title = typeof value.title === 'string' ? value.title : '';
   const language = typeof value.language === 'string' ? value.language : '';
-  const lyrics = parseLyrics(value.lyrics, title, language);
+  const lyrics = parseLyricsSheet(value.lyrics, { title, language });
   const playback = value.playback;
   if (
     typeof value.shareId !== 'string' ||
@@ -142,7 +117,7 @@ function parseSnapshot(value: unknown): ListenerSnapshot | null {
     const lyrics =
       value.currentRecording.lyrics === null
         ? null
-        : parseLyrics(value.currentRecording.lyrics);
+        : parseLyricsSheet(value.currentRecording.lyrics);
     if (value.currentRecording.lyrics !== null && !lyrics) return null;
     currentRecording = {
       requestId: value.currentRecording.requestId,
@@ -190,6 +165,7 @@ export function createListenerRoomController({
   let lastShareId: string | null = null;
   let playbackRevision: string | null = null;
   let playbackTimer: ReturnType<typeof setTimeout> | undefined;
+  let metadataHandler: (() => void) | null = null;
   let retryCount = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let lastName = '';
@@ -224,13 +200,17 @@ export function createListenerRoomController({
     if (revision === playbackRevision) return;
     playbackRevision = revision;
     if (playbackTimer) clearTimeout(playbackTimer);
+    if (metadataHandler)
+      audio.removeEventListener('loadedmetadata', metadataHandler);
+    metadataHandler = null;
     if (lastShareId !== song.shareId) {
       lastShareId = song.shareId;
       audio.src = `/s/${song.shareId}/audio`;
       audio.load();
     }
     const apply = () => {
-      if (!audio) return;
+      if (!audio || revision !== playbackRevision) return;
+      metadataHandler = null;
       const elapsed =
         playback.status === 'playing'
           ? Math.max(0, Date.now() - playback.changedAt)
@@ -251,6 +231,7 @@ export function createListenerRoomController({
       setPlaybackLabel('Starting together…');
       playbackTimer = setTimeout(apply, playback.changedAt - Date.now());
     } else if (audio.readyState < 1) {
+      metadataHandler = apply;
       audio.addEventListener('loadedmetadata', apply, { once: true });
     } else apply();
   };
@@ -342,6 +323,9 @@ export function createListenerRoomController({
     setTerminal(true);
     if (reconnectTimer) clearTimeout(reconnectTimer);
     if (playbackTimer) clearTimeout(playbackTimer);
+    if (audio && metadataHandler)
+      audio.removeEventListener('loadedmetadata', metadataHandler);
+    metadataHandler = null;
     socket?.close();
   };
   if (getOwner()) onCleanup(close);

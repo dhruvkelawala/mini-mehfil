@@ -1,4 +1,6 @@
+import { base64Url, randomBase64Url } from '../room/primitives.ts';
 import { isRecord } from '../room/protocol.ts';
+import { constantTimeEqual, sha256 } from '../room/transport.ts';
 import { playbackPage } from './playback-page.ts';
 import type { PlaybackSong } from './playback-page.ts';
 
@@ -96,25 +98,7 @@ function json(
 }
 
 function randomId(): string {
-  const bytes = new Uint8Array(12);
-  crypto.getRandomValues(bytes);
-  return btoa(String.fromCharCode(...bytes))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replaceAll('=', '');
-}
-
-function base64Url(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replaceAll('=', '');
-}
-
-async function digest(value: string): Promise<Uint8Array> {
-  return new Uint8Array(
-    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)),
-  );
+  return randomBase64Url(12);
 }
 
 async function validBearer(request: Request, secret: string): Promise<boolean> {
@@ -123,14 +107,10 @@ async function validBearer(request: Request, secret: string): Promise<boolean> {
     ? authorization.slice(7)
     : '';
   const [expectedDigest, providedDigest] = await Promise.all([
-    digest(secret),
-    digest(provided),
+    sha256(secret),
+    sha256(provided),
   ]);
-  let difference = expectedDigest.length ^ providedDigest.length;
-  for (let index = 0; index < expectedDigest.length; index += 1) {
-    difference |= (expectedDigest[index] ?? 0) ^ (providedDigest[index] ?? 0);
-  }
-  return Boolean(provided) && difference === 0;
+  return Boolean(provided) && constantTimeEqual(providedDigest, expectedDigest);
 }
 
 async function deriveShareId(
@@ -253,23 +233,14 @@ function validStoredJob(value: unknown, jobId: string): GenerationJob | null {
       value.status !== 'failed')
   )
     return null;
-  if (
-    ![value.createdAt, value.updatedAt, value.expiresAt].every(
-      (entry) =>
-        typeof entry === 'string' && Number.isFinite(Date.parse(entry)),
-    )
-  )
-    return null;
-  const createdAt = value.createdAt;
-  const updatedAt = value.updatedAt;
-  const expiresAt = value.expiresAt;
-  if (
-    typeof createdAt !== 'string' ||
-    typeof updatedAt !== 'string' ||
-    typeof expiresAt !== 'string'
-  ) {
-    return null;
-  }
+  const parseIsoDate = (entry: unknown) =>
+    typeof entry === 'string' && Number.isFinite(Date.parse(entry))
+      ? entry
+      : null;
+  const createdAt = parseIsoDate(value.createdAt);
+  const updatedAt = parseIsoDate(value.updatedAt);
+  const expiresAt = parseIsoDate(value.expiresAt);
+  if (!createdAt || !updatedAt || !expiresAt) return null;
   const record: GenerationJob = {
     version: JOB_VERSION,
     jobId,
@@ -622,10 +593,10 @@ export function createShareHandler({
           jobId,
           currentTime,
         );
-        const current = validStoredJob(currentResult?.record, jobId);
-        if (!current || Date.parse(current.expiresAt) <= currentTime)
-          return json({ error: 'Generation job was not found.' }, 404);
         if (!currentResult)
+          return json({ error: 'Generation job was not found.' }, 404);
+        const current = validStoredJob(currentResult.record, jobId);
+        if (!current || Date.parse(current.expiresAt) <= currentTime)
           return json({ error: 'Generation job was not found.' }, 404);
         if (request.method === 'GET') return json(current);
 

@@ -3,7 +3,11 @@ import http from 'node:http';
 import { extname, resolve } from 'node:path';
 
 import { roomPage } from '../../src/worker/room-page.ts';
-import { playbackPage } from '../../src/worker/playback-page.ts';
+import { createRoomRouter } from '../../src/worker/rooms.ts';
+import {
+  createShareHandler,
+  type ShareStorage,
+} from '../../src/worker/sharing.ts';
 import { createServer } from '../../src/server/index.ts';
 
 const portFlag = process.argv.indexOf('--port');
@@ -126,6 +130,52 @@ const listenerAsset = {
   },
 };
 
+const routeRoomRequest = createRoomRouter({
+  directory: {
+    initialize: () => Promise.resolve(false),
+    connect: () =>
+      Promise.resolve(new Response('Upgrade required', { status: 426 })),
+  },
+  renderPage: (roomId) => roomPage(roomId, listenerAsset),
+});
+const sharedMetadata = {
+  title: 'Aloopuri Khavsa',
+  language: 'Gujarati',
+  nativeScriptName: 'Gujarati',
+  isLatinScript: false,
+  lyricsNative: '[Verse]\nઆ સાંજ ધીમે\nમહેકે છે',
+  lyricsRoman: '[Verse]\naa saanj dhime\nmaheke chhe',
+  createdAt: new Date(0).toISOString(),
+};
+const shareStorage: ShareStorage = {
+  put: () => Promise.resolve(),
+  getMetadata: (id) =>
+    Promise.resolve(id === sharedSongId ? sharedMetadata : null),
+  getAudio: (id) =>
+    Promise.resolve(
+      id === sharedSongId
+        ? ({
+            body: new Response(Uint8Array.from([73, 68, 51])).body,
+            size: 3,
+            etag: 'fixture',
+            httpMetadata: { contentType: 'audio/mpeg' },
+          } as never)
+        : null,
+    ),
+  claimJob: () => Promise.resolve({ created: false }),
+  getJob: () => Promise.resolve(null),
+  transitionJob: () => Promise.resolve({ conflict: true }),
+};
+const routeShareRequest = createShareHandler({ storage: shareStorage });
+
+async function sendWebResponse(
+  result: Response,
+  response: http.ServerResponse,
+): Promise<void> {
+  response.writeHead(result.status, Object.fromEntries(result.headers));
+  response.end(new Uint8Array(await result.arrayBuffer()));
+}
+
 const handleRequest = async (
   request: http.IncomingMessage,
   response: http.ServerResponse,
@@ -133,7 +183,7 @@ const handleRequest = async (
   const pathname = new URL(request.url ?? '/', 'http://fixture').pathname;
   if (pathname.startsWith('/assets/')) {
     try {
-      let body: Buffer;
+      let body: Uint8Array;
       try {
         body = await readFile(resolve(listenerRoot, pathname.slice(1)));
       } catch {
@@ -148,50 +198,15 @@ const handleRequest = async (
     }
     return;
   }
-  if (pathname === `/s/${sharedSongId}`) {
-    const origin = new URL(
-      request.url ?? '/',
-      `http://${request.headers.host ?? `127.0.0.1:${port}`}`,
-    ).origin;
-    const nonce = 'fixture-nonce';
-    response.writeHead(200, {
-      'content-type': 'text/html; charset=utf-8',
-      'content-security-policy': `default-src 'none'; media-src 'self'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'`,
-    });
-    response.end(
-      playbackPage(
-        sharedSongId,
-        {
-          title: 'Aloopuri Khavsa',
-          language: 'Gujarati',
-          nativeScriptName: 'Gujarati',
-          isLatinScript: false,
-          lyricsNative: '[Verse]\nઆ સાંજ ધીમે\nમહેકે છે',
-          lyricsRoman: '[Verse]\naa saanj dhime\nmaheke chhe',
-        },
-        nonce,
-        origin,
-        '',
-      ),
-    );
-    return;
-  }
-  if (pathname === `/s/${sharedSongId}/audio`) {
-    response.writeHead(200, { 'content-type': 'audio/mpeg' });
-    response.end(Uint8Array.from([73, 68, 51]));
-    return;
-  }
-  const roomMatch = /^\/r\/([A-Z2-9]{8})$/.exec(pathname);
-  if (roomMatch) {
-    const html = await roomPage(roomMatch[1] as string, listenerAsset);
-    response.writeHead(200, {
-      'content-type': 'text/html; charset=utf-8',
-      'content-security-policy':
-        "default-src 'none'; connect-src 'self'; media-src 'self' blob:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-    });
-    response.end(html);
-    return;
-  }
+  const origin = `http://${request.headers.host ?? `127.0.0.1:${port}`}`;
+  const webRequest = new Request(new URL(request.url ?? '/', origin), {
+    method: request.method ?? 'GET',
+    headers: request.headers as HeadersInit,
+  });
+  const roomResponse = await routeRoomRequest(webRequest);
+  if (roomResponse) return sendWebResponse(roomResponse, response);
+  if (pathname.startsWith('/s/'))
+    return sendWebResponse(await routeShareRequest(webRequest), response);
   appHandler.call(app, request, response);
 };
 

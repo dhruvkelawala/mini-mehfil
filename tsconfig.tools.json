@@ -12,6 +12,7 @@
     "vite.config.ts",
     "vitest*.config.ts",
     "playwright.config.ts",
+    "worker-configuration.d.ts",
     "scripts/**/*.ts",
     "test/browser/**/*.ts",
     "test/fixtures/**/*.ts"

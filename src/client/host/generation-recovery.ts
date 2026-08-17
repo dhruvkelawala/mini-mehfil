@@ -1,4 +1,5 @@
-import type { LyricsSheet } from '../../room/protocol.ts';
+import { randomBase64Url } from '../../room/primitives.ts';
+import { isRecord, type LyricsSheet } from '../../room/protocol.ts';
 
 export const GENERATION_STORAGE_KEY = 'mini-mehfil:generation:v1';
 export const JOB_PATTERN = /^[A-Za-z0-9_-]{24}$/;
@@ -74,10 +75,6 @@ interface CoordinatorOptions {
   ) => void;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function cleanSheet(value: unknown): HostLyrics | null {
   if (!isRecord(value)) return null;
   const sheet: HostLyrics = {
@@ -101,12 +98,7 @@ function cleanSheet(value: unknown): HostLyrics | null {
 export function createJobId(cryptoSource: Crypto = crypto): string {
   if (typeof cryptoSource.getRandomValues !== 'function')
     throw new Error('Secure randomness is unavailable.');
-  const bytes = new Uint8Array(18);
-  cryptoSource.getRandomValues(bytes);
-  return btoa(String.fromCharCode(...bytes))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replaceAll('=', '');
+  return randomBase64Url(18, cryptoSource);
 }
 
 export function savePendingGeneration(

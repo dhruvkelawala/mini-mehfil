@@ -5,6 +5,7 @@ import type {
   LyricsSheet,
   RoomState,
 } from '../../../src/room/protocol.ts';
+import { projectRoomState } from '../../../src/room/state.ts';
 import {
   createHostRoomController,
   hostRoomView,
@@ -39,7 +40,9 @@ class FakeSocket extends EventTarget {
   readonly OPEN = 1;
   readyState = 0;
   readonly sent: string[] = [];
+  throwOnSend = false;
   send(value: string) {
+    if (this.throwOnSend) throw new Error('socket closed');
     this.sent.push(value);
   }
   open() {
@@ -85,6 +88,7 @@ const state = (): RoomState => ({
   currentSong: null,
   setlist: [],
 });
+const hostSnapshot = () => projectRoomState(state(), { role: 'host' });
 
 describe('typed host room parity', () => {
   test('host room credentials remain session-only and authenticate first', () => {
@@ -112,7 +116,7 @@ describe('typed host room parity', () => {
       socketFactory: () => socket as unknown as WebSocket,
     });
     socket.open();
-    socket.message({ type: 'snapshot', state: state() });
+    socket.message({ type: 'snapshot', state: hostSnapshot() });
     expect(
       room.publishStandalone(
         'https://rooms.example/s/AbCdEfGhIjKlMnOp',
@@ -135,7 +139,7 @@ describe('typed host room parity', () => {
       socketFactory: () => socket as unknown as WebSocket,
     });
     socket.open();
-    socket.message({ type: 'snapshot', state: state() });
+    socket.message({ type: 'snapshot', state: hostSnapshot() });
     expect(
       room.send({
         type: 'playback-updated',
@@ -152,7 +156,7 @@ describe('typed host room parity', () => {
 
   test('room recording lifecycle executes paid work and events in runtime order', async () => {
     const sequence: string[] = [];
-    const result = await runRoomRecordingLifecycle({
+    const result = await runRoomRecordingLifecycle<string>({
       requestId: 'q1',
       run: 1,
       isCurrent: () => true,
@@ -181,7 +185,7 @@ describe('typed host room parity', () => {
       'song-ready',
     ]);
     const failed: string[] = [];
-    await runRoomRecordingLifecycle({
+    await runRoomRecordingLifecycle<string>({
       requestId: 'q2',
       run: 1,
       isCurrent: () => true,
@@ -204,9 +208,52 @@ describe('typed host room parity', () => {
     ]);
   });
 
+  test('room recording waits for recovered generation before publishing', async () => {
+    const events: string[] = [];
+    let finish: ((song: string) => void) | undefined;
+    const lifecycle = runRoomRecordingLifecycle<string>({
+      requestId: 'q1',
+      run: 1,
+      isCurrent: () => true,
+      send: (event) => {
+        events.push(event.type);
+        return true;
+      },
+      generate: async (hooks) => {
+        hooks.onLyrics(LYRICS);
+        finish = hooks.onReady;
+        return undefined;
+      },
+      upload: async () => 'https://rooms.example/s/AbCdEfGhIjKlMnOp',
+    });
+    await Promise.resolve();
+    expect(events).toEqual(['recording-started', 'lyrics-ready']);
+    finish?.('recovered-song');
+    await expect(lifecycle).resolves.toBe('ready');
+    expect(events.at(-1)).toBe('song-ready');
+  });
+
+  test('socket send failures return false and mark the room offline', () => {
+    const storage = new MemoryStorage();
+    storage.setItem(ROOM_SESSION_KEY, JSON.stringify(DETAILS));
+    const socket = new FakeSocket();
+    const room = createHostRoomController({
+      storage,
+      socketFactory: () => socket as unknown as WebSocket,
+    });
+    socket.open();
+    socket.message({ type: 'snapshot', state: hostSnapshot() });
+    socket.throwOnSend = true;
+    expect(room.accept('q1')).toBe(false);
+    expect(room.status()).toBe('offline');
+  });
+
   test('a room upload keeps the finished audio paired with its own lyric sheet', async () => {
     let uploaded = '';
-    await runRoomRecordingLifecycle({
+    await runRoomRecordingLifecycle<{
+      sheet: LyricsSheet;
+      reference: string;
+    }>({
       requestId: 'q1',
       run: 3,
       isCurrent: (run) => run === 3,
@@ -233,7 +280,7 @@ describe('typed host room parity', () => {
       socketFactory: () => socket as unknown as WebSocket,
     });
     socket.open();
-    socket.message({ type: 'snapshot', state: state() });
+    socket.message({ type: 'snapshot', state: hostSnapshot() });
     room.closeRoom();
     expect(room.closing()).toBe(true);
     expect(room.details()).not.toBeNull();

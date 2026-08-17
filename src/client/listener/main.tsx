@@ -1,5 +1,6 @@
 import { render } from 'solid-js/web';
 
+import { isRoomId } from '../../room/primitives.ts';
 import { App } from './App.tsx';
 import './styles.css';
 
@@ -7,7 +8,7 @@ const marker = document.querySelector<HTMLMetaElement>(
   'meta[name="mehfil-room-id"]',
 );
 const roomId = marker?.content ?? '';
-if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/.test(roomId)) {
+if (!isRoomId(roomId)) {
   throw new Error('The listener shell does not contain a valid room code.');
 }
 

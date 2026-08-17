@@ -95,7 +95,8 @@ export function App() {
     });
   });
   const shownSpoken = createMemo(() => {
-    if (hasRevealed() || !player.duration()) return Number.POSITIVE_INFINITY;
+    if (hasRevealed()) return Number.POSITIVE_INFINITY;
+    if (!player.duration()) return 0;
     const spoken = lyricLines().filter((line) => !line.cue).length;
     return Math.ceil(
       Math.min(player.currentTime() / (player.duration() * 0.9), 1) * spoken,
@@ -155,8 +156,11 @@ export function App() {
       throw new Error(
         'Your recording is ready, but the live room is reconnecting. Try sharing it again once connected.',
       );
-    const url = await generation.share(false, song);
-    if (!url || !room.publishStandalone(url, publicLyrics(song.lyricSheet)))
+    const result = await generation.share(false, song);
+    if (
+      !result ||
+      !room.publishStandalone(result.url, publicLyrics(song.lyricSheet))
+    )
       throw new Error(
         'Your recording is ready, but the live room lost its connection.',
       );
@@ -188,7 +192,7 @@ export function App() {
     setShareLabel('Sharing');
     try {
       const url = await generation.share(true);
-      setShareLabel(url ? 'Copied' : 'Share');
+      setShareLabel(url?.copied ? 'Copied' : url ? 'Link ready' : 'Share');
     } catch (error) {
       setShareLabel('Retry');
       setRoomError(error instanceof Error ? error.message : 'Sharing failed.');
@@ -201,12 +205,12 @@ export function App() {
     setVibe(item.vibe);
     setLanguage(languages.includes(item.language) ? item.language : 'auto');
     const lifecycleRun = ++roomRecordingRun;
-    const outcome = await runRoomRecordingLifecycle({
+    const outcome = await runRoomRecordingLifecycle<GeneratedSong>({
       requestId: item.id,
       run: lifecycleRun,
       isCurrent: (candidate) => candidate === roomRecordingRun,
       send: (message: ClientMessage) => room.send(message),
-      generate: async ({ onLyrics }) => {
+      generate: async ({ onLyrics, onReady, onFailed }) => {
         const result = await generation.generate(
           {
             token: tokenInput?.value ?? '',
@@ -214,12 +218,15 @@ export function App() {
             vibe: item.vibe,
             language: item.language || 'auto',
           },
-          { onLyrics: (sheet) => onLyrics(publicLyrics(sheet)) },
+          {
+            onLyrics: (sheet) => onLyrics(publicLyrics(sheet)),
+            onReady,
+            onFailed,
+          },
         );
-        if (!result) throw new Error('Generation did not finish.');
         return result;
       },
-      upload: (song) => generation.share(false, song),
+      upload: async (song) => (await generation.share(false, song))?.url,
     });
     if (outcome === 'disconnected')
       setRoomError(
@@ -272,15 +279,14 @@ export function App() {
     const pagehide = () => generation.lifecycleBackgrounded();
     const pageshow = () => {
       generation.lifecycleForegrounded();
-      if (generation.resumePending('pageshow')) setPerformanceOpen(true);
+      if (generation.resumePending()) setPerformanceOpen(true);
     };
     const visibility = () => {
       if (document.visibilityState === 'hidden')
         generation.lifecycleBackgrounded();
       else {
         generation.lifecycleForegrounded();
-        if (generation.resumePending('visibilitychange'))
-          setPerformanceOpen(true);
+        if (generation.resumePending()) setPerformanceOpen(true);
       }
     };
     const keydown = (event: KeyboardEvent) => {
@@ -310,7 +316,7 @@ export function App() {
     window.addEventListener('pageshow', pageshow);
     document.addEventListener('visibilitychange', visibility);
     document.addEventListener('keydown', keydown);
-    if (generation.resumePending('page-load')) setPerformanceOpen(true);
+    if (generation.resumePending()) setPerformanceOpen(true);
     onCleanup(() => {
       clearInterval(clockTimer);
       window.removeEventListener('pagehide', pagehide);
@@ -773,10 +779,11 @@ export function App() {
                       const visible = () =>
                         hasRevealed() ||
                         (line.cue
-                          ? shownSpoken() > spokenBefore() ||
-                            spokenBefore() ===
-                              lyricLines().filter((candidate) => !candidate.cue)
-                                .length
+                          ? spokenBefore() ===
+                            lyricLines().filter((candidate) => !candidate.cue)
+                              .length
+                            ? shownSpoken() >= spokenBefore()
+                            : shownSpoken() > spokenBefore()
                           : shownSpoken() >= spokenBefore() + 1);
                       return (
                         <span
@@ -951,7 +958,7 @@ export function App() {
         >
           <div class="media-diagnostics-sheet">
             <p class="media-diagnostics-kicker">
-              Diagnostic preview · persistent local log
+              Diagnostic preview · current failure only
             </p>
             <h2 id="media-diagnostics-title">Playback stopped for evidence</h2>
             <p
@@ -961,15 +968,11 @@ export function App() {
               {diagnostics.headline()}
             </p>
             <p class="media-diagnostics-help">
-              Copy or download this sanitized report and send it back. Tokens,
-              lyrics, request bodies, signed URL paths, and query strings are
-              excluded.
+              Copy this sanitized report and send it back. Tokens, lyrics,
+              request bodies, signed URL paths, and query strings are excluded.
             </p>
             <div class="media-diagnostics-actions">
-              <button
-                type="button"
-                onClick={() => void player.play('diagnostic-retry')}
-              >
+              <button type="button" onClick={() => void player.play()}>
                 Retry
               </button>
               <button

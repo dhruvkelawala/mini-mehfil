@@ -66,7 +66,10 @@ function createHarness() {
     broadcast(createMessage) {
       for (const [socket, session] of sessions) {
         if (session.authenticated) {
-          delivered.push({ socket, message: createMessage(socket) });
+          delivered.push({
+            socket,
+            message: JSON.parse(createMessage(session)) as unknown,
+          });
         }
       }
     },

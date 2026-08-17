@@ -1,21 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { isDirectEntry, parseTcpPort } from '../src/config/runtime.ts';
 
 export interface DevTopology {
   webPort: number;
   apiPort: number;
-}
-
-function parsePort(value: string, option: string): number {
-  if (!/^\d+$/.test(value)) {
-    throw new Error(`${option} must be an integer TCP port from 1 to 65535.`);
-  }
-  const port = Number(value);
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`${option} must be an integer TCP port from 1 to 65535.`);
-  }
-  return port;
 }
 
 export function resolveDevTopology(args: readonly string[]): DevTopology {
@@ -37,8 +27,14 @@ export function resolveDevTopology(args: readonly string[]): DevTopology {
     values.set(argument, value);
     index += 1;
   }
-  const webPort = parsePort(values.get('--web-port') ?? '4173', '--web-port');
-  const apiPort = parsePort(values.get('--api-port') ?? '4174', '--api-port');
+  const webPort = parseTcpPort(
+    values.get('--web-port') ?? '4173',
+    '--web-port',
+  );
+  const apiPort = parseTcpPort(
+    values.get('--api-port') ?? '4174',
+    '--api-port',
+  );
   if (webPort === apiPort) {
     throw new Error('The web and API development ports must be different.');
   }
@@ -74,6 +70,7 @@ export function launchDevelopment(topology: DevTopology): void {
     [
       '--watch',
       resolve('src/server/index.ts'),
+      '--api-only',
       '--port',
       String(topology.apiPort),
     ],
@@ -116,11 +113,7 @@ export function launchDevelopment(topology: DevTopology): void {
   process.once('SIGTERM', () => stop('SIGTERM', 143));
 }
 
-const isDirectEntry =
-  process.argv[1] !== undefined &&
-  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-
-if (isDirectEntry) {
+if (isDirectEntry(import.meta.url)) {
   try {
     launchDevelopment(resolveDevTopology(process.argv.slice(2)));
   } catch (error) {

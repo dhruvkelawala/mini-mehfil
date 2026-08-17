@@ -1,3 +1,5 @@
+import { isRecord } from '../room/protocol.ts';
+
 // The lyricist: turns a handful of keywords into lyrics MiniMax can actually sing.
 //
 // This is the whole reason songs stopped coming out random. MiniMax sings the
@@ -84,10 +86,6 @@ export interface LyricsResult {
   lyricsRoman: string;
   prompt: string;
   usage: unknown;
-}
-
-function isRecord(value: unknown): value is JsonRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function extractText(response: JsonRecord | null): string {

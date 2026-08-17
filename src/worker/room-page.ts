@@ -1,4 +1,5 @@
-const ROOM_ID_PATTERN = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/;
+import { isRoomId } from '../room/primitives.ts';
+
 const ROOM_MARKER = '__MEHFIL_ROOM_ID__';
 
 export interface ListenerAssetFetcher {
@@ -18,7 +19,7 @@ export async function roomPage(
   roomId: string,
   assets: ListenerAssetFetcher,
 ): Promise<string> {
-  if (!ROOM_ID_PATTERN.test(roomId)) throw new Error('Invalid room code.');
+  if (!isRoomId(roomId)) throw new Error('Invalid room code.');
   const response = await assets.fetch(
     new Request('https://listener.assets/index.html'),
   );

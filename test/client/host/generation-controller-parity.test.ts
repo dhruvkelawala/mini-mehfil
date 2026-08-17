@@ -135,7 +135,7 @@ describe('typed generation lifecycle parity', () => {
         });
       },
     });
-    expect(controller.resumePending('page-load')).toBe(true);
+    expect(controller.resumePending()).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(urls).toEqual([
       '/api/generation-status?id=AbCdEfGhIjKlMnOpQrStUvWx',
@@ -164,7 +164,7 @@ describe('typed generation lifecycle parity', () => {
     });
     controller.lifecycleBackgrounded();
     controller.lifecycleForegrounded();
-    controller.resumePending('pageshow');
+    controller.resumePending();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(checks).toBe(1);
     expect(controller.generating()).toBe(true);
@@ -223,7 +223,7 @@ describe('typed generation lifecycle parity', () => {
       storage,
       fetcher: async () => Response.json({ error: 'outage' }, { status: 503 }),
     });
-    controller.resumePending('page-load');
+    controller.resumePending();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(controller.checkGenerationVisible()).toBe(true);
     expect(controller.status()).toMatch(/trouble checking/i);
@@ -243,6 +243,29 @@ describe('typed generation lifecycle parity', () => {
         shareReference: 'reference',
       }),
     );
+  });
+
+  test('reports a ready link without claiming clipboard success', async () => {
+    const controller = createGenerationController({
+      player: player(),
+      storage: new MemoryStorage(),
+      fetcher: async (input) => {
+        if (input === '/api/write-lyrics') return Response.json(SHEET);
+        if (input === '/api/generate')
+          return Response.json({
+            data: { audio: '49443304' },
+            share_ref: 'reference',
+          });
+        return Response.json({
+          url: 'https://rooms.example/s/AbCdEfGhIjKlMnOp',
+        });
+      },
+    });
+    await controller.generate(INPUT);
+    await expect(controller.share(true)).resolves.toEqual({
+      url: 'https://rooms.example/s/AbCdEfGhIjKlMnOp',
+      copied: false,
+    });
   });
 
   test('a stale share request cannot mutate a later generation', async () => {
@@ -270,6 +293,5 @@ describe('typed generation lifecycle parity', () => {
     controller.cancelForReplacement();
     release?.();
     expect(await stale).toBeUndefined();
-    expect(controller.shareUrl()).toBeNull();
   });
 });

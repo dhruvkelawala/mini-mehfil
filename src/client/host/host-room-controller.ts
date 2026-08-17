@@ -1,11 +1,14 @@
 import { createMemo, createSignal, getOwner, onCleanup } from 'solid-js';
 
+import { isRoomId } from '../../room/primitives.ts';
 import {
-  parseRoomState,
+  isRecord,
+  parseHostRoomProjection,
   type ClientMessage,
   type LyricsSheet,
   type Participant,
   type RoomSong,
+  type HostRoomProjection,
   type RoomState,
   type SetlistSong,
   type SongRequest,
@@ -36,7 +39,11 @@ export interface RoomRecordingAdapters<T> {
   requestId: string;
   run: number;
   isCurrent: (run: number) => boolean;
-  generate: (hooks: { onLyrics: (sheet: LyricsSheet) => void }) => Promise<T>;
+  generate: (hooks: {
+    onLyrics: (sheet: LyricsSheet) => void;
+    onReady: (generated: T) => void;
+    onFailed: () => void;
+  }) => Promise<T | undefined>;
   upload: (generated: T) => Promise<string | undefined>;
   send: (message: ClientMessage) => boolean;
 }
@@ -45,7 +52,7 @@ export interface HostRoomController {
   status: () => string;
   message: () => string;
   details: () => RoomDetails | null;
-  snapshot: () => RoomState | null;
+  snapshot: () => HostRoomProjection | null;
   view: () => HostRoomView;
   listenerCount: () => number;
   authenticated: () => boolean;
@@ -70,14 +77,10 @@ export type RoomFetch = (
   input: string,
   init?: RequestInit,
 ) => Promise<Response>;
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 function parseDetails(value: unknown): RoomDetails | null {
   if (
     !isRecord(value) ||
-    typeof value.roomId !== 'string' ||
-    !/^[A-Za-z0-9_-]{8}$/.test(value.roomId) ||
+    !isRoomId(value.roomId) ||
     typeof value.joinUrl !== 'string' ||
     typeof value.socketUrl !== 'string' ||
     typeof value.hostSecret !== 'string' ||
@@ -128,7 +131,7 @@ export function roomReorderTargets(
   };
 }
 export function hostRoomView(
-  state: RoomState | null,
+  state: HostRoomProjection | RoomState | null,
   joinUrl: string,
 ): HostRoomView {
   if (!state) return { participants: [], queue: [], setlist: [] };
@@ -159,26 +162,46 @@ export async function runRoomRecordingLifecycle<T>(
 ): Promise<'ready' | 'failed' | 'stale' | 'disconnected'> {
   const { requestId, run, isCurrent, generate, upload, send } = adapters;
   if (!send({ type: 'recording-started', requestId })) return 'disconnected';
-  try {
-    const generated = await generate({
+  return await new Promise((resolve) => {
+    let completionStarted = false;
+    const fail = () => {
+      if (completionStarted) return;
+      completionStarted = true;
+      if (isCurrent(run)) send({ type: 'recording-failed', requestId });
+      resolve('failed');
+    };
+    const complete = async (generated: T) => {
+      if (completionStarted) return;
+      completionStarted = true;
+      if (!isCurrent(run)) return resolve('stale');
+      try {
+        const url = await upload(generated);
+        if (!isCurrent(run)) return resolve('stale');
+        if (!url)
+          throw new Error('The share service returned an invalid link.');
+        const match = /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(url).pathname);
+        if (!match?.[1])
+          throw new Error('The share service returned an invalid link.');
+        send({ type: 'song-ready', requestId, shareId: match[1] });
+        resolve('ready');
+      } catch {
+        if (isCurrent(run)) send({ type: 'recording-failed', requestId });
+        resolve('failed');
+      }
+    };
+    void generate({
       onLyrics: (sheet) => {
         if (isCurrent(run))
           send({ type: 'lyrics-ready', requestId, lyrics: sheet });
       },
-    });
-    if (!isCurrent(run)) return 'stale';
-    const url = await upload(generated);
-    if (!isCurrent(run)) return 'stale';
-    if (!url) throw new Error('The share service returned an invalid link.');
-    const match = /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(url).pathname);
-    if (!match?.[1])
-      throw new Error('The share service returned an invalid link.');
-    send({ type: 'song-ready', requestId, shareId: match[1] });
-    return 'ready';
-  } catch {
-    if (isCurrent(run)) send({ type: 'recording-failed', requestId });
-    return 'failed';
-  }
+      onReady: (generated) => void complete(generated),
+      onFailed: fail,
+    })
+      .then((generated) => {
+        if (generated !== undefined) void complete(generated);
+      })
+      .catch(fail);
+  });
 }
 
 export function createHostRoomController({
@@ -199,7 +222,7 @@ export function createHostRoomController({
   const [status, setStatus] = createSignal('closed');
   const [message, setMessage] = createSignal('');
   const [details, setDetails] = createSignal<RoomDetails | null>(null);
-  const [snapshot, setSnapshot] = createSignal<RoomState | null>(null);
+  const [snapshot, setSnapshot] = createSignal<HostRoomProjection | null>(null);
   const [authenticated, setAuthenticated] = createSignal(false);
   const [terminal, setTerminal] = createSignal(false);
   const [panelOpen, setPanelOpen] = createSignal(false);
@@ -245,8 +268,15 @@ export function createHostRoomController({
   };
   const send = (event: ClientMessage): boolean => {
     if (socket?.readyState !== WebSocket.OPEN || !authenticated()) return false;
-    socket.send(JSON.stringify(event));
-    return true;
+    try {
+      socket.send(JSON.stringify(event));
+      return true;
+    } catch {
+      setAuthenticated(false);
+      setStatus('offline');
+      setMessage('The live room lost its connection. Retrying…');
+      return false;
+    }
   };
 
   const connect = (room: RoomDetails) => {
@@ -292,29 +322,7 @@ export function createHostRoomController({
       }
       if (!isRecord(value) || typeof value.type !== 'string') return;
       if (value.type === 'snapshot') {
-        const projected = isRecord(value.state) ? value.state : null;
-        const state = projected
-          ? parseRoomState({
-              ...projected,
-              openedAt:
-                typeof projected.openedAt === 'number'
-                  ? projected.openedAt
-                  : now(),
-              expiresAt:
-                typeof projected.expiresAt === 'number'
-                  ? projected.expiresAt
-                  : room.expiresAt,
-              expiredAt:
-                typeof projected.expiredAt === 'number'
-                  ? projected.expiredAt
-                  : null,
-              kickedParticipantIds: Array.isArray(
-                projected.kickedParticipantIds,
-              )
-                ? projected.kickedParticipantIds
-                : [],
-            })
-          : null;
+        const state = parseHostRoomProjection(value.state);
         if (!state) return;
         setAuthenticated(true);
         setMessage('');

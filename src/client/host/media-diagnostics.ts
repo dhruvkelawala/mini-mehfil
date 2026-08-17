@@ -5,7 +5,7 @@ export interface MediaDiagnostics {
   visible: () => boolean;
   headline: () => string;
   report: () => string;
-  recordFailure(error: unknown): void;
+  recordFailure(error: unknown, media?: HTMLMediaElement | null): void;
   open(): void;
   close(): void;
   clear(): void;
@@ -138,7 +138,7 @@ function safeMessage(error: unknown): string {
 }
 
 export function createMediaDiagnostics(): MediaDiagnostics {
-  const [available, setAvailable] = createSignal(
+  const [available] = createSignal(
     typeof location !== 'undefined' &&
       new URLSearchParams(location.search).get('mediaDebug') === '1',
   );
@@ -152,16 +152,26 @@ export function createMediaDiagnostics(): MediaDiagnostics {
     visible,
     headline,
     report,
-    recordFailure(error) {
+    recordFailure(error, media = null) {
+      if (!available()) return;
       const message = safeMessage(error);
       setHeadline('Playback stopped for evidence');
       setReport(
-        JSON.stringify({ type: 'playback-rejected', message }, null, 2),
+        JSON.stringify(
+          {
+            type: 'playback-failure',
+            message,
+            media: mediaSnapshot(media, location.href),
+          },
+          null,
+          2,
+        ),
       );
       setVisible(true);
-      setAvailable(true);
     },
-    open: () => setVisible(true),
+    open: () => {
+      if (available()) setVisible(true);
+    },
     close: () => setVisible(false),
     clear() {
       setReport('');
