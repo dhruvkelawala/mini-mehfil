@@ -3,6 +3,8 @@ import solid from 'eslint-plugin-solid/configs/typescript';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+const projectRoot = new URL('.', import.meta.url).pathname;
+
 export default tseslint.config(
   {
     ignores: [
@@ -87,6 +89,16 @@ export default tseslint.config(
           ],
         },
       ],
+    },
+  },
+  {
+    files: ['src/worker/**/*.ts', 'test/worker/**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: ['./tsconfig.worker.json'],
+        tsconfigRootDir: projectRoot,
+      },
     },
   },
 );

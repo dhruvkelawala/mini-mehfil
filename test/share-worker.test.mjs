@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { COURTYARD_SCENE } from '../share/courtyard.mjs';
-import { createR2Storage, createShareHandler } from '../share/worker.mjs';
+import { COURTYARD_SCENE } from '../src/worker/courtyard.ts';
+import { createR2Storage, createShareHandler } from '../src/worker/sharing.ts';
 import {
   createDurableRoomDirectory,
   createRoomRouter
-} from '../share/rooms.mjs';
+} from '../src/worker/rooms.ts';
 
 const ID = 'AbCdEfGhIjKlMnOp';
 const SECRET = 'worker-upload-secret';

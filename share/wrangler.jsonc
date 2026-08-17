@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "mini-mehfil-share",
-  "main": "worker.mjs",
+  "main": "../src/worker/index.ts",
   "compatibility_date": "2026-08-14",
   "vars": {
     "MEHFIL_PUBLIC_URL": "https://minimehfil.wtf"

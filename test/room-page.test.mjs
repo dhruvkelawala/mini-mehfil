@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { roomPage } from '../share/room-page.mjs';
-import { COURTYARD_SCENE } from '../share/courtyard.mjs';
+import { COURTYARD_SCENE } from '../src/worker/courtyard.ts';
 
 test('room page escapes data and reuses the exact courtyard', () => {
   const html = roomPage('ABCD<script>', 'nonce-value');

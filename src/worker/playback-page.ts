@@ -1,13 +1,28 @@
-import { COURTYARD_SCENE } from './courtyard.mjs';
+import { COURTYARD_SCENE } from './courtyard.ts';
 
-const EXTERNAL_LINK_ICON = '<svg class="topbar-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 16 16 8M9 8h7v7"/></svg>';
-const REPLAY_ICON = '<svg class="replay-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8V4m0 0h4M5 4l3.1 3.1a7 7 0 1 1-1.4 7.2"/></svg>';
-const PLAY_ICON = '<svg class="player-icon play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.5v11l9-5.5-9-5.5Z"/></svg>';
-const PAUSE_ICON = '<svg class="player-icon pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7v10M16 7v10"/></svg>';
-const SHARE_ICON = '<svg class="player-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8.5 12 5l3 3.5M12 5v10M7 11.5H5.5A1.5 1.5 0 0 0 4 13v4.5A1.5 1.5 0 0 0 5.5 19h13a1.5 1.5 0 0 0 1.5-1.5V13a1.5 1.5 0 0 0-1.5-1.5H17"/></svg>';
-const DOWNLOAD_ICON = '<svg class="player-icon download-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v10M8.5 11.5 12 15l3.5-3.5M5 19h14"/></svg>';
+const EXTERNAL_LINK_ICON =
+  '<svg class="topbar-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 16 16 8M9 8h7v7"/></svg>';
+const REPLAY_ICON =
+  '<svg class="replay-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8V4m0 0h4M5 4l3.1 3.1a7 7 0 1 1-1.4 7.2"/></svg>';
+const PLAY_ICON =
+  '<svg class="player-icon play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.5v11l9-5.5-9-5.5Z"/></svg>';
+const PAUSE_ICON =
+  '<svg class="player-icon pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7v10M16 7v10"/></svg>';
+const SHARE_ICON =
+  '<svg class="player-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8.5 12 5l3 3.5M12 5v10M7 11.5H5.5A1.5 1.5 0 0 0 4 13v4.5A1.5 1.5 0 0 0 5.5 19h13a1.5 1.5 0 0 0 1.5-1.5V13a1.5 1.5 0 0 0-1.5-1.5H17"/></svg>';
+const DOWNLOAD_ICON =
+  '<svg class="player-icon download-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v10M8.5 11.5 12 15l3.5-3.5M5 19h14"/></svg>';
 
-function escapeHtml(value) {
+export interface PlaybackSong {
+  title: string;
+  language: string;
+  nativeScriptName: string;
+  isLatinScript: boolean;
+  lyricsNative: string;
+  lyricsRoman: string;
+}
+
+function escapeHtml(value: unknown): string {
   return String(value)
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
@@ -16,20 +31,27 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-function scriptJson(value) {
-  return JSON.stringify(value)
+function scriptJson(value: unknown): string {
+  return (JSON.stringify(value) ?? 'null')
     .replaceAll('<', '\\u003c')
     .replaceAll('>', '\\u003e')
     .replaceAll('&', '\\u0026');
 }
 
-export function playbackPage(id, song, nonce, origin, previewImageUrl) {
-  const label = song.isLatinScript || !song.nativeScriptName
-    ? song.language
-    : `${song.language} · ${song.nativeScriptName}`;
+export function playbackPage(
+  id: string,
+  song: PlaybackSong,
+  nonce: string,
+  origin: string,
+  previewImageUrl: string,
+): string {
+  const label =
+    song.isLatinScript || !song.nativeScriptName
+      ? song.language
+      : `${song.language} · ${song.nativeScriptName}`;
   const data = scriptJson({
     native: song.lyricsNative.split('\n'),
-    roman: song.lyricsRoman.split('\n')
+    roman: song.lyricsRoman.split('\n'),
   });
   const shareUrl = `${origin}/s/${id}`;
   const audioUrl = `${shareUrl}/audio`;

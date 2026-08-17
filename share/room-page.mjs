@@ -1,4 +1,4 @@
-import { COURTYARD_SCENE } from './courtyard.mjs';
+import { COURTYARD_SCENE } from '../src/worker/courtyard.ts';
 import { installRoomClient } from './room-client.mjs';
 
 function escapeHtml(value) {
