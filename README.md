@@ -55,8 +55,8 @@ The same sharing configuration enables live mehfils. Press **Open this mehfil to
 
 Rooms are transient and host-controlled. The host's player is authoritative: play,
 pause, and seeking are synchronized to listeners, whose room page shows the
-current native-script lyric and romanization as the song advances. The public
-join URL contains only an eight-character room code. The separate host
+same active lyric section and approximately paced current line as the host. The
+public join URL contains only an eight-character room code. The separate host
 credential stays in that browser tab's `sessionStorage`, while the MiniMax key
 continues to travel only between the host browser and local proxy.
 
@@ -68,14 +68,30 @@ continues to travel only between the host browser and local proxy.
 - `src/room/` — platform-independent room protocol, state transitions, and transport ports.
 - `src/worker/` — the Cloudflare Worker, room router, and thin `MehfilRoom` Durable Object adapter.
 
-Once a recording finishes, the proxy makes one best-effort call to MiniMax's
-free `music_cover_preprocess` endpoint with the same key to learn where the
-song's sections fall. When that analysis comes back and lines up with the
-written sections, the reveal follows those sections while a syllable-weighted
-display heuristic paces the current-line emphasis inside each one. Timed mode
-says exactly `Lines follow MiniMax sections · timing is approximate`: provider
-truth stops at the section boundaries, and nothing here is line, word, or
-karaoke timing.
+Once Music 3 finishes, the proxy returns the paid recording immediately and
+the host starts playback. The browser then makes a separate request to
+MiniMax's free `music_cover_preprocess` endpoint with the same request-only key
+to learn where the song's sections fall. Each background attempt has a
+three-minute ceiling, with at most two attempts and retries limited to timeout,
+network, provider-busy, 408/429 and 5xx failures. A slow or failed optional
+analysis can therefore never hold the finished song hostage.
+
+While analysis is pending the performance says exactly
+`Analyzing MiniMax sections · music is ready`. When a trusted artifact arrives
+and lines up with the written sections and media duration, the already-playing
+recording upgrades at its current clock without reload, restart or seek. The
+reveal follows those sections while a syllable-weighted display heuristic paces
+the current-line emphasis inside each one. Timed mode says exactly
+`Lines follow MiniMax sections · timing is approximate`: provider truth stops
+at the section boundaries, and nothing here is line, word, or karaoke timing.
+Terminal failures and weak mappings keep the existing Atmospheric reveal.
+
+Save remains immediate. A requested standalone share or live-room publication
+waits for analysis to become ready or terminal while private playback
+continues, then carries either the same normalized immutable timing artifact or
+an explicit untimed result. Host, live listener and standalone shared playback
+derive active sections and lines from that same artifact and media clock; old
+rooms and shares without timing remain compatible.
 
 For inline audio bytes, the host also makes one best-effort, band-limited onset
 check and holds the first section's sung lines until the likely vocal entry.
@@ -85,10 +101,9 @@ hidden intervals cannot skip the opening lines. Provider section boundaries
 remain unchanged.
 Remote audio URLs and shared pages skip that gate; playback never waits for it.
 Both line pacing and the vocal-entry gate are approximate render-time
-heuristics. Analysis is capped at 10 seconds and can fail freely; anything less
-than a confident section match keeps the original
-`Atmospheric reveal · timing is approximate` pacing. Nothing from the provider
-analysis is kept except the section boundaries themselves.
+heuristics. Nothing from provider analysis is kept except normalized section
+boundaries; transcripts, trace identifiers, feature identifiers, signed URLs
+and derived pacing never enter the persisted timing artifact.
 
 The project intentionally keeps dependencies focused. `solid-js` is the only
 browser runtime library; Vite, TypeScript, Vitest, Playwright, ESLint, Prettier,

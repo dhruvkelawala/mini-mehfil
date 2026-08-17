@@ -6,9 +6,10 @@ starting, honor its STOP conditions, and update its row when done.
 
 ## Execution order & status
 
-| Plan | Title | Priority | Effort | Depends on | Status | Issue |
-|---|---|---|---|---|---|---|
-| 001 | Unify host and listener lyric performance presentation | P2 | M | PR #29 merged | TODO | [#32](https://github.com/dhruvkelawala/mini-mehfil/issues/32) |
+| Plan | Title                                                                                         | Priority | Effort | Depends on                 | Status                                                                                                                                   | Issue                                                         |
+| ---- | --------------------------------------------------------------------------------------------- | -------- | ------ | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| 006  | [Make MiniMax timing analysis non-blocking and retryable](006-nonblocking-timing-analysis.md) | P1       | L      | Plan 005 through `7c8b596` | BLOCKED — implementation/full gates and real nonblocking/provider path pass; one approved live host/listener/share parity retest remains | —                                                             |
+| 001  | Unify host and listener lyric performance presentation                                        | P2       | M      | PR #29 merged              | TODO                                                                                                                                     | [#32](https://github.com/dhruvkelawala/mini-mehfil/issues/32) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale — finding fixed independently or approach
@@ -18,6 +19,16 @@ abandoned)
 
 - Plan 001 must start after PR #29 merges because the listener media clock and
   progressing lyric stage introduced at commit `4e49ccf` are its baseline.
+- Plan 006 is implemented through `945e88d` after rebasing Plan 005 onto
+  fetched `origin/main` `0d6bd5a`. The final space-free repository check passed
+  with 258 unit tests and 1 Worker integration, Chromium passed 38/38, and
+  Claude Opus 4.8 final reviews were clean. Its approved real song was privately
+  playable at 165.469 s while analysis remained pending; free analysis returned
+  ready on attempt 1 in 23.105 s with 9 normalized segments. The environment
+  had no external room/share configuration, and the non-persisting local
+  operator harness ended before recording live cross-surface line equality.
+  No second paid song was requested. Retained diagnostics stay in source; one
+  further explicitly approved live parity retest is the exact remaining gate.
 
 ## Findings considered and rejected
 
