@@ -11,10 +11,13 @@
 // body {model, max_tokens, system, messages}, reply {content: [{type, text}, ...]}.
 // Everything provider-specific lives in this file and nothing else.
 
-const API_BASE = process.env.MINIMAX_ANTHROPIC_BASE || 'https://api.minimax.io/anthropic';
 const MAX_TOKENS = 6000; // M3 reasons before it writes; leave room for thinking plus the JSON reply.
 
-export const LYRICIST_MODELS = ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.7-highspeed'];
+export const LYRICIST_MODELS = [
+  'MiniMax-M3',
+  'MiniMax-M2.7',
+  'MiniMax-M2.7-highspeed',
+];
 export const DEFAULT_MODEL = LYRICIST_MODELS[0];
 
 // The 10-1000 limit in MiniMax's guide is for cover mode only; direct music-3.0
@@ -60,37 +63,68 @@ Your job:
 Reply with ONLY a JSON object, no markdown fence and no commentary:
 {"title":"","language":"","languageCode":"","nativeScriptName":"","isLatinScript":false,"lyricsNative":"","lyricsRoman":"","prompt":""}`;
 
-function extractText(response) {
+type JsonRecord = Record<string, unknown>;
+
+export interface WriteLyricsOptions {
+  token: string;
+  idea: string;
+  vibe?: string;
+  language?: string;
+  model?: string;
+  signal?: AbortSignal;
+}
+
+export interface LyricsResult {
+  title: string;
+  language: string;
+  languageCode: string;
+  nativeScriptName: string;
+  isLatinScript: boolean;
+  lyricsNative: string;
+  lyricsRoman: string;
+  prompt: string;
+  usage: unknown;
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function extractText(response: JsonRecord | null): string {
   if (typeof response?.content === 'string') return response.content;
   if (!Array.isArray(response?.content)) return '';
   return response.content
-    .filter(block => block?.type === 'text')
-    .map(block => block.text)
+    .filter(
+      (block): block is JsonRecord => isRecord(block) && block.type === 'text',
+    )
+    .map((block) => (typeof block.text === 'string' ? block.text : ''))
     .join('');
 }
 
 // Models like to wrap JSON in prose or a code fence no matter how firmly you ask.
-function parseJsonLoosely(text) {
+function parseJsonLoosely(text: string): JsonRecord | null {
   const trimmed = String(text || '').trim();
   const withoutFence = trimmed
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/, '')
     .trim();
   try {
-    return JSON.parse(withoutFence);
+    const value: unknown = JSON.parse(withoutFence);
+    return isRecord(value) ? value : null;
   } catch {
     const start = withoutFence.indexOf('{');
     const end = withoutFence.lastIndexOf('}');
     if (start === -1 || end <= start) return null;
     try {
-      return JSON.parse(withoutFence.slice(start, end + 1));
+      const value: unknown = JSON.parse(withoutFence.slice(start, end + 1));
+      return isRecord(value) ? value : null;
     } catch {
       return null;
     }
   }
 }
 
-function asString(value) {
+function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
@@ -100,54 +134,88 @@ export async function writeLyrics({
   vibe = '',
   language = 'auto',
   model = DEFAULT_MODEL,
-  signal
-} = {}) {
-  if (!token) throw Object.assign(new Error('Add your MiniMax API token.'), { status: 400 });
-  if (!idea) throw Object.assign(new Error('Tell me what the song is about.'), { status: 400 });
+  signal,
+}: WriteLyricsOptions): Promise<LyricsResult> {
+  if (!token)
+    throw Object.assign(new Error('Add your MiniMax API token.'), {
+      status: 400,
+    });
+  if (!idea)
+    throw Object.assign(new Error('Tell me what the song is about.'), {
+      status: 400,
+    });
 
   const request = [
     `IDEA: ${idea}`,
     `VIBE: ${vibe || 'let the idea suggest the sound'}`,
-    `LANGUAGE: ${language || 'auto'}`
+    `LANGUAGE: ${language || 'auto'}`,
   ].join('\n');
 
-  const upstream = await fetch(`${API_BASE}/v1/messages`, {
+  const apiBase =
+    process.env.MINIMAX_ANTHROPIC_BASE || 'https://api.minimax.io/anthropic';
+  const upstream = await fetch(`${apiBase}/v1/messages`, {
     method: 'POST',
     headers: {
       'x-api-key': token,
       'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       model: model || DEFAULT_MODEL,
       max_tokens: MAX_TOKENS,
       system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: request }]
+      messages: [{ role: 'user', content: request }],
     }),
-    signal
+    ...(signal ? { signal } : {}),
   });
 
   const raw = await upstream.text();
-  let response;
-  try { response = JSON.parse(raw); } catch { response = null; }
+  let response: JsonRecord | null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    response = isRecord(parsed) ? parsed : null;
+  } catch {
+    response = null;
+  }
 
   if (!upstream.ok) {
-    const message = response?.error?.message || response?.base_resp?.status_msg || `The lyricist request failed (${upstream.status}).`;
-    throw Object.assign(new Error(String(message)), { status: upstream.status === 401 ? 401 : 502 });
+    const error = isRecord(response?.error) ? response.error : {};
+    const baseResponse = isRecord(response?.base_resp)
+      ? response.base_resp
+      : {};
+    const message =
+      error.message ||
+      baseResponse.status_msg ||
+      `The lyricist request failed (${upstream.status}).`;
+    throw Object.assign(
+      new Error(
+        typeof message === 'string' ? message : 'The lyricist request failed.',
+      ),
+      { status: upstream.status === 401 ? 401 : 502 },
+    );
   }
 
   const parsed = parseJsonLoosely(extractText(response));
   if (!parsed) {
-    throw Object.assign(new Error('The lyricist replied in a format I could not read. Try again.'), { status: 502 });
+    throw Object.assign(
+      new Error(
+        'The lyricist replied in a format I could not read. Try again.',
+      ),
+      { status: 502 },
+    );
   }
 
   const lyricsNative = asString(parsed.lyricsNative);
   const lyricsRoman = asString(parsed.lyricsRoman) || lyricsNative;
   if (!lyricsNative) {
-    throw Object.assign(new Error('The lyricist came back empty-handed. Try different keywords.'), { status: 502 });
+    throw Object.assign(
+      new Error('The lyricist came back empty-handed. Try different keywords.'),
+      { status: 502 },
+    );
   }
 
-  const isLatinScript = parsed.isLatinScript === true || lyricsNative === lyricsRoman;
+  const isLatinScript =
+    parsed.isLatinScript === true || lyricsNative === lyricsRoman;
 
   return {
     title: asString(parsed.title) || idea,
@@ -158,6 +226,6 @@ export async function writeLyrics({
     lyricsNative,
     lyricsRoman,
     prompt: asString(parsed.prompt),
-    usage: response?.usage ?? null
+    usage: response?.usage ?? null,
   };
 }

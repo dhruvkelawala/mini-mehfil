@@ -1,3 +1,5 @@
-import configFactory from './vercel-config.cjs';
+import process from 'node:process';
 
-export const config = configFactory.createVercelConfig(process.env);
+import { createVercelConfig } from './src/server/vercel-config.ts';
+
+export const config = createVercelConfig(process.env);
