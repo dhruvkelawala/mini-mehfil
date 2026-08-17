@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { render, screen } from '@solidjs/testing-library';
+import { cleanup, render, screen } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { App } from '../../../src/client/listener/App.tsx';
 import {
@@ -16,6 +16,8 @@ import type {
   ListenerRoomController,
   ListenerSnapshot,
 } from '../../../src/client/listener/listener-room-controller.ts';
+
+afterEach(cleanup);
 
 function listenerController(
   snapshot: ListenerSnapshot | null,
@@ -82,7 +84,7 @@ describe('listener app', () => {
     expect(screen.getByText('Baarish ki raat')).toBeTruthy();
     expect(screen.getByText('Pre-Chorus 2')).toBeTruthy();
     expect(
-      document.querySelectorAll('.lyric-stage > .lyric-primary'),
+      document.querySelectorAll('.lyric-performance .lyric-primary'),
     ).toHaveLength(1);
   });
 
@@ -143,25 +145,30 @@ describe('listener app', () => {
 
     render(() => <App roomId="ABCDEFGH" controller={controller} />);
     expect(document.querySelectorAll('.lyric-section')).toHaveLength(1);
-    expect(document.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
     expect(
-      document.querySelector('[aria-current="true"] .lyric-primary')
-        ?.textContent,
+      document.querySelectorAll('.lyric-performance [aria-current="true"]'),
+    ).toHaveLength(1);
+    expect(
+      document.querySelector(
+        '.lyric-performance [aria-current="true"] .lyric-primary',
+      )?.textContent,
     ).toBe(expectedAt(6));
 
     setClock(16);
     await Promise.resolve();
     expect(document.querySelectorAll('.lyric-section')).toHaveLength(1);
     expect(
-      document.querySelector('[aria-current="true"] .lyric-primary')
-        ?.textContent,
+      document.querySelector(
+        '.lyric-performance [aria-current="true"] .lyric-primary',
+      )?.textContent,
     ).toBe(expectedAt(16));
 
     setClock(6);
     await Promise.resolve();
     expect(
-      document.querySelector('[aria-current="true"] .lyric-primary')
-        ?.textContent,
+      document.querySelector(
+        '.lyric-performance [aria-current="true"] .lyric-primary',
+      )?.textContent,
     ).toBe(expectedAt(6));
   });
 });

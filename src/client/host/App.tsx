@@ -9,19 +9,14 @@ import {
 } from 'solid-js';
 import { Portal } from 'solid-js/web';
 
-import {
-  activePacedLine,
-  buildLinePacing,
-  effectiveFirstVocalRelease,
-} from '../../lyrics/line-pacing.ts';
+import { effectiveFirstVocalRelease } from '../../lyrics/line-pacing.ts';
 import {
   activeTimelineEntry,
-  buildSectionTimeline,
-  parseLyricSheet,
   type LyricTiming,
 } from '../../lyrics/lyric-sync.ts';
 import type { LyricsSheet, SongRequest } from '../../room/protocol.ts';
-import { LyricLineView, TimedSectionView } from '../lyrics/timed-lyrics.tsx';
+import { LyricPerformance } from '../shared/LyricPerformance.tsx';
+import { parseLyricTimeline } from '../shared/lyric-timeline.ts';
 import {
   createGenerationController,
   type GeneratedSong,
@@ -122,21 +117,17 @@ export function App() {
   const activeLyrics = createMemo(
     () => room.currentSong()?.lyrics ?? generation.lyrics(),
   );
-  const lyricSheet = createMemo(() => parseLyricSheet(activeLyrics()));
-  const lyricLines = createMemo(() => lyricSheet().lines);
+  const lyricTimeline = createMemo(() =>
+    parseLyricTimeline(activeLyrics(), player.timing()),
+  );
   /**
    * Non-null only when this recording's own section analysis maps onto the
    * written sections. Everything below reads the media clock through it — no
    * timers, no cursors — so seeking backwards is as correct as playing forward.
    */
-  const sectionTimeline = createMemo(() =>
-    buildSectionTimeline(lyricSheet().sections, player.timing()),
-  );
+  const sectionTimeline = createMemo(() => lyricTimeline().entries);
   const timingPending = createMemo(
     () => timingAnalysis.state().status === 'pending',
-  );
-  const activeEntry = createMemo(() =>
-    activeTimelineEntry(sectionTimeline(), player.currentTime()),
   );
   const firstVocalEntry = createMemo(() =>
     sectionTimeline()?.find(
@@ -161,26 +152,8 @@ export function App() {
       Boolean(bytes && timeline && firstVocalEntry()),
     );
   });
-  const linePacing = createMemo(() =>
-    buildLinePacing(lyricSheet().sections, sectionTimeline(), vocalRelease()),
-  );
-  const activeLine = createMemo(() =>
-    activePacedLine(linePacing(), player.currentTime()),
-  );
-  const activeSection = createMemo(() => {
-    const index = activeEntry()?.sectionIndex;
-    return typeof index === 'number'
-      ? lyricSheet().sections.find((section) => section.index === index)
-      : undefined;
-  });
-  const restLabel = createMemo(() => {
-    const entry = activeEntry();
-    if (!entry || entry.sectionIndex !== null) return '';
-    if (entry.label === 'inst') return 'Instrumental';
-    return entry.label === 'silence' ? 'Pause' : '';
-  });
   const firstVocalLinesHeld = createMemo(() => {
-    const active = activeEntry();
+    const active = activeTimelineEntry(sectionTimeline(), player.currentTime());
     const first = firstVocalEntry();
     if (
       !active ||
@@ -203,14 +176,6 @@ export function App() {
   const manualRevealActive = createMemo(
     () => manualLyricsOpen() && !playbackPreviewActive(),
   );
-  const shownSpoken = createMemo(() => {
-    if (manualRevealActive() || !player.duration())
-      return Number.POSITIVE_INFINITY;
-    const spoken = lyricLines().filter((line) => !line.cue).length;
-    return Math.ceil(
-      Math.min(player.currentTime() / (player.duration() * 0.9), 1) * spoken,
-    );
-  });
   const languageLabel = createMemo(() => {
     const sheet = activeLyrics();
     if (!sheet) return '';
@@ -1291,94 +1256,27 @@ export function App() {
                 (manualRevealActive() || playbackPreviewActive())
               }
             >
-              <div class="lyric-reveal" id="lyric-reveal">
-                <span class="reveal-language" id="reveal-language">
-                  {languageLabel()}
-                </span>
-                <Show
-                  when={
-                    timingPending() ||
-                    sectionTimeline() ||
-                    !manualRevealActive()
-                  }
-                >
-                  <PerformanceTimingCopy
-                    pending={timingPending()}
-                    timed={Boolean(sectionTimeline())}
-                  />
-                </Show>
-                <p class="reveal-lines" id="reveal-lines">
-                  <Show
-                    when={sectionTimeline()}
-                    fallback={
-                      <For each={lyricLines()}>
-                        {(line, index) => {
-                          const spokenBefore = () =>
-                            lyricLines()
-                              .slice(0, index())
-                              .filter((candidate) => !candidate.cue).length;
-                          const visible = () =>
-                            manualRevealActive() ||
-                            (line.cue
-                              ? spokenBefore() ===
-                                lyricLines().filter(
-                                  (candidate) => !candidate.cue,
-                                ).length
-                                ? shownSpoken() >= spokenBefore()
-                                : shownSpoken() > spokenBefore()
-                              : shownSpoken() >= spokenBefore() + 1);
-                          return (
-                            <LyricLineView line={line} hidden={!visible()} />
-                          );
-                        }}
-                      </For>
-                    }
-                  >
-                    <Show
-                      when={manualRevealActive()}
-                      fallback={
-                        <Show
-                          when={activeSection()}
-                          fallback={
-                            <Show when={restLabel()}>
-                              <span class="lyric-line lyric-cue">
-                                {restLabel()}
-                              </span>
-                            </Show>
-                          }
-                        >
-                          <TimedSectionView
-                            section={activeSection()!}
-                            activeLine={activeLine()}
-                            holdLines={firstVocalLinesHeld()}
-                          />
-                        </Show>
-                      }
-                    >
-                      <For each={lyricSheet().sections}>
-                        {(section) => {
-                          const current = () =>
-                            activeEntry()?.sectionIndex === section.index;
-                          return (
-                            <span
-                              class={
-                                current()
-                                  ? 'lyric-section lyric-section-current'
-                                  : 'lyric-section'
-                              }
-                              aria-current={current() ? 'true' : undefined}
-                            >
-                              <For each={section.lines}>
-                                {(line) => <LyricLineView line={line} />}
-                              </For>
-                            </span>
-                          );
-                        }}
-                      </For>
-                    </Show>
-                  </Show>
-                </p>
-              </div>
+              <LyricPerformance
+                id="lyric-reveal"
+                timeline={lyricTimeline()}
+                title={activeLyrics()!.title}
+                language={languageLabel()}
+                currentTime={player.currentTime()}
+                duration={player.duration()}
+                mode={manualRevealActive() ? 'transcript' : 'live'}
+                firstVocalRelease={vocalRelease()}
+                holdLines={firstVocalLinesHeld()}
+                status={
+                  timingPending() ||
+                  sectionTimeline() ||
+                  !manualRevealActive() ? (
+                    <PerformanceTimingCopy
+                      pending={timingPending()}
+                      timed={Boolean(sectionTimeline())}
+                    />
+                  ) : undefined
+                }
+              />
             </Show>
             <Show when={player.ended()}>
               <button

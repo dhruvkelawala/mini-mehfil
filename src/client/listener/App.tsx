@@ -1,13 +1,8 @@
 import { createMemo, Show, For, untrack } from 'solid-js';
 
-import { activePacedLine, buildLinePacing } from '../../lyrics/line-pacing.ts';
-import {
-  activeTimelineEntry,
-  buildSectionTimeline,
-  parseLyricSheet,
-} from '../../lyrics/lyric-sync.ts';
 import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
-import { TimedSectionView } from '../lyrics/timed-lyrics.tsx';
+import { LyricPerformance } from '../shared/LyricPerformance.tsx';
+import { parseLyricTimeline } from '../shared/lyric-timeline.ts';
 import { RoomActivity } from './components/RoomActivity.tsx';
 import {
   createListenerRoomController,
@@ -45,51 +40,13 @@ export function App(props: {
       props.controller ??
       createListenerRoomController({ roomId: props.roomId }),
   );
-  const lyricSheet = createMemo(() =>
-    parseLyricSheet(controller.snapshot()?.currentSong?.lyrics),
+  const lyricTimeline = createMemo(() =>
+    parseLyricTimeline(
+      controller.snapshot()?.currentSong?.lyrics,
+      controller.timing(),
+    ),
   );
-  const sectionTimeline = createMemo(() =>
-    buildSectionTimeline(lyricSheet().sections, controller.timing()),
-  );
-  const activeEntry = createMemo(() =>
-    activeTimelineEntry(sectionTimeline(), controller.currentTime()),
-  );
-  const activeSection = createMemo(() => {
-    const index = activeEntry()?.sectionIndex;
-    return typeof index === 'number'
-      ? lyricSheet().sections.find((section) => section.index === index)
-      : undefined;
-  });
-  const linePacing = createMemo(() =>
-    buildLinePacing(lyricSheet().sections, sectionTimeline(), null),
-  );
-  const activeLine = createMemo(() =>
-    activePacedLine(linePacing(), controller.currentTime()),
-  );
-  const untimedLine = createMemo(() => {
-    const spoken = lyricSheet().lines.filter((line) => !line.cue);
-    if (!spoken.length) return null;
-    const duration = controller.duration();
-    const progress = duration
-      ? Math.min(controller.currentTime() / (duration * 0.9), 1)
-      : 0;
-    return (
-      spoken[
-        Math.min(Math.floor(progress * spoken.length), spoken.length - 1)
-      ] ?? null
-    );
-  });
-  const untimedCue = createMemo(() => {
-    const line = untimedLine();
-    if (!line) return '';
-    return (
-      lyricSheet()
-        .sections.find((section) => section.index === line.sectionIndex)
-        ?.lines.find((candidate) => candidate.cue)?.primary ??
-      line.tag ??
-      ''
-    );
-  });
+  const sectionTimeline = createMemo(() => lyricTimeline().entries);
   const playbackProgress = createMemo(() => {
     const duration = controller.duration();
     if (!duration) return 0;
@@ -153,30 +110,18 @@ export function App(props: {
           </p>
           <Show when={controller.snapshot()?.currentSong}>
             {(song) => (
-              <section class="lyric-stage">
-                <h2>{song().title}</h2>
-                <Show
-                  when={activeSection()}
-                  fallback={
-                    <Show when={untimedLine()}>
-                      {(line) => (
-                        <>
-                          <p class="lyric-cue">{untimedCue()}</p>
-                          <p class="lyric-primary">{line().primary}</p>
-                          <p class="lyric-secondary">{line().secondary}</p>
-                        </>
-                      )}
-                    </Show>
-                  }
-                >
-                  {(section) => (
-                    <TimedSectionView
-                      section={section()}
-                      activeLine={activeLine()}
-                    />
-                  )}
-                </Show>
-              </section>
+              <LyricPerformance
+                timeline={lyricTimeline()}
+                title={song().title}
+                language={
+                  song().lyrics.isLatinScript
+                    ? song().language
+                    : `${song().language} · ${song().lyrics.nativeScriptName}`
+                }
+                currentTime={controller.currentTime()}
+                duration={controller.duration()}
+                mode="live"
+              />
             )}
           </Show>
         </section>

@@ -150,7 +150,9 @@ test('local MiniMax replay keeps host, listener, and share on one real-audio clo
   await listener.goto('/r/ABCDEFGH');
   await listener.getByLabel('Your name').fill('Listener');
   await listener.getByRole('button', { name: 'Join the mehfil' }).click();
-  await expect(listener.locator('.lyric-stage .lyric-section')).toHaveCount(1);
+  await expect(
+    listener.locator('.lyric-performance .lyric-section'),
+  ).toHaveCount(1);
   await expect
     .poll(() =>
       listener
@@ -180,8 +182,8 @@ test('local MiniMax replay keeps host, listener, and share on one real-audio clo
   ];
   for (const sample of samples) {
     const [host, live, shared] = await Promise.all([
-      seekActive(page, '#reveal-lines', sample.seconds),
-      seekActive(listener, '.lyric-stage', sample.seconds),
+      seekActive(page, '#lyric-reveal', sample.seconds),
+      seekActive(listener, '.lyric-performance', sample.seconds),
       seekActive(standalone, '#reveal-lines', sample.seconds),
     ]);
     expect(host.line).toBe(sample.expected);
