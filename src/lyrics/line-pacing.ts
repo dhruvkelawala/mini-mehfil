@@ -10,6 +10,54 @@ export interface PacedLine {
   end: number;
 }
 
+function firstMappedVocalEntry(
+  timeline: TimelineEntry[] | null,
+): TimelineEntry | null {
+  if (!Array.isArray(timeline)) return null;
+  return (
+    timeline.find(
+      (entry) =>
+        entry.sectionIndex !== null &&
+        entry.label !== 'inst' &&
+        entry.label !== 'silence',
+    ) ?? null
+  );
+}
+
+/**
+ * Captures the one display origin shared by an asynchronously resolved vocal
+ * gate and first-section line pacing. A stale result at/after the section end
+ * is discarded because there is no remaining interval in which to show line 1.
+ */
+export function effectiveFirstVocalRelease(
+  timeline: TimelineEntry[] | null,
+  detectedGateSeconds: number | null,
+  mediaTimeAtResolution: number,
+): number | null {
+  if (
+    !Number.isFinite(detectedGateSeconds) ||
+    !Number.isFinite(mediaTimeAtResolution) ||
+    mediaTimeAtResolution < 0
+  )
+    return null;
+  const firstVocal = firstMappedVocalEntry(timeline);
+  if (
+    !firstVocal ||
+    !Number.isFinite(firstVocal.start) ||
+    !Number.isFinite(firstVocal.end) ||
+    firstVocal.start < 0 ||
+    firstVocal.start >= firstVocal.end ||
+    (detectedGateSeconds as number) < firstVocal.start ||
+    (detectedGateSeconds as number) >= firstVocal.end
+  )
+    return null;
+  const release = Math.max(
+    detectedGateSeconds as number,
+    mediaTimeAtResolution,
+  );
+  return release < firstVocal.end ? release : null;
+}
+
 /**
  * Estimates a romanized line's relative singing weight. This deliberately
  * counts written vowel groups, with a one-beat minimum per whitespace word;
@@ -30,14 +78,18 @@ export function syllableWeight(romanLine: string): number {
 /**
  * Derives contiguous line intervals inside provider-timed sections. These
  * cues are replaceable at the call site by a future real line-timing source.
+ * A valid release rebases only the first mapped vocal section's derived start;
+ * the provider timeline and every section end remain untouched.
  */
 export function buildLinePacing(
   sections: LyricSection[],
   timeline: TimelineEntry[] | null,
+  firstVocalReleaseSeconds: number | null | undefined = null,
 ): PacedLine[] {
   if (!Array.isArray(sections) || !Array.isArray(timeline)) return [];
 
   const pacing: PacedLine[] = [];
+  const firstVocal = firstMappedVocalEntry(timeline);
   for (const segment of timeline) {
     if (segment.sectionIndex === null) continue;
     const section = sections.find(
@@ -56,8 +108,15 @@ export function buildLinePacing(
     const weightTotal = weights.reduce((total, weight) => total + weight, 0);
     const effectiveWeights = weightTotal ? weights : weights.map(() => 1);
     const effectiveTotal = weightTotal || effectiveWeights.length;
-    const duration = segment.end - segment.start;
-    let cursor = segment.start;
+    const rebasedStart =
+      segment === firstVocal &&
+      Number.isFinite(firstVocalReleaseSeconds) &&
+      (firstVocalReleaseSeconds as number) >= segment.start &&
+      (firstVocalReleaseSeconds as number) < segment.end
+        ? (firstVocalReleaseSeconds as number)
+        : segment.start;
+    const duration = segment.end - rebasedStart;
+    let cursor = rebasedStart;
 
     spoken.forEach(({ lineIndexInSection }, index) => {
       const start = cursor;

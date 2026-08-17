@@ -295,19 +295,25 @@ describe('host section timing', () => {
     const audio = new FakeAudio();
     const player = createPlayerController(createMediaDiagnostics());
     player.bindAudio(audio as unknown as HTMLAudioElement);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
-    await player.load('49443304', lyrics, null, SECTION_TIMING);
-    expect(
-      new Uint8Array(player.analysisBytes() ?? new ArrayBuffer(0)),
-    ).toEqual(new Uint8Array([73, 68, 51, 4]));
+    try {
+      await player.load('49443304', lyrics, null, SECTION_TIMING);
+      expect(
+        new Uint8Array(player.analysisBytes() ?? new ArrayBuffer(0)),
+      ).toEqual(new Uint8Array([73, 68, 51, 4]));
 
-    await player.load(
-      'https://cdn.example/song.mp3',
-      lyrics,
-      null,
-      SECTION_TIMING,
-    );
-    expect(player.analysisBytes()).toBeNull();
+      await player.load(
+        'https://cdn.example/song.mp3',
+        lyrics,
+        null,
+        SECTION_TIMING,
+      );
+      expect(player.analysisBytes()).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   test('drops timing when a different recording is loaded or the player clears', async () => {

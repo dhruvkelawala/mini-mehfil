@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import {
   activePacedLine,
   buildLinePacing,
+  effectiveFirstVocalRelease,
   syllableWeight,
   type PacedLine,
 } from '../../src/lyrics/line-pacing.ts';
@@ -37,6 +38,68 @@ describe('syllable weighting', () => {
 });
 
 describe('line pacing', () => {
+  test('rebases four equal lines onto a late first-vocal release', () => {
+    const parsed = sheet('[Verse]\nRain\nWind\nSoft\nGlow');
+    const timeline: TimelineEntry[] = [
+      { start: 0, end: 20, label: 'verse', sectionIndex: 0 },
+    ];
+    const release = effectiveFirstVocalRelease(timeline, 8, 2);
+
+    expect(release).toBe(8);
+    expect(buildLinePacing(parsed.sections, timeline, release)).toEqual([
+      { sectionIndex: 0, lineIndexInSection: 1, start: 8, end: 11 },
+      { sectionIndex: 0, lineIndexInSection: 2, start: 11, end: 14 },
+      { sectionIndex: 0, lineIndexInSection: 3, start: 14, end: 17 },
+      { sectionIndex: 0, lineIndexInSection: 4, start: 17, end: 20 },
+    ]);
+  });
+
+  test('preserves romanized weighting and the provider section end after rebasing', () => {
+    const parsed = sheet(
+      '[Verse]\nપહેલી\nબીજી',
+      '[Verse]\nbanana papaya\nsoft rain',
+    );
+    const timeline: TimelineEntry[] = [
+      { start: 0, end: 12, label: 'verse', sectionIndex: 0 },
+    ];
+    const pacing = buildLinePacing(parsed.sections, timeline, 4);
+
+    expect(pacing).toEqual([
+      { sectionIndex: 0, lineIndexInSection: 1, start: 4, end: 10 },
+      { sectionIndex: 0, lineIndexInSection: 2, start: 10, end: 12 },
+    ]);
+    expect(timeline[0]?.end).toBe(12);
+  });
+
+  test('rebases only the first mapped vocal section', () => {
+    const parsed = sheet('[Verse]\nOne\nTwo\n[Chorus]\nAgain\nTonight');
+    const timeline: TimelineEntry[] = [
+      { start: 0, end: 4, label: 'inst', sectionIndex: null },
+      { start: 4, end: 12, label: 'verse', sectionIndex: 0 },
+      { start: 12, end: 20, label: 'chorus', sectionIndex: 1 },
+    ];
+    const pacing = buildLinePacing(parsed.sections, timeline, 8);
+
+    expect(pacing[0]?.start).toBe(8);
+    expect(pacing[1]?.end).toBe(12);
+    expect(pacing[2]?.start).toBe(12);
+    expect(pacing.at(-1)?.end).toBe(20);
+  });
+
+  test('keeps original pacing for null or invalid release values', () => {
+    const parsed = sheet('[Verse]\nOne\nTwo');
+    const timeline: TimelineEntry[] = [
+      { start: 2, end: 10, label: 'verse', sectionIndex: 0 },
+    ];
+    const original = buildLinePacing(parsed.sections, timeline);
+
+    expect(buildLinePacing(parsed.sections, timeline, null)).toEqual(original);
+    expect(buildLinePacing(parsed.sections, timeline, Number.NaN)).toEqual(
+      original,
+    );
+    expect(buildLinePacing(parsed.sections, timeline, 10)).toEqual(original);
+  });
+
   test('distributes a section proportionally using romanized lines', () => {
     const parsed = sheet(
       '[Verse]\nપહેલી\nબીજી',
@@ -131,6 +194,35 @@ describe('line pacing', () => {
   });
 });
 
+describe('effective first-vocal release', () => {
+  const timeline: TimelineEntry[] = [
+    { start: 0, end: 4, label: 'inst', sectionIndex: null },
+    { start: 5, end: 20, label: 'verse', sectionIndex: 0 },
+    { start: 20, end: 30, label: 'chorus', sectionIndex: 1 },
+  ];
+
+  test('uses the media clock when async detection resolves after the gate', () => {
+    expect(effectiveFirstVocalRelease(timeline, 8, 11)).toBe(11);
+  });
+
+  test('uses the detected gate when analysis resolves before it', () => {
+    expect(effectiveFirstVocalRelease(timeline, 8, 2)).toBe(8);
+  });
+
+  test('discards stale, null, invalid, and unmapped releases', () => {
+    expect(effectiveFirstVocalRelease(timeline, 8, 20)).toBeNull();
+    expect(effectiveFirstVocalRelease(timeline, null, 8)).toBeNull();
+    expect(effectiveFirstVocalRelease(timeline, 8, Number.NaN)).toBeNull();
+    expect(
+      effectiveFirstVocalRelease(
+        [{ start: 0, end: 5, label: 'silence', sectionIndex: null }],
+        2,
+        1,
+      ),
+    ).toBeNull();
+  });
+});
+
 describe('active paced-line selection', () => {
   const pacing: PacedLine[] = [
     { sectionIndex: 0, lineIndexInSection: 1, start: 2, end: 5 },
@@ -149,6 +241,19 @@ describe('active paced-line selection', () => {
   test('selects statelessly after a backward seek', () => {
     expect(activePacedLine(pacing, 12)?.sectionIndex).toBe(1);
     expect(activePacedLine(pacing, 3)?.lineIndexInSection).toBe(1);
+  });
+
+  test('selects statelessly around an effective release after backward seeks', () => {
+    const parsed = sheet('[Verse]\nRain\nWind\nSoft\nGlow');
+    const timeline: TimelineEntry[] = [
+      { start: 0, end: 20, label: 'verse', sectionIndex: 0 },
+    ];
+    const paced = buildLinePacing(parsed.sections, timeline, 8);
+
+    expect(activePacedLine(paced, 8)?.lineIndexInSection).toBe(1);
+    expect(activePacedLine(paced, 14)?.lineIndexInSection).toBe(3);
+    expect(activePacedLine(paced, 7.999)).toBeNull();
+    expect(activePacedLine(paced, 8)?.lineIndexInSection).toBe(1);
   });
 
   test('returns null for invalid clocks or absent pacing', () => {

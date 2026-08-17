@@ -79,6 +79,10 @@ karaoke timing.
 
 For inline audio bytes, the host also makes one best-effort, band-limited onset
 check and holds the first section's sung lines until the likely vocal entry.
+That release is also the first section's line-pacing origin; if analysis
+finishes late, pacing starts at the media clock where the hold is released so
+hidden intervals cannot skip the opening lines. Provider section boundaries
+remain unchanged.
 Remote audio URLs and shared pages skip that gate; playback never waits for it.
 Both line pacing and the vocal-entry gate are approximate render-time
 heuristics. Analysis is capped at 10 seconds and can fail freely; anything less

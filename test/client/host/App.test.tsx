@@ -1,52 +1,161 @@
 // @vitest-environment jsdom
-import { render, screen } from '@solidjs/testing-library';
+import { cleanup, render, screen } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test } from 'vitest';
 
 import { TimedSectionView } from '../../../src/client/host/App.tsx';
-import type { PacedLine } from '../../../src/lyrics/line-pacing.ts';
-import { parseLyricSheet } from '../../../src/lyrics/lyric-sync.ts';
+import {
+  activePacedLine,
+  buildLinePacing,
+  effectiveFirstVocalRelease,
+} from '../../../src/lyrics/line-pacing.ts';
+import {
+  buildSectionTimeline,
+  parseLyricSheet,
+} from '../../../src/lyrics/lyric-sync.ts';
+import { vocalGateSeconds } from '../../../src/client/host/vocal-onset.ts';
+
+afterEach(cleanup);
 
 describe('host timed lyric rendering', () => {
-  test('holds sung lines through pending and pre-gate states, then reveals them at cutover', async () => {
-    const section = parseLyricSheet({
+  test('holds sung lines then reveals the first spoken line from real pacing at gate cutover', async () => {
+    const sheet = parseLyricSheet({
       isLatinScript: true,
       lyricsNative: '',
-      lyricsRoman: '[Verse]\nRain on the window\nUnder amber light',
-    }).sections[0]!;
-    const paced: PacedLine = {
-      sectionIndex: 0,
-      lineIndexInSection: 1,
-      start: 0,
-      end: 6,
-    };
-    const [gate, setGate] = createSignal<number | null | undefined>(undefined);
+      lyricsRoman: '[Verse]\nRain\nWind\nSoft\nFalling\n[Chorus]\nAgain',
+    });
+    const section = sheet.sections[0]!;
+    const timeline = buildSectionTimeline(sheet.sections, {
+      version: 1,
+      mode: 'minimax-section-asr',
+      durationSeconds: 24,
+      segments: [
+        { start: 0, end: 20, label: 'verse' },
+        { start: 20, end: 24, label: 'chorus' },
+      ],
+    });
+    const detectedGate = vocalGateSeconds(timeline, 12);
+    const [release, setRelease] = createSignal<number | null | undefined>(
+      undefined,
+    );
     const [clock, setClock] = createSignal(2);
+    const activeLine = () =>
+      activePacedLine(
+        buildLinePacing(sheet.sections, timeline, release()),
+        clock(),
+      );
     const held = () =>
-      gate() === undefined || (gate() !== null && clock() < (gate() ?? 0));
+      release() === undefined ||
+      (release() !== null && clock() < (release() ?? 0));
 
     render(() => (
       <TimedSectionView
         section={section}
-        activeLine={paced}
+        activeLine={activeLine()}
         holdLines={held()}
       />
     ));
 
+    const sectionRoot = document.querySelector('.lyric-section');
     expect(screen.getByText('Verse')).toBeTruthy();
-    expect(screen.queryByText('Rain on the window')).toBeNull();
+    expect(screen.queryByText('Rain')).toBeNull();
 
-    setGate(5);
+    expect(detectedGate).toBe(8);
+    setRelease(effectiveFirstVocalRelease(timeline, detectedGate, clock()));
     await Promise.resolve();
-    expect(screen.queryByText('Rain on the window')).toBeNull();
+    expect(screen.queryByText('Rain')).toBeNull();
 
-    setClock(5);
+    setClock(detectedGate ?? 0);
     await Promise.resolve();
-    const current = screen
-      .getByText('Rain on the window')
-      .closest('.lyric-line');
+    const current = screen.getByText('Rain').closest('.lyric-line');
+    expect(document.querySelector('.lyric-section')).toBe(sectionRoot);
     expect(current?.classList.contains('lyric-line-current')).toBe(true);
     expect(current?.getAttribute('aria-current')).toBe('true');
-    expect(screen.getByText('Under amber light')).toBeTruthy();
+    expect(screen.getByText('Falling')).toBeTruthy();
+  });
+
+  test('starts with line one when detection resolves after its detected gate', async () => {
+    const sheet = parseLyricSheet({
+      isLatinScript: true,
+      lyricsNative: '',
+      lyricsRoman: '[Verse]\nRain\nWind\nSoft\nGlow\n[Chorus]\nAgain',
+    });
+    const section = sheet.sections[0]!;
+    const timeline = buildSectionTimeline(sheet.sections, {
+      version: 1,
+      mode: 'minimax-section-asr',
+      durationSeconds: 24,
+      segments: [
+        { start: 0, end: 20, label: 'verse' },
+        { start: 20, end: 24, label: 'chorus' },
+      ],
+    });
+    const detectedGate = vocalGateSeconds(timeline, 12);
+    const [release, setRelease] = createSignal<number | null | undefined>(
+      undefined,
+    );
+    const clock = () => 10;
+    const activeLine = () =>
+      activePacedLine(
+        buildLinePacing(sheet.sections, timeline, release()),
+        clock(),
+      );
+    const held = () => release() === undefined;
+
+    render(() => (
+      <TimedSectionView
+        section={section}
+        activeLine={activeLine()}
+        holdLines={held()}
+      />
+    ));
+    expect(screen.queryByText('Rain')).toBeNull();
+
+    setRelease(effectiveFirstVocalRelease(timeline, detectedGate, clock()));
+    await Promise.resolve();
+
+    expect(release()).toBe(10);
+    expect(
+      screen
+        .getByText('Rain')
+        .closest('.lyric-line')
+        ?.classList.contains('lyric-line-current'),
+    ).toBe(true);
+  });
+
+  test('uses original section pacing after a null no-gate result', async () => {
+    const sheet = parseLyricSheet({
+      isLatinScript: true,
+      lyricsNative: '',
+      lyricsRoman: '[Verse]\nRain\nWind\nSoft\nGlow',
+    });
+    const section = sheet.sections[0]!;
+    const timeline = [
+      { start: 0, end: 20, label: 'verse' as const, sectionIndex: 0 },
+    ];
+    const [release, setRelease] = createSignal<number | null | undefined>(
+      undefined,
+    );
+    const activeLine = () =>
+      activePacedLine(buildLinePacing(sheet.sections, timeline, release()), 8);
+
+    render(() => (
+      <TimedSectionView
+        section={section}
+        activeLine={activeLine()}
+        holdLines={release() === undefined}
+      />
+    ));
+    expect(screen.queryByText('Rain')).toBeNull();
+
+    setRelease(null);
+    await Promise.resolve();
+
+    expect(
+      screen
+        .getByText('Wind')
+        .closest('.lyric-line')
+        ?.classList.contains('lyric-line-current'),
+    ).toBe(true);
   });
 });

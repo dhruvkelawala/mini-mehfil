@@ -12,6 +12,7 @@ import {
 import {
   activePacedLine,
   buildLinePacing,
+  effectiveFirstVocalRelease,
   type PacedLine,
 } from '../../lyrics/line-pacing.ts';
 import {
@@ -20,6 +21,7 @@ import {
   parseLyricSheet,
   type LyricLine,
   type LyricSection,
+  type TimelineEntry,
 } from '../../lyrics/lyric-sync.ts';
 import type { LyricsSheet, SongRequest } from '../../room/protocol.ts';
 import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
@@ -140,9 +142,11 @@ export function App() {
   const [tokenVisible, setTokenVisible] = createSignal(false);
   const [hasToken, setHasToken] = createSignal(false);
   const [roomError, setRoomError] = createSignal('');
-  const [vocalGate, setVocalGate] = createSignal<number | null | undefined>(
-    null,
-  );
+  const [vocalAnalysisResult, setVocalAnalysisResult] = createSignal<{
+    bytes: ArrayBuffer;
+    timeline: TimelineEntry[];
+    release: number | null;
+  } | null>(null);
   const [clock, setClock] = createSignal('--:--');
   const [idea, setIdea] = createSignal('');
   const [vibe, setVibe] = createSignal('');
@@ -164,9 +168,6 @@ export function App() {
   const sectionTimeline = createMemo(() =>
     buildSectionTimeline(lyricSheet().sections, player.timing()),
   );
-  const linePacing = createMemo(() =>
-    buildLinePacing(lyricSheet().sections, sectionTimeline()),
-  );
   const activeEntry = createMemo(() =>
     activeTimelineEntry(sectionTimeline(), player.currentTime()),
   );
@@ -180,6 +181,23 @@ export function App() {
         entry.label !== 'inst' &&
         entry.label !== 'silence',
     ),
+  );
+  /**
+   * `undefined` means same-origin analysis is pending, `null` means the clean
+   * no-gate path, and a number is the fixed gate/pacing release origin.
+   * Matching result inputs keep a prior song's async result from flashing.
+   */
+  const vocalRelease = createMemo<number | null | undefined>(() => {
+    const bytes = player.analysisBytes();
+    const timeline = sectionTimeline();
+    if (!bytes || !timeline || !firstVocalEntry()) return null;
+    const result = vocalAnalysisResult();
+    return result?.bytes === bytes && result.timeline === timeline
+      ? result.release
+      : undefined;
+  });
+  const linePacing = createMemo(() =>
+    buildLinePacing(lyricSheet().sections, sectionTimeline(), vocalRelease()),
   );
   const activeSection = createMemo(() => {
     const index = activeEntry()?.sectionIndex;
@@ -204,8 +222,11 @@ export function App() {
       active.sectionIndex !== first.sectionIndex
     )
       return false;
-    const gate = vocalGate();
-    return gate === undefined || (gate !== null && player.currentTime() < gate);
+    const release = vocalRelease();
+    return (
+      release === undefined ||
+      (release !== null && player.currentTime() < release)
+    );
   });
   const shownSpoken = createMemo(() => {
     if (hasRevealed()) return Number.POSITIVE_INFINITY;
@@ -482,15 +503,20 @@ export function App() {
     const timeline = sectionTimeline();
     const first = firstVocalEntry();
     const run = ++vocalAnalysisRun;
-    if (!bytes || !timeline || !first) {
-      setVocalGate(null);
-      return;
-    }
-    setVocalGate(undefined);
+    if (!bytes || !timeline || !first) return;
     void detectVocalEntry(bytes, Math.max(0, first.start - 1), first.end).then(
       (onset) => {
-        if (run === vocalAnalysisRun)
-          setVocalGate(vocalGateSeconds(timeline, onset));
+        if (run !== vocalAnalysisRun) return;
+        const gate = vocalGateSeconds(timeline, onset);
+        setVocalAnalysisResult({
+          bytes,
+          timeline,
+          release: effectiveFirstVocalRelease(
+            timeline,
+            gate,
+            player.currentTime(),
+          ),
+        });
       },
     );
   });
