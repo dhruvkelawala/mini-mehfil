@@ -1,8 +1,29 @@
-import { createSignal, For, Show } from 'solid-js';
+/* eslint-disable solid/no-innerhtml */
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+} from 'solid-js';
 
+import type {
+  ClientMessage,
+  LyricsSheet,
+  SongRequest,
+} from '../../room/protocol.ts';
 import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
-import { createGenerationController } from './generation-controller.ts';
-import { createHostRoomController } from './host-room-controller.ts';
+import {
+  createGenerationController,
+  type GeneratedSong,
+} from './generation-controller.ts';
+import {
+  createHostRoomController,
+  roomReorderTargets,
+  runRoomRecordingLifecycle,
+} from './host-room-controller.ts';
 import { createMediaDiagnostics } from './media-diagnostics.ts';
 import { createPlayerController } from './player-controller.ts';
 
@@ -22,109 +43,411 @@ const languages = [
   'Japanese',
   'Korean',
 ];
+const formatTime = (seconds: number) =>
+  Number.isFinite(seconds)
+    ? `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
+    : '0:00';
+const publicLyrics = (sheet: LyricsSheet): LyricsSheet => ({
+  title: sheet.title,
+  language: sheet.language,
+  nativeScriptName: sheet.nativeScriptName,
+  isLatinScript: sheet.isLatinScript,
+  lyricsNative: sheet.lyricsNative,
+  lyricsRoman: sheet.lyricsRoman,
+});
 
 export function App() {
   const diagnostics = createMediaDiagnostics();
-  const room = createHostRoomController();
   const player = createPlayerController(diagnostics);
-  const generation = createGenerationController({
-    player,
-    onSongReady: (jobId, lyrics) => room.publishSong(jobId, lyrics),
-  });
+  const room = createHostRoomController();
+  const generation = createGenerationController({ player });
+  const [performanceOpen, setPerformanceOpen] = createSignal(false);
+  const [lyricsOpen, setLyricsOpen] = createSignal(false);
+  const [hasRevealed, setHasRevealed] = createSignal(false);
+  const [shareLabel, setShareLabel] = createSignal('Share');
+  const [tokenVisible, setTokenVisible] = createSignal(false);
   const [roomError, setRoomError] = createSignal('');
-  let form: HTMLFormElement | undefined;
+  const [clock, setClock] = createSignal('--:--');
+  const [idea, setIdea] = createSignal('');
+  const [vibe, setVibe] = createSignal('');
+  const [language, setLanguage] = createSignal('auto');
+  let tokenInput: HTMLInputElement | undefined;
+  let performanceDialog: HTMLElement | undefined;
+  let performanceOpener: HTMLElement | null = null;
+  let roomRecordingRun = 0;
 
-  const generate = (event: SubmitEvent) => {
-    event.preventDefault();
-    if (!form) return;
-    const data = new FormData(form);
-    const field = (name: string) => {
-      const value = data.get(name);
-      return typeof value === 'string' ? value : '';
-    };
-    void generation.generate({
-      token: field('token'),
-      idea: field('idea'),
-      vibe: field('vibe'),
-      language: field('language') || 'auto',
+  const lyricLines = createMemo(() => {
+    const sheet = generation.lyrics();
+    if (!sheet) return [];
+    const roman = sheet.lyricsRoman.split('\n').filter((line) => line.trim());
+    const native = sheet.lyricsNative.split('\n').filter((line) => line.trim());
+    const useNative = !sheet.isLatinScript && native.length > 0;
+    return (useNative ? native : roman).map((primary, index) => {
+      const romanLine = roman[index] ?? '';
+      const cue = /^\[.+\]$/.test(romanLine || primary);
+      return {
+        cue,
+        primary: cue
+          ? (romanLine || primary).replace(/^\[(.+)\]$/, '$1')
+          : primary,
+        secondary: useNative && !cue && romanLine !== primary ? romanLine : '',
+      };
     });
-  };
+  });
+  const shownSpoken = createMemo(() => {
+    if (hasRevealed() || !player.duration()) return Number.POSITIVE_INFINITY;
+    const spoken = lyricLines().filter((line) => !line.cue).length;
+    return Math.ceil(
+      Math.min(player.currentTime() / (player.duration() * 0.9), 1) * spoken,
+    );
+  });
+  const languageLabel = createMemo(() => {
+    const sheet = generation.lyrics();
+    if (!sheet) return '';
+    return sheet.isLatinScript
+      ? sheet.language
+      : `${sheet.language} · ${sheet.nativeScriptName}`;
+  });
+  const activeQueue = createMemo(() =>
+    room
+      .view()
+      .queue.filter(
+        (item) => item.status !== 'declined' && item.status !== 'ready',
+      ),
+  );
+  const performanceAvailable = createMemo(
+    () => generation.performanceAvailable() || player.ready(),
+  );
 
-  const openRoom = async () => {
-    setRoomError('');
+  const openPerformance = (opener?: HTMLElement | null) => {
+    if (!performanceAvailable()) return;
+    performanceOpener =
+      opener ?? (document.activeElement as HTMLElement | null);
+    setPerformanceOpen(true);
+    queueMicrotask(() =>
+      performanceDialog
+        ?.querySelector<HTMLElement>('.performance-close')
+        ?.focus(),
+    );
+  };
+  const closePerformance = () => {
+    setPerformanceOpen(false);
+    performanceOpener?.focus();
+  };
+  const copyLink = async (url: string) => {
     try {
-      await room.open();
-    } catch (error) {
-      setRoomError(
-        error instanceof Error
-          ? error.message
-          : 'The room could not be opened.',
-      );
+      await navigator.clipboard.writeText(url);
+    } catch {
+      const field = document.createElement('textarea');
+      field.value = url;
+      field.readOnly = true;
+      Object.assign(field.style, { position: 'fixed', opacity: '0' });
+      document.body.append(field);
+      field.select();
+      if (!document.execCommand('copy'))
+        throw new Error('Copy the link from the field.');
+      field.remove();
     }
   };
+  const publishStandalone = async (song: GeneratedSong) => {
+    if (!room.details()) return;
+    if (!room.authenticated())
+      throw new Error(
+        'Your recording is ready, but the live room is reconnecting. Try sharing it again once connected.',
+      );
+    const url = await generation.share(false, song);
+    if (!url || !room.publishStandalone(url, publicLyrics(song.lyricSheet)))
+      throw new Error(
+        'Your recording is ready, but the live room lost its connection.',
+      );
+  };
+  const submit = async (event: SubmitEvent) => {
+    event.preventDefault();
+    if (!tokenInput) return;
+    roomRecordingRun += 1;
+    setRoomError('');
+    setLyricsOpen(false);
+    setHasRevealed(false);
+    setPerformanceOpen(true);
+    setShareLabel('Share');
+    try {
+      await generation.generate(
+        {
+          token: tokenInput.value,
+          idea: idea(),
+          vibe: vibe(),
+          language: language(),
+        },
+        room.details() ? { onReady: publishStandalone } : {},
+      );
+    } catch {
+      /* Controller owns visible generation errors. */
+    }
+  };
+  const share = async () => {
+    setShareLabel('Sharing');
+    try {
+      const url = await generation.share(true);
+      setShareLabel(url ? 'Copied' : 'Share');
+    } catch (error) {
+      setShareLabel('Retry');
+      setRoomError(error instanceof Error ? error.message : 'Sharing failed.');
+    }
+  };
+  const recordRequest = async (item: SongRequest) => {
+    if (item.status !== 'accepted' || generation.generating() || !tokenInput)
+      return;
+    setIdea(item.idea);
+    setVibe(item.vibe);
+    setLanguage(languages.includes(item.language) ? item.language : 'auto');
+    const lifecycleRun = ++roomRecordingRun;
+    const outcome = await runRoomRecordingLifecycle({
+      requestId: item.id,
+      run: lifecycleRun,
+      isCurrent: (candidate) => candidate === roomRecordingRun,
+      send: (message: ClientMessage) => room.send(message),
+      generate: async ({ onLyrics }) => {
+        const result = await generation.generate(
+          {
+            token: tokenInput?.value ?? '',
+            idea: item.idea,
+            vibe: item.vibe,
+            language: item.language || 'auto',
+          },
+          { onLyrics: (sheet) => onLyrics(publicLyrics(sheet)) },
+        );
+        if (!result) throw new Error('Generation did not finish.');
+        return result;
+      },
+      upload: (song) => generation.share(false, song),
+    });
+    if (outcome === 'disconnected')
+      setRoomError(
+        'The room is reconnecting. Wait for it to reconnect, then press Record again.',
+      );
+  };
+  const togglePlayback = async () => {
+    const song = room.currentSong();
+    if (song) {
+      if (
+        !room.send({
+          type: 'playback-updated',
+          shareId: song.shareId,
+          status: player.playing() ? 'paused' : 'playing',
+          positionMs: player.ended() ? 0 : player.currentTime() * 1000,
+        })
+      ) {
+        setRoomError('The room is reconnecting. Playback did not change.');
+      }
+      return;
+    }
+    await player.toggle();
+  };
+  const roomSongKey = () => room.currentSong()?.shareId ?? '';
+  createEffect(() => {
+    const song = room.currentSong();
+    const details = room.details();
+    if (!song || !details) return;
+    if (!player.source().includes(`/s/${song.shareId}/audio`))
+      player.loadRoomSong(song, new URL(details.joinUrl).origin);
+    player.syncRoomSong(song);
+  });
+  createEffect(() => {
+    void roomSongKey();
+    if (player.playing() && generation.lyrics()) setLyricsOpen(true);
+  });
+  createEffect(() => {
+    document.body.classList.toggle('performance-open', performanceOpen());
+  });
+
+  onMount(() => {
+    const updateClock = () =>
+      setClock(
+        new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' })
+          .format(new Date())
+          .toLowerCase(),
+      );
+    updateClock();
+    const clockTimer = setInterval(updateClock, 30_000);
+    const pagehide = () => generation.lifecycleBackgrounded();
+    const pageshow = () => {
+      generation.lifecycleForegrounded();
+      if (generation.resumePending('pageshow')) setPerformanceOpen(true);
+    };
+    const visibility = () => {
+      if (document.visibilityState === 'hidden')
+        generation.lifecycleBackgrounded();
+      else {
+        generation.lifecycleForegrounded();
+        if (generation.resumePending('visibilitychange'))
+          setPerformanceOpen(true);
+      }
+    };
+    const keydown = (event: KeyboardEvent) => {
+      if (!performanceOpen()) return;
+      if (event.key === 'Escape') {
+        closePerformance();
+        return;
+      }
+      if (event.key !== 'Tab' || !performanceDialog) return;
+      const controls = [
+        ...performanceDialog.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), a[href]:not([aria-disabled="true"])',
+        ),
+      ].filter((element) => !element.hidden);
+      const first = controls[0];
+      const last = controls.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener('pagehide', pagehide);
+    window.addEventListener('pageshow', pageshow);
+    document.addEventListener('visibilitychange', visibility);
+    document.addEventListener('keydown', keydown);
+    if (generation.resumePending('page-load')) setPerformanceOpen(true);
+    onCleanup(() => {
+      clearInterval(clockTimer);
+      window.removeEventListener('pagehide', pagehide);
+      window.removeEventListener('pageshow', pageshow);
+      document.removeEventListener('visibilitychange', visibility);
+      document.removeEventListener('keydown', keydown);
+    });
+  });
 
   return (
     <>
       {/* Repository-owned static SVG; never contains user input. */}
-      {/* eslint-disable-next-line solid/no-innerhtml */}
-      <div class="scene" aria-hidden="true" innerHTML={COURTYARD_SCENE} />
+      <div
+        class={`scene-root ${generation.generating() || player.playing() ? 'is-performing' : ''}`}
+        aria-hidden="true"
+        innerHTML={COURTYARD_SCENE}
+      />
       <div class="grain" aria-hidden="true" />
-      <header class="topbar">
-        <span id="clock">music-3.0</span>
-        <button type="button" class="room-open" onClick={() => void openRoom()}>
-          Open this mehfil to friends
-        </button>
-        <a href="https://platform.minimax.io/docs/api-reference/music-generation">
-          API docs ↗
-        </a>
+      <header class="topbar" inert={performanceOpen()}>
+        <div class="time" id="clock">
+          {clock()}
+        </div>
+        <div class="live">
+          <i />
+          <span>music-3.0</span>
+        </div>
+        <div class="topbar-actions">
+          <button
+            id="open-room"
+            class={`room-open ${room.details() ? 'is-live' : ''}`}
+            type="button"
+            disabled={room.opening()}
+            aria-label={
+              room.details()
+                ? `Manage live mehfil, ${room.listenerCount()} listener${room.listenerCount() === 1 ? '' : 's'}`
+                : 'Open this mehfil to friends'
+            }
+            aria-controls="room-panel"
+            aria-expanded={room.panelOpen()}
+            onClick={() =>
+              void room
+                .open()
+                .catch((error: unknown) =>
+                  setRoomError(
+                    error instanceof Error
+                      ? error.message
+                      : 'The room could not be opened.',
+                  ),
+                )
+            }
+          >
+            <span id="room-open-label">
+              <span class="room-open-wide">
+                {room.opening()
+                  ? 'Opening…'
+                  : room.status() === 'reconnecting'
+                    ? 'Reconnecting…'
+                    : room.details()
+                      ? `Live · ${room.listenerCount()}`
+                      : 'Invite friends'}
+              </span>
+              <span class="room-open-compact">
+                {room.details() ? `Live · ${room.listenerCount()}` : 'Invite'}
+              </span>
+            </span>
+          </button>
+          <a
+            href="https://platform.minimax.io/docs/api-reference/music-generation"
+            target="_blank"
+            rel="noreferrer"
+          >
+            API docs <span>↗</span>
+          </a>
+        </div>
       </header>
-      <main class="layout">
-        <section class="identity" aria-label="Mini Mehfil">
-          <h1 aria-label="Mini Mehfil">
-            <span>Mini</span>महफ़िल
+      <main inert={performanceOpen()}>
+        <section class="identity" aria-labelledby="brand-title">
+          <h1 id="brand-title" aria-label="Mini Mehfil">
+            <span class="mini" aria-hidden="true">
+              Mini
+            </span>
+            महफ़िल
           </h1>
-          <p>
+          <p class="tagline">
             A private song room. Write the words, set the mood, let them sing.
           </p>
-          <Show when={generation.lyrics()}>
-            {(sheet) => (
-              <div class="lyrics">
-                <h2>{sheet().title}</h2>
-                <p>{sheet().lyricsNative}</p>
-                <p>{sheet().lyricsRoman}</p>
-              </div>
-            )}
-          </Show>
         </section>
         <form
+          id="song-form"
           class="composer"
-          ref={(element) => {
-            form = element;
-          }}
-          onSubmit={generate}
+          onSubmit={(event) => void submit(event)}
         >
           <div class="composer-head">
             <h2>Make a song</h2>
-            <span>≈ $0.15</span>
+            <span class="price">≈ $0.15</span>
           </div>
-          <label class="field">
+          <label class="field token-field">
             <span>MiniMax token</span>
-            <input
-              name="token"
-              type="password"
-              autocomplete="off"
-              placeholder="sk-cp-••••••••"
-              required
-            />
+            <div class="input-wrap">
+              <input
+                ref={(element) => {
+                  tokenInput = element;
+                }}
+                id="token"
+                name="token"
+                type={tokenVisible() ? 'text' : 'password'}
+                autocomplete="off"
+                spellcheck={false}
+                placeholder="sk-cp-••••••••"
+                required
+                disabled={generation.generating()}
+              />
+              <button
+                type="button"
+                id="reveal-token"
+                class="reveal"
+                aria-label={`${tokenVisible() ? 'Hide' : 'Show'} token`}
+                aria-pressed={tokenVisible()}
+                onClick={() => setTokenVisible(!tokenVisible())}
+              >
+                {tokenVisible() ? 'Hide' : 'Show'}
+              </button>
+            </div>
             <small>Used for this request only. Never saved.</small>
           </label>
           <label class="field">
             <span>What's the song about?</span>
-            <textarea
+            <input
+              id="idea"
               name="idea"
-              required
+              type="text"
               maxlength="400"
+              required
               placeholder="Aloopuri Khavsa"
+              value={idea()}
+              onInput={(event) => setIdea(event.currentTarget.value)}
+              disabled={generation.generating()}
             />
             <small>
               Any language, typed however you type. We'll figure out the rest.
@@ -135,98 +458,539 @@ export function App() {
               <span>
                 Vibe <em>optional</em>
               </span>
-              <input name="vibe" placeholder="hip hop, upbeat" />
+              <input
+                id="vibe"
+                name="vibe"
+                type="text"
+                maxlength="400"
+                placeholder="hip hop, upbeat"
+                value={vibe()}
+                onInput={(event) => setVibe(event.currentTarget.value)}
+                disabled={generation.generating()}
+              />
             </label>
             <label class="field">
               <span>Language</span>
-              <select name="language">
+              <select
+                id="language"
+                name="language"
+                value={language()}
+                onChange={(event) => setLanguage(event.currentTarget.value)}
+                disabled={generation.generating()}
+              >
                 <For each={languages}>
-                  {(language) => (
-                    <option value={language}>
-                      {language === 'auto' ? 'Auto-detect' : language}
+                  {(item) => (
+                    <option value={item}>
+                      {item === 'auto' ? 'Auto-detect' : item}
                     </option>
                   )}
                 </For>
               </select>
             </label>
           </div>
-          <p class="notice" role="status">
-            {generation.status()}
-          </p>
+          <div
+            id="notice"
+            class={`notice ${generation.statusWorking() ? 'working' : ''}`}
+            role="status"
+            aria-live="polite"
+            aria-hidden={performanceOpen() ? 'true' : undefined}
+          >
+            {roomError() || generation.status()}
+          </div>
           <button
             class="generate"
-            disabled={generation.generating()}
             type="submit"
+            disabled={generation.generating()}
           >
-            <span>
+            <span class="button-label">
               {generation.generating()
                 ? 'Making your song…'
                 : 'Start the mehfil'}
             </span>
-            <span aria-hidden="true">→</span>
+            <span class="arrow">→</span>
           </button>
-          <p class="cost">
+          <p class="cost-hint" id="cost-hint">
             Lyrics cost about a tenth of a cent. The song costs ≈ $0.15.
           </p>
         </form>
+        <Show when={room.details() && room.panelOpen()}>
+          <aside
+            id="room-panel"
+            class="room-panel"
+            aria-labelledby="room-heading"
+          >
+            <div class="room-panel-head">
+              <h2 id="room-heading" tabIndex={-1}>
+                Live mehfil
+              </h2>
+              <div class="room-panel-tools">
+                <span id="room-state">{room.status()}</span>
+                <button
+                  id="dismiss-room"
+                  class="room-dismiss"
+                  type="button"
+                  aria-label="Hide live mehfil controls"
+                  onClick={() => room.showPanel(false)}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <p>
+              Room <strong id="room-code">{room.details()?.roomId}</strong> ·{' '}
+              <span id="room-presence">
+                {room.listenerCount()} listener
+                {room.listenerCount() === 1 ? '' : 's'}
+              </span>
+            </p>
+            <div class="room-link-row">
+              <input
+                id="room-link"
+                readonly
+                value={room.details()?.joinUrl ?? ''}
+                aria-label="Listener join link"
+              />
+              <button
+                id="copy-room"
+                type="button"
+                onClick={() => void copyLink(room.details()?.joinUrl ?? '')}
+              >
+                Copy link
+              </button>
+            </div>
+            <p
+              id="room-message"
+              class="room-message"
+              role="status"
+              aria-live="polite"
+            >
+              {room.message()}
+            </p>
+            <Show when={room.currentSong()}>
+              <div id="room-playback" class="room-playback">
+                <div>
+                  <strong id="room-playback-state">
+                    {room.currentSong()?.playback.status === 'playing'
+                      ? 'Playing'
+                      : 'Paused'}
+                  </strong>
+                  <span>Shared playback</span>
+                </div>
+                <p>Your player controls the music for everyone in this room.</p>
+              </div>
+            </Show>
+            <h3>Listeners</h3>
+            <ul id="host-participants" class="host-participants">
+              <For each={room.view().participants}>
+                {(participant) => (
+                  <li>
+                    {participant.name}
+                    <button
+                      type="button"
+                      onClick={() => room.kick(participant.id)}
+                    >
+                      Kick
+                    </button>
+                  </li>
+                )}
+              </For>
+            </ul>
+            <h3>Requests</h3>
+            <ol id="host-queue" class="host-queue" aria-label="Request queue">
+              <For each={activeQueue()}>
+                {(item) => {
+                  const targets = () =>
+                    roomReorderTargets(room.snapshot()?.queue ?? [], item.id);
+                  return (
+                    <li>
+                      {item.requesterName}: {item.idea} · {item.status}
+                      <br />
+                      <Show when={item.status === 'pending'}>
+                        <button
+                          type="button"
+                          onClick={() => room.accept(item.id)}
+                        >
+                          Accept
+                        </button>
+                      </Show>
+                      <Show
+                        when={
+                          item.status === 'pending' ||
+                          item.status === 'accepted'
+                        }
+                      >
+                        <button
+                          type="button"
+                          aria-label={`Move ${item.idea} up`}
+                          onClick={() => room.reorder(item.id, targets().up)}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Move ${item.idea} down`}
+                          onClick={() => room.reorder(item.id, targets().down)}
+                        >
+                          ↓
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => room.decline(item.id)}
+                        >
+                          Decline
+                        </button>
+                      </Show>
+                      <Show when={item.status === 'accepted'}>
+                        <button
+                          type="button"
+                          onClick={() => void recordRequest(item)}
+                        >
+                          Record
+                        </button>
+                      </Show>
+                    </li>
+                  );
+                }}
+              </For>
+            </ol>
+            <h3>Setlist</h3>
+            <ol id="host-setlist" class="host-setlist">
+              <For each={room.view().setlist}>
+                {(song) => (
+                  <li>
+                    <a href={song.url} target="_blank" rel="noreferrer">
+                      {song.title}
+                    </a>
+                  </li>
+                )}
+              </For>
+            </ol>
+            <button
+              id="close-room"
+              class="room-close"
+              type="button"
+              disabled={room.closing()}
+              onClick={() => {
+                if (!room.authenticated())
+                  setRoomError(
+                    'The room was removed from this device. Its public link will expire automatically.',
+                  );
+                room.closeRoom();
+              }}
+            >
+              {room.closing() ? 'Closing…' : 'Close room'}
+            </button>
+          </aside>
+        </Show>
       </main>
 
+      <Show when={performanceOpen()}>
+        <section
+          ref={(element) => {
+            performanceDialog = element;
+          }}
+          class="performance"
+          id="performance"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="performance-title"
+        >
+          <h2 class="sr-only" id="performance-title">
+            Your mehfil performance
+          </h2>
+          <button
+            class="performance-close"
+            id="performance-close"
+            type="button"
+            aria-label="Close performance"
+            onClick={closePerformance}
+          >
+            ×
+          </button>
+          <div class="performance-content">
+            <div
+              class="performance-status"
+              id="performance-status"
+              role="status"
+              aria-live="polite"
+            >
+              {generation.generating() ? generation.status() : ''}
+            </div>
+            <Show when={generation.checkGenerationVisible()}>
+              <button
+                class="performance-replay"
+                id="check-generation"
+                type="button"
+                onClick={() => generation.checkGeneration()}
+              >
+                <span>Check generation</span>
+              </button>
+            </Show>
+            <Show when={generation.lyrics()}>
+              <div class="peek" id="peek">
+                <button
+                  type="button"
+                  class="peek-toggle"
+                  id="peek-toggle"
+                  aria-expanded={lyricsOpen()}
+                  aria-controls="lyric-reveal"
+                  onClick={() => {
+                    const opening = !lyricsOpen();
+                    setLyricsOpen(opening);
+                    if (opening) setHasRevealed(true);
+                  }}
+                >
+                  <strong>
+                    {lyricsOpen() ? 'Hide lyrics' : 'Reveal lyrics'}
+                  </strong>
+                  <small>
+                    {lyricsOpen()
+                      ? 'Too late now.'
+                      : "Wanna be surprised? Don't click me."}
+                  </small>
+                </button>
+              </div>
+            </Show>
+            <Show
+              when={generation.lyrics() && (lyricsOpen() || player.playing())}
+            >
+              <div class="lyric-reveal" id="lyric-reveal">
+                <span class="reveal-language" id="reveal-language">
+                  {languageLabel()}
+                </span>
+                <Show when={!hasRevealed()}>
+                  <span class="performance-timing" id="performance-timing">
+                    Atmospheric reveal · timing is approximate
+                  </span>
+                </Show>
+                <p class="reveal-lines" id="reveal-lines">
+                  <For each={lyricLines()}>
+                    {(line, index) => {
+                      const spokenBefore = () =>
+                        lyricLines()
+                          .slice(0, index())
+                          .filter((candidate) => !candidate.cue).length;
+                      const visible = () =>
+                        hasRevealed() ||
+                        (line.cue
+                          ? shownSpoken() > spokenBefore() ||
+                            spokenBefore() ===
+                              lyricLines().filter((candidate) => !candidate.cue)
+                                .length
+                          : shownSpoken() >= spokenBefore() + 1);
+                      return (
+                        <span
+                          class={
+                            line.cue ? 'lyric-line lyric-cue' : 'lyric-line'
+                          }
+                          hidden={!visible()}
+                        >
+                          <Show when={!line.cue} fallback={line.primary}>
+                            <span class="lyric-primary">{line.primary}</span>
+                            <Show when={line.secondary}>
+                              <span class="lyric-secondary">
+                                {line.secondary}
+                              </span>
+                            </Show>
+                          </Show>
+                        </span>
+                      );
+                    }}
+                  </For>
+                </p>
+              </div>
+            </Show>
+            <Show when={player.ended()}>
+              <button
+                class="performance-replay"
+                id="performance-replay"
+                type="button"
+                onClick={() => void player.replay()}
+              >
+                <span>Replay the mehfil</span>
+              </button>
+            </Show>
+          </div>
+        </section>
+      </Show>
+
       <section
-        class={`player ${player.playing() ? 'is-playing' : ''}`}
+        class={`player-shell ${player.playing() ? 'playing' : ''}`}
+        id="player-shell"
         aria-label="Song player"
       >
-        <div class="record" aria-hidden="true" />
-        <div>
-          <strong>{player.title()}</strong>
-          <p>{player.subtitle()}</p>
+        <div class="record" aria-hidden="true">
+          <div class="record-label">M</div>
+        </div>
+        <div class="track">
+          <strong id="track-title">{player.title()}</strong>
+          <span id="track-subtitle">{player.subtitle()}</span>
+          <div class="timeline">
+            <input
+              id="seek"
+              type="range"
+              min="0"
+              max="100"
+              value={
+                player.duration()
+                  ? (player.currentTime() / player.duration()) * 100
+                  : 0
+              }
+              aria-label="Seek"
+              onInput={(event) =>
+                player.seek(Number(event.currentTarget.value))
+              }
+              onChange={() => {
+                const song = room.currentSong();
+                if (song)
+                  room.send({
+                    type: 'playback-updated',
+                    shareId: song.shareId,
+                    status: player.playing() ? 'playing' : 'paused',
+                    positionMs: player.currentTime() * 1000,
+                  });
+              }}
+            />
+            <span id="timecode">
+              {formatTime(player.currentTime())} /{' '}
+              {formatTime(player.duration())}
+            </span>
+          </div>
         </div>
         <button
+          id="play"
+          class="play"
           type="button"
+          aria-label={`${player.playing() ? 'Pause' : 'Play'}${room.currentSong() ? ' for everyone' : ''}`}
           disabled={!player.ready()}
-          onClick={() => void player.toggle()}
+          onClick={() => void togglePlayback()}
         >
-          {player.playing() ? 'Pause' : 'Play'}
+          <svg
+            class="player-icon play-icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path d="M8.5 6.5v11l9-5.5-9-5.5Z" />
+          </svg>
+          <svg
+            class="player-icon pause-icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path d="M8 7v10M16 7v10" />
+          </svg>
         </button>
+        <button
+          id="view-performance"
+          class="player-action performance-entry"
+          type="button"
+          aria-label="View performance"
+          hidden={!performanceAvailable() || performanceOpen()}
+          onClick={(event) => openPerformance(event.currentTarget)}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 12s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5Z" />
+            <circle cx="12" cy="12" r="2.5" />
+          </svg>
+          <span>View</span>
+        </button>
+        <button
+          id="share"
+          class="share"
+          type="button"
+          aria-label="Share this song"
+          disabled={!generation.shareReference()}
+          onClick={() => void share()}
+        >
+          <svg class="player-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 8.5 12 5l3 3.5M12 5v10M7 11.5H5.5A1.5 1.5 0 0 0 4 13v4.5A1.5 1.5 0 0 0 5.5 19h13a1.5 1.5 0 0 0 1.5-1.5V13a1.5 1.5 0 0 0-1.5-1.5H17" />
+          </svg>
+          <span>{shareLabel()}</span>
+        </button>
+        <a
+          id="download"
+          class="download"
+          href={player.source() || '#'}
+          download="mehfil-song.mp3"
+          aria-disabled={!player.ready()}
+          aria-label="Save this song"
+        >
+          <svg
+            class="player-icon download-icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path d="M12 5v10M8.5 11.5 12 15l3.5-3.5M5 19h14" />
+          </svg>
+          <span>Save</span>
+        </a>
         <audio
+          id="audio"
           ref={(element) => player.bindAudio(element)}
           preload="metadata"
         />
       </section>
 
-      <Show when={room.details()}>
-        {(details) => (
-          <aside class="room-panel" aria-label="Live room">
-            <strong>Room {details().roomId}</strong>
-            <span>{room.status()}</span>
-            <a href={details().joinUrl}>Listener link</a>
-            <button type="button" onClick={() => room.close()}>
-              Close room
-            </button>
-          </aside>
-        )}
-      </Show>
-      <Show when={roomError()}>
-        <p class="toast" role="alert">
-          {roomError()}
-        </p>
-      </Show>
-
-      <Show when={diagnostics.visible()}>
-        <button class="diagnostics-open" type="button">
+      <Show when={diagnostics.available()}>
+        <button
+          id="media-diagnostics-open"
+          class="media-diagnostics-open"
+          type="button"
+          onClick={() => diagnostics.open()}
+        >
           Media diagnostics
         </button>
+      </Show>
+      <Show when={diagnostics.visible()}>
         <section
-          class="diagnostics"
+          id="media-diagnostics"
+          class="media-diagnostics"
           role="dialog"
           aria-modal="true"
-          aria-label="Media diagnostics"
+          aria-labelledby="media-diagnostics-title"
         >
-          <h2>{diagnostics.headline()}</h2>
-          <p>Copy this sanitized report and send it back.</p>
-          <pre>{diagnostics.report()}</pre>
-          <button type="button" onClick={() => diagnostics.close()}>
-            Continue testing
-          </button>
+          <div class="media-diagnostics-sheet">
+            <p class="media-diagnostics-kicker">
+              Diagnostic preview · persistent local log
+            </p>
+            <h2 id="media-diagnostics-title">Playback stopped for evidence</h2>
+            <p
+              id="media-diagnostics-headline"
+              class="media-diagnostics-headline"
+            >
+              {diagnostics.headline()}
+            </p>
+            <p class="media-diagnostics-help">
+              Copy or download this sanitized report and send it back. Tokens,
+              lyrics, request bodies, signed URL paths, and query strings are
+              excluded.
+            </p>
+            <div class="media-diagnostics-actions">
+              <button
+                type="button"
+                onClick={() => void player.play('diagnostic-retry')}
+              >
+                Retry
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  void navigator.clipboard.writeText(diagnostics.report())
+                }
+              >
+                Copy report
+              </button>
+              <button type="button" onClick={() => diagnostics.clear()}>
+                Clear log
+              </button>
+              <button type="button" onClick={() => diagnostics.close()}>
+                Continue testing
+              </button>
+            </div>
+            <pre id="media-diagnostics-output" tabIndex={0}>
+              {diagnostics.report()}
+            </pre>
+          </div>
         </section>
       </Show>
     </>
