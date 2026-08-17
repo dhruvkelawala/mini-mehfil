@@ -7,4 +7,6 @@ test-results/
 .vercel/
 plans/
 public/
-share/courtyard.mjs
+worker-configuration.d.ts
+docs/mobile-playback-investigation-2026-08-15.md
+docs/research/minimax-native-vocals.md

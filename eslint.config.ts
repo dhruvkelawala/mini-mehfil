@@ -46,7 +46,12 @@ export default tseslint.config(
   },
   {
     ...solid,
-    files: ['src/client/**/*.ts', 'src/client/**/*.tsx'],
+    files: [
+      'src/client/**/*.ts',
+      'src/client/**/*.tsx',
+      'test/client/**/*.ts',
+      'test/client/**/*.tsx',
+    ],
     languageOptions: {
       globals: globals.browser,
       parserOptions: {

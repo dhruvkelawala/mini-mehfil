@@ -11,6 +11,7 @@ import type {
 
 function listenerController(
   snapshot: ListenerSnapshot | null,
+  connect = vi.fn(),
 ): ListenerRoomController {
   const [state] = createSignal(snapshot);
   return {
@@ -22,20 +23,21 @@ function listenerController(
     playbackLabel: () => 'Host paused',
     bindAudio: vi.fn(),
     enableAudio: () => Promise.resolve(),
-    connect: vi.fn(),
+    connect,
     submitRequest: vi.fn(),
     close: vi.fn(),
   };
 }
 
 describe('listener app', () => {
-  test('keeps the accessible join flow', async () => {
-    const controller = listenerController(null);
+  test('keeps the accessible join flow', () => {
+    const connect = vi.fn();
+    const controller = listenerController(null, connect);
     render(() => <App roomId="ABCDEFGH" controller={controller} />);
     const name = screen.getByLabelText('Your name optional');
     name.setAttribute('value', 'Ada');
     screen.getByRole('button', { name: 'Join the mehfil' }).click();
-    expect(controller.connect).toHaveBeenCalled();
+    expect(connect).toHaveBeenCalled();
   });
 
   test('renders synchronized native and romanized lyrics', () => {

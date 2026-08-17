@@ -42,6 +42,12 @@ src/client/listener/: Solid listener UI and socket controller
 src/worker/room-page.ts: external-asset listener HTML shell
 ```
 
+Vite builds the listener independently under `dist/listener`. Wrangler's
+`ASSETS` binding serves its hashed JavaScript and CSS, while `/r/:roomId`
+remains Worker-first so `room-page.ts` can inject the validated room marker and
+apply the external-only CSP. Regenerate `worker-configuration.d.ts` after any
+binding change with `npm run worker:types`.
+
 `createDurableRoomDirectory()` is the only implementation that knows how to
 turn a room code into `env.ROOMS.idFromName(roomId)`. Cloudflare therefore sends
 every request for a code to the same `MehfilRoom` object. The router and its

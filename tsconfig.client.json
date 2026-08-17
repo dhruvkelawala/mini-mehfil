@@ -7,5 +7,10 @@
     "jsxImportSource": "solid-js",
     "types": ["vite/client"]
   },
-  "include": ["src/client/**/*.ts", "src/client/**/*.tsx"]
+  "include": [
+    "src/client/**/*.ts",
+    "src/client/**/*.tsx",
+    "test/client/**/*.ts",
+    "test/client/**/*.tsx"
+  ]
 }
