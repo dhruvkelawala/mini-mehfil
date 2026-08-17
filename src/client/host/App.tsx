@@ -50,6 +50,8 @@ const publicLyrics = (sheet: LyricsSheet): LyricsSheet => ({
   lyricsNative: sheet.lyricsNative,
   lyricsRoman: sheet.lyricsRoman,
 });
+const TOKEN_REQUIRED_MESSAGE =
+  'Paste your MiniMax token before queueing a recording.';
 
 export function App() {
   const diagnostics = createMediaDiagnostics();
@@ -211,7 +213,7 @@ export function App() {
   };
   const recordRequest = (item: SongRequest) => {
     if (!hasToken() || !tokenInput?.value.trim()) {
-      setRoomError('Paste your MiniMax token before queueing a recording.');
+      setRoomError(TOKEN_REQUIRED_MESSAGE);
       tokenInput?.focus();
       return;
     }
@@ -219,7 +221,9 @@ export function App() {
       setRoomError(
         'The room is reconnecting. Wait for it to reconnect, then press Record again.',
       );
+      return;
     }
+    setRoomError('');
   };
 
   const roomGenerationHooks = (requestId: string) => {
@@ -524,9 +528,12 @@ export function App() {
                 placeholder="sk-cp-••••••••"
                 required
                 disabled={generation.generating()}
-                onInput={(event) =>
-                  setHasToken(Boolean(event.currentTarget.value.trim()))
-                }
+                onInput={(event) => {
+                  const ready = Boolean(event.currentTarget.value.trim());
+                  setHasToken(ready);
+                  if (ready && roomError() === TOKEN_REQUIRED_MESSAGE)
+                    setRoomError('');
+                }}
               />
               <button
                 type="button"

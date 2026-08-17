@@ -86,6 +86,84 @@ test('a host authenticates before receiving room state', async ({ page }) => {
   });
 });
 
+test('the missing-token warning clears after a recording is queued', async ({
+  page,
+}) => {
+  await installWebSocketHarness(page);
+  await page.goto('/');
+  await page
+    .getByRole('button', { name: 'Open this mehfil to friends' })
+    .click();
+  await expect(page.getByText('connected')).toBeVisible();
+  await page.evaluate(
+    (snapshot) => {
+      const fixtureWindow = window as typeof window & {
+        __mehfilSockets: Array<{
+          sent: string[];
+          serverMessage(value: unknown): void;
+        }>;
+      };
+      fixtureWindow.__mehfilSockets[0]?.serverMessage({
+        type: 'snapshot',
+        state: snapshot,
+      });
+    },
+    projectHostFixture({
+      version: 1,
+      roomId: 'ABCDEFGH',
+      openedAt: 1,
+      expiresAt: Date.now() + 60_000,
+      expiredAt: null,
+      hostPresent: true,
+      participants: [
+        { id: 'listener-1', name: 'Listener', connected: true, joinedAt: 1 },
+      ],
+      kickedParticipantIds: [],
+      queue: [
+        {
+          id: 'request-a',
+          participantId: 'listener-1',
+          idea: 'Request A',
+          vibe: '',
+          language: 'Hindi',
+          status: 'accepted',
+          submittedAt: 2,
+        },
+      ],
+      recordingQueue: [],
+      currentRecording: null,
+      currentSong: null,
+      setlist: [],
+    }),
+  );
+
+  const recordButton = page
+    .locator('#host-queue')
+    .getByRole('button', { name: 'Record' });
+  await recordButton.click();
+  await expect(
+    page.getByText('Paste your MiniMax token before queueing a recording.'),
+  ).toBeVisible();
+
+  await page.getByLabel(/MiniMax token/).fill('sk-fixture-secret-token');
+  await recordButton.click();
+  await expect(
+    page.getByText('Paste your MiniMax token before queueing a recording.'),
+  ).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const fixtureWindow = window as typeof window & {
+          __mehfilSockets: Array<{ sent: string[] }>;
+        };
+        return (fixtureWindow.__mehfilSockets[0]?.sent ?? []).some((frame) =>
+          frame.includes('recording-enqueued'),
+        );
+      }),
+    )
+    .toBe(true);
+});
+
 test('a refreshed host does not claim queued paid work before its token is present', async ({
   page,
 }) => {
