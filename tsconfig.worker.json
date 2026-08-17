@@ -3,11 +3,19 @@
   "compilerOptions": {
     "lib": ["ES2023", "WebWorker"],
     "moduleResolution": "Bundler",
-    "types": ["./worker-configuration.d.ts"]
+    "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "checkJs": false,
+    "types": [
+      "./worker-configuration.d.ts",
+      "vitest/globals",
+      "@cloudflare/vitest-pool-workers/types"
+    ]
   },
   "include": [
     "src/room/**/*.ts",
     "src/worker/**/*.ts",
+    "test/worker/**/*.ts",
     "worker-configuration.d.ts"
   ]
 }
