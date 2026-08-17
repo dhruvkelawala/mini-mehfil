@@ -855,24 +855,51 @@ export function App() {
             <h3>Setlist</h3>
             <ol id="host-setlist" class="host-setlist">
               <For each={room.view().setlist}>
-                {(song) => (
-                  <li>
-                    <a href={song.url} target="_blank" rel="noreferrer">
-                      {song.title}
-                    </a>
-                    <Show when={song.lyrics}>
-                      <button
-                        type="button"
-                        disabled={room.currentSong()?.shareId === song.shareId}
-                        onClick={() => room.selectSong(song.shareId)}
+                {(song, index) => {
+                  const isCurrent = () =>
+                    room.currentSong()?.shareId === song.shareId;
+
+                  return (
+                    <li classList={{ 'is-current': isCurrent() }}>
+                      <span class="setlist-position" aria-hidden="true">
+                        {index() + 1}
+                      </span>
+                      <span class="setlist-copy">
+                        <a href={song.url} target="_blank" rel="noreferrer">
+                          {song.title}
+                        </a>
+                        <small>
+                          {isCurrent()
+                            ? 'Playing in the room'
+                            : 'Ready to play'}
+                        </small>
+                      </span>
+                      <Show
+                        when={isCurrent()}
+                        fallback={
+                          <Show when={song.lyrics}>
+                            <button
+                              class="setlist-play"
+                              type="button"
+                              aria-label="Make current"
+                              onClick={() => room.selectSong(song.shareId)}
+                            >
+                              <svg viewBox="0 0 18 18" aria-hidden="true">
+                                <path d="m6.5 4.5 7 4.5-7 4.5z" />
+                              </svg>
+                              Play
+                            </button>
+                          </Show>
+                        }
                       >
-                        {room.currentSong()?.shareId === song.shareId
-                          ? 'Current'
-                          : 'Make current'}
-                      </button>
-                    </Show>
-                  </li>
-                )}
+                        <span class="setlist-current">
+                          <span aria-hidden="true" />
+                          Now playing
+                        </span>
+                      </Show>
+                    </li>
+                  );
+                }}
               </For>
             </ol>
             <button

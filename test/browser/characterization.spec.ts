@@ -490,6 +490,8 @@ test('background recordings stay sequential and switch playback only when select
   await serverMessage(page, state);
   await serverMessage(listener, listenerState(state));
   await expect(page.locator('#track-title')).toHaveText('Request B');
+  await expect(page.getByText('Now playing', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Current' })).toHaveCount(0);
   await expect(
     listener.getByRole('heading', { name: 'Request B' }).first(),
   ).toBeVisible();

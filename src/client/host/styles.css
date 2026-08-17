@@ -365,7 +365,7 @@ h1 {
   white-space: nowrap;
 }
 .host-queue,
-.host-setlist {
+.host-queue {
   padding-left: 20px;
   font-size: 12px;
 }
@@ -375,21 +375,16 @@ h1 {
   font-size: 12px;
 }
 .host-participants li,
-.host-queue li,
-.host-setlist li {
+.host-queue li {
   margin: 10px 0;
 }
 .host-queue button,
-.host-participants button,
-.host-setlist button {
+.host-participants button {
   width: auto;
   min-height: 34px;
   margin: 4px 4px 0 0;
   padding: 6px 8px;
   font-size: 10px;
-}
-.host-setlist a {
-  color: #e6a653;
 }
 .recording-workflow:not(:empty) {
   margin: 15px 0 4px;
@@ -530,6 +525,111 @@ h1 {
   stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+.host-setlist {
+  margin: 9px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+  list-style: none;
+}
+.host-setlist li {
+  min-width: 0;
+  margin: 0;
+  padding: 10px 10px 10px 11px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(249, 237, 218, 0.1);
+  border-radius: 8px;
+  background: rgba(8, 24, 23, 0.24);
+}
+.host-setlist li.is-current {
+  border-color: rgba(123, 224, 164, 0.22);
+  background: linear-gradient(
+    90deg,
+    rgba(31, 91, 67, 0.22),
+    rgba(8, 24, 23, 0.22)
+  );
+}
+.setlist-position {
+  color: rgba(230, 166, 83, 0.8);
+  font:
+    700 11px/1 'Iowan Old Style',
+    Georgia,
+    serif;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.setlist-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.host-setlist a {
+  width: fit-content;
+  max-width: 100%;
+  color: #fff8ec;
+  font:
+    700 14px/1.25 'Iowan Old Style',
+    Georgia,
+    serif;
+  overflow-wrap: anywhere;
+  text-decoration-color: rgba(230, 166, 83, 0.45);
+  text-underline-offset: 3px;
+}
+.host-setlist a:hover {
+  color: #eab66f;
+  text-decoration-color: currentColor;
+}
+.setlist-copy small {
+  color: rgba(221, 203, 184, 0.7);
+  font-size: 9px;
+  line-height: 1.35;
+}
+.setlist-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #a9d8bd;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.setlist-current > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #7be0a4;
+  box-shadow: 0 0 0 3px rgba(123, 224, 164, 0.1);
+}
+.host-setlist .setlist-play {
+  width: auto;
+  min-width: 0;
+  min-height: 34px;
+  margin: 0;
+  padding: 6px 10px 6px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-color: rgba(230, 166, 83, 0.28);
+  color: #eab66f;
+  background: rgba(230, 166, 83, 0.07);
+  font-size: 10px;
+}
+.host-setlist .setlist-play:hover {
+  border-color: rgba(230, 166, 83, 0.56);
+  color: #fff8ec;
+  background: rgba(230, 166, 83, 0.13);
+}
+.setlist-play svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+  stroke: none;
 }
 .room-close {
   width: 100%;
