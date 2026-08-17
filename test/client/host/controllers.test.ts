@@ -45,14 +45,14 @@ const lyrics: HostLyrics = {
   prompt: 'Warm acoustic',
 };
 
-function fakePlayer(): PlayerController {
+function fakePlayer(load = vi.fn(() => Promise.resolve())): PlayerController {
   return {
     ready: () => false,
     playing: () => false,
     title: () => '',
     subtitle: () => '',
     bindAudio: vi.fn(),
-    load: vi.fn(() => Promise.resolve()),
+    load,
     toggle: vi.fn(() => Promise.resolve()),
   };
 }
@@ -106,7 +106,8 @@ describe('host generation modules', () => {
 
   test('recovers a lost paid response without repeating generation', async () => {
     let paidCalls = 0;
-    const player = fakePlayer();
+    const load = vi.fn(() => Promise.resolve());
+    const player = fakePlayer(load);
     const controller = createGenerationController({
       player,
       storage: new MemoryStorage(),
@@ -131,7 +132,7 @@ describe('host generation modules', () => {
       language: 'auto',
     });
     expect(paidCalls).toBe(1);
-    expect(player.load).toHaveBeenCalledOnce();
+    expect(load).toHaveBeenCalledOnce();
   });
 
   test('records a sanitized playback failure', () => {

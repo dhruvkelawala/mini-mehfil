@@ -28,7 +28,7 @@ type HttpError = Error & { status?: number; code?: string };
 
 export interface ServerOptions {
   apiBase?: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: ServerFetch;
   writeLyrics?: (
     options: WriteLyricsOptions,
   ) => Promise<LyricsResult> | LyricsResult;
@@ -40,6 +40,11 @@ export interface ServerOptions {
   roomTimeoutMs?: number;
   staticRoot?: string;
 }
+
+export type ServerFetch = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -263,7 +268,8 @@ function loadLyricist() {
 export function createServer(options: ServerOptions = {}): http.Server {
   const apiBase =
     options.apiBase || process.env.MINIMAX_API_BASE || 'https://api.minimax.io';
-  const fetchImpl = options.fetchImpl || global.fetch;
+  const fetchImpl: ServerFetch =
+    options.fetchImpl ?? ((input, init) => fetch(input, init));
   const writeLyricsImpl = options.writeLyrics;
   const shareBaseUrl = normalizeShareBaseUrl(
     options.shareBaseUrl ?? process.env.MEHFIL_SHARE_URL ?? '',

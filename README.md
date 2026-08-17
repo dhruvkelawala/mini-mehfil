@@ -75,4 +75,12 @@ and Wrangler provide build and verification tooling.
 
 ```bash
 npm test
+npm run test:browser
+npm run check
 ```
+
+`npm test` runs the typed Vitest and Cloudflare Worker suites. The browser
+command runs the intercepted Chromium flows. `npm run check` is the same
+secret-free verification used by CI: formatting, linting, strict types,
+generated binding freshness, unit and Worker tests, both Vite builds, gzip
+budgets, and a Wrangler dry-run.

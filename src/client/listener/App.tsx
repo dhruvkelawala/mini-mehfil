@@ -47,7 +47,8 @@ export function App(props: {
 }) {
   const controller = untrack(
     () =>
-      props.controller ?? createListenerRoomController({ roomId: props.roomId }),
+      props.controller ??
+      createListenerRoomController({ roomId: props.roomId }),
   );
   const lyrics = lyricLines(controller);
   let nameInput: HTMLInputElement | undefined;
