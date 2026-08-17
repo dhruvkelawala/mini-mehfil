@@ -5,20 +5,24 @@ import { test } from 'vitest';
 
 test('the selected folk-modern scene ships with all four background candidates', () => {
   const backgrounds = readdirSync(
-    new URL('../../../public/backgrounds', import.meta.url),
+    new URL('../public/backgrounds', import.meta.url),
   )
     .filter((file) => file.endsWith('.png'))
     .sort();
   const styles = readFileSync(
-    new URL('../../../src/client/host/styles.css', import.meta.url),
+    new URL('../src/client/host/styles.css', import.meta.url),
     'utf8',
   );
   const html = readFileSync(
-    new URL('../../../src/client/host/index.html', import.meta.url),
+    new URL('../src/client/host/index.html', import.meta.url),
     'utf8',
   );
   const app = readFileSync(
-    new URL('../../../src/client/host/App.tsx', import.meta.url),
+    new URL('../src/client/host/App.tsx', import.meta.url),
+    'utf8',
+  );
+  const viteConfig = readFileSync(
+    new URL('../vite.config.ts', import.meta.url),
     'utf8',
   );
 
@@ -47,4 +51,8 @@ test('the selected folk-modern scene ships with all four background candidates',
   );
   assert.doesNotMatch(app, /Lyrics cost about a tenth of a cent/);
   assert.doesNotMatch(styles, /\.cost-hint/);
+  assert.match(
+    viteConfig,
+    /publicDir:\s*surface === 'host' \? resolve\('public'\) : false/,
+  );
 });

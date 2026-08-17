@@ -498,14 +498,8 @@ test('upload to playback round trip preserves title, language, and both lyric sc
   assert.match(html, /class="player-icon pause-icon"/);
   assert.match(html, /id="share"[^>]*>[\s\S]*?<svg class="player-icon"/);
   assert.match(html, /class="player-icon download-icon"/);
-  assert.doesNotMatch(
-    html,
-    new RegExp(`Make your own song \\u${'2197'}`, 'u'),
-  );
-  assert.doesNotMatch(
-    html,
-    new RegExp(`id="share"[^>]*>\\u${'2197'}`, 'u'),
-  );
+  assert.doesNotMatch(html, new RegExp(`Make your own song \\u${'2197'}`, 'u'));
+  assert.doesNotMatch(html, new RegExp(`id="share"[^>]*>\\u${'2197'}`, 'u'));
   assert.doesNotMatch(html, /share\.innerHTML/);
   assert.doesNotMatch(html, /<audio[^>]+controls/);
   assert.doesNotMatch(html, /class="courtyard"/);
