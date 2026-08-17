@@ -152,6 +152,9 @@ class Element {
   setAttribute(name, value) {
     this.attributes.set(name, value);
   }
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
   async emit(type) {
     return this.listeners.get(type)?.();
   }
@@ -266,9 +269,9 @@ const TIMED_LYRICS = {
   ...SONG,
   isLatinScript: true,
   lyricsNative:
-    '[Intro]\nOoh\n[Verse]\nRain on the window\n[Inst]\n—\n[Chorus]\nSing it back',
+    '[Intro]\nOoh\n[Verse]\nRain on the window\nUnder amber light\n[Inst]\n—\n[Chorus]\nSing it back',
   lyricsRoman:
-    '[Intro]\nOoh\n[Verse]\nRain on the window\n[Inst]\n—\n[Chorus]\nSing it back',
+    '[Intro]\nOoh\n[Verse]\nRain on the window\nUnder amber light\n[Inst]\n—\n[Chorus]\nSing it back',
   lyricTiming: {
     version: 1,
     mode: 'minimax-section-asr',
@@ -285,12 +288,23 @@ const TIMED_LYRICS = {
 test('a timed share follows its sections and never shows stale sung lines', async () => {
   const page = await playbackHarness(TIMED_LYRICS, 90);
   assert.equal(page.songData.timeline.length, 4);
+  assert.equal(page.songData.pacing.length, 4);
   assert.equal(page.songData.expectedDurationSeconds, 90);
+  assert.deepEqual(Object.keys(page.songData).sort(), [
+    'expectedDurationSeconds',
+    'lines',
+    'pacing',
+    'sections',
+    'timeline',
+  ]);
 
   // Before loadedmetadata the page is honest about being approximate.
   assert.match(page.html, /Atmospheric reveal · timing is approximate/);
   await page.audio.emit('loadedmetadata');
-  assert.equal(page.timingNote(), 'Section timing from MiniMax analysis');
+  assert.equal(
+    page.timingNote(),
+    'Lines follow MiniMax sections · timing is approximate',
+  );
 
   await page.seekTo(1);
   assert.equal(page.lines().length, 1);
@@ -298,14 +312,41 @@ test('a timed share follows its sections and never shows stale sung lines', asyn
     page.lines()[0].className,
     'lyric-section lyric-section-current',
   );
-  assert.equal(page.lines()[0].attributes.get('aria-current'), 'true');
   assert.match(page.lines()[0].text, /Intro/);
   assert.match(page.lines()[0].text, /Ooh/);
+  assert.equal(
+    page.lines()[0].children[1].className,
+    'lyric-line lyric-line-current',
+  );
+  assert.equal(
+    page.lines()[0].children[1].attributes.get('aria-current'),
+    'true',
+  );
   assert.doesNotMatch(page.lines()[0].text, /Rain on the window/);
 
   await page.seekTo(20);
   assert.match(page.lines()[0].text, /Rain on the window/);
   assert.doesNotMatch(page.lines()[0].text, /Ooh/);
+  const renderedVerse = page.lines()[0];
+  assert.equal(
+    renderedVerse.children[1].className,
+    'lyric-line lyric-line-current',
+  );
+  assert.equal(
+    renderedVerse.children[2].className,
+    'lyric-line lyric-line-upcoming',
+  );
+  await page.seekTo(39);
+  assert.equal(
+    page.lines()[0],
+    renderedVerse,
+    'line emphasis moves without replacing the aria-live section',
+  );
+  assert.equal(page.lines()[0].children[1].className, 'lyric-line');
+  assert.equal(
+    page.lines()[0].children[2].className,
+    'lyric-line lyric-line-current',
+  );
 
   // An unmapped silence shows a rest, not the verse that just ended.
   await page.seekTo(45);
@@ -335,6 +376,7 @@ test('a timed share falls back to the approximate reveal when the audio does not
 test('an untimed share serializes no timeline and reveals approximately', async () => {
   const page = await playbackHarness(SONG, 100);
   assert.equal(page.songData.timeline, null);
+  assert.equal('pacing' in page.songData, false);
   assert.deepEqual(page.songData.sections, []);
   assert.equal(page.songData.expectedDurationSeconds, 0);
   await page.audio.emit('loadedmetadata');
