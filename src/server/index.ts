@@ -257,6 +257,9 @@ function publicFailure(message: unknown, code = 'GENERATION_FAILED') {
   return { code, message: safe };
 }
 
+const MINIMAX_TOKEN_FORMAT_ERROR = 'MiniMax tokens start with sk-.';
+const validMiniMaxToken = (token: string) => token.startsWith('sk-');
+
 function staticFile(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -416,6 +419,8 @@ export function createServer(options: ServerOptions = {}): http.Server {
 
         if (!token)
           return sendJson(res, 400, { error: 'Add your MiniMax API token.' });
+        if (!validMiniMaxToken(token))
+          return sendJson(res, 400, { error: MINIMAX_TOKEN_FORMAT_ERROR });
         if (!idea)
           return sendJson(res, 400, {
             error: 'Tell me what the song is about.',
@@ -452,7 +457,10 @@ export function createServer(options: ServerOptions = {}): http.Server {
             error: 'The lyricist took too long. Try again.',
           });
         return sendJson(res, details.status || 502, {
-          error: details.message || 'Could not write lyrics.',
+          error:
+            details.status === 401
+              ? 'MiniMax rejected the API token. Check it and try again.'
+              : details.message || 'Could not write lyrics.',
         });
       }
     }
@@ -466,7 +474,7 @@ export function createServer(options: ServerOptions = {}): http.Server {
         const attempt =
           typeof body.attempt === 'number' ? body.attempt : undefined;
         let outcome: TimingAnalysisOutcome;
-        if (!token) {
+        if (!validMiniMaxToken(token)) {
           outcome = {
             status: 'unavailable',
             reason: 'authentication',
@@ -484,7 +492,7 @@ export function createServer(options: ServerOptions = {}): http.Server {
             },
           );
         }
-        return sendJson(res, token ? 200 : 400, outcome);
+        return sendJson(res, validMiniMaxToken(token) ? 200 : 400, outcome);
       } catch {
         const outcome: TimingAnalysisOutcome = {
           status: 'unavailable',
@@ -510,6 +518,8 @@ export function createServer(options: ServerOptions = {}): http.Server {
 
         if (!token)
           return sendJson(res, 400, { error: 'Add your MiniMax API token.' });
+        if (!validMiniMaxToken(token))
+          return sendJson(res, 400, { error: MINIMAX_TOKEN_FORMAT_ERROR });
         if (!lyrics)
           return sendJson(res, 400, { error: 'Add some lyrics first.' });
         if (lyrics.length > 3500)

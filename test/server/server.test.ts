@@ -115,6 +115,32 @@ test('rejects an empty token without contacting MiniMax', async () => {
   );
 });
 
+test('rejects malformed MiniMax tokens before contacting upstream', async () => {
+  let contacted = false;
+  await withServer(
+    async () => {
+      contacted = true;
+    },
+    async (base) => {
+      const response = await fetch(`${base}/api/generate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jobId: JOB_ID,
+          token: 'not-a-minimax-token',
+          lyrics: 'hello',
+        }),
+      });
+      assert.equal(response.status, 400);
+      assert.equal(
+        (await response.json()).error,
+        'MiniMax tokens start with sk-.',
+      );
+      assert.equal(contacted, false);
+    },
+  );
+});
+
 test('proxies the token and normalized Music 3 payload', async () => {
   let captured;
   const mockFetch = async (url, init) => {
@@ -1696,6 +1722,35 @@ test('rejects a lyric request with no token', async () => {
       );
     },
     { writeLyrics: async () => SHEET },
+  );
+});
+
+test('rejects a malformed lyric token without calling the lyricist', async () => {
+  let called = false;
+  await withServer(
+    global.fetch,
+    async (base) => {
+      const response = await fetch(`${base}/api/write-lyrics`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          token: 'not-a-minimax-token',
+          idea: 'Aloopuri Khavsa',
+        }),
+      });
+      assert.equal(response.status, 400);
+      assert.equal(
+        (await response.json()).error,
+        'MiniMax tokens start with sk-.',
+      );
+      assert.equal(called, false);
+    },
+    {
+      writeLyrics: async () => {
+        called = true;
+        return SHEET;
+      },
+    },
   );
 });
 

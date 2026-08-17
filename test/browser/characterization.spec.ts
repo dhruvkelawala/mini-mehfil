@@ -21,6 +21,41 @@ test('host writes, records, and exposes the finished player', async ({
   await expect(page.getByRole('button', { name: 'Play' })).toBeEnabled();
 });
 
+test('an invalid token stays on the composer with a useful validation message', async ({
+  page,
+}) => {
+  let lyricRequests = 0;
+  await page.route('**/api/write-lyrics', async (route) => {
+    lyricRequests += 1;
+    await route.fulfill({
+      status: 401,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        error: 'MiniMax rejected the API token. Check it and try again.',
+      }),
+    });
+  });
+  await page.goto('/');
+  await page.getByLabel(/MiniMax token/).fill('not-a-minimax-token');
+  await page.getByLabel(/What's the song about\?/).fill('Monsoon Song');
+  await page.getByRole('button', { name: 'Start the mehfil' }).click();
+
+  await expect(page.getByText('MiniMax tokens start with sk-.')).toBeVisible();
+  await expect(page.locator('#performance')).toHaveCount(0);
+  await expect(page.getByLabel(/MiniMax token/)).toBeFocused();
+  expect(lyricRequests).toBe(0);
+
+  await page.getByLabel(/MiniMax token/).fill('sk-still-invalid');
+  await page.getByRole('button', { name: 'Start the mehfil' }).click();
+
+  await expect(
+    page.getByText('MiniMax rejected the API token. Check it and try again.'),
+  ).toBeVisible();
+  await expect(page.locator('#performance')).toHaveCount(0);
+  await expect(page.getByLabel(/MiniMax token/)).toBeFocused();
+  expect(lyricRequests).toBe(1);
+});
+
 test('a lost paid response is recovered without a second paid POST', async ({
   page,
 }) => {

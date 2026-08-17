@@ -74,6 +74,8 @@ const publicLyrics = (sheet: LyricsSheet): LyricsSheet => ({
 });
 const TOKEN_REQUIRED_MESSAGE =
   'Paste your MiniMax token before queueing a recording.';
+const TOKEN_FORMAT_MESSAGE = 'MiniMax tokens start with sk-.';
+const validMiniMaxToken = (value: string) => value.trim().startsWith('sk-');
 
 export function PerformanceTimingCopy(props: {
   pending: boolean;
@@ -339,6 +341,13 @@ export function App() {
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
     if (!tokenInput) return;
+    const token = tokenInput.value.trim();
+    if (!validMiniMaxToken(token)) {
+      setRoomError(token ? TOKEN_FORMAT_MESSAGE : TOKEN_REQUIRED_MESSAGE);
+      setPerformanceOpen(false);
+      tokenInput.focus();
+      return;
+    }
     setRoomError('');
     setManualLyricsOpen(false);
     setPerformanceOpen(true);
@@ -346,7 +355,7 @@ export function App() {
     try {
       await generation.generate(
         {
-          token: tokenInput.value,
+          token,
           idea: idea(),
           vibe: vibe(),
           language: language(),
@@ -354,7 +363,9 @@ export function App() {
         room.details() ? { onReady: publishStandalone } : {},
       );
     } catch {
-      /* Controller owns visible generation errors. */
+      // The controller owns the message; return to the form so it is visible.
+      setPerformanceOpen(false);
+      tokenInput.focus();
     }
   };
   const share = async () => {
@@ -368,8 +379,9 @@ export function App() {
     }
   };
   const recordRequest = (item: SongRequest) => {
-    if (!hasToken() || !tokenInput?.value.trim()) {
-      setRoomError(TOKEN_REQUIRED_MESSAGE);
+    const token = tokenInput?.value.trim() ?? '';
+    if (!hasToken() || !validMiniMaxToken(token)) {
+      setRoomError(token ? TOKEN_FORMAT_MESSAGE : TOKEN_REQUIRED_MESSAGE);
       tokenInput?.focus();
       return;
     }
@@ -717,9 +729,13 @@ export function App() {
                 required
                 disabled={generation.generating()}
                 onInput={(event) => {
-                  const ready = Boolean(event.currentTarget.value.trim());
+                  const ready = validMiniMaxToken(event.currentTarget.value);
                   setHasToken(ready);
-                  if (ready && roomError() === TOKEN_REQUIRED_MESSAGE)
+                  if (
+                    ready &&
+                    (roomError() === TOKEN_REQUIRED_MESSAGE ||
+                      roomError() === TOKEN_FORMAT_MESSAGE)
+                  )
                     setRoomError('');
                 }}
               />
