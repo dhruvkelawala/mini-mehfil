@@ -50,10 +50,7 @@ test('a generated song can be revealed, shared, and reopened', async ({
 
   await expect(page.getByText('Your recording is ready.')).toBeVisible();
   const lyricToggle = page.locator('#peek-toggle');
-  await expect(lyricToggle).toBeVisible();
-  if ((await lyricToggle.innerText()).includes('Hide'))
-    await lyricToggle.click();
-  await lyricToggle.click();
+  await expect(lyricToggle).toBeHidden();
   await expect(page.getByText('बारिश की रात')).toBeVisible();
   await expect(page.getByText('Baarish ki raat')).toBeVisible();
 
@@ -81,6 +78,161 @@ test('a generated song can be revealed, shared, and reopened', async ({
     page.getByRole('dialog', { name: 'Your mehfil performance' }),
   ).toBeHidden();
   await expect(reopen).toBeFocused();
+});
+
+test('playing timed lyrics ignore an earlier manual full-sheet reveal', async ({
+  page,
+}) => {
+  let releaseGeneration: (() => void) | undefined;
+  const generationHeld = new Promise<void>((resolve) => {
+    releaseGeneration = resolve;
+  });
+  await page.addInitScript(() => {
+    HTMLMediaElement.prototype.load = function () {
+      Object.defineProperty(this, 'duration', {
+        configurable: true,
+        value: 24,
+      });
+      Object.defineProperty(this, 'currentTime', {
+        configurable: true,
+        value: 5,
+        writable: true,
+      });
+      queueMicrotask(() => this.dispatchEvent(new Event('loadedmetadata')));
+    };
+    HTMLMediaElement.prototype.play = function () {
+      this.dispatchEvent(new Event('play'));
+      return Promise.resolve();
+    };
+  });
+  await page.route('**/api/write-lyrics', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        title: 'Timed Rain',
+        language: 'English',
+        nativeScriptName: 'Latin',
+        isLatinScript: true,
+        lyricsNative: '[Verse]\nRain begins\n[Chorus]\nSing again',
+        lyricsRoman: '[Verse]\nRain begins\n[Chorus]\nSing again',
+        prompt: 'Warm acoustic mehfil',
+      }),
+    });
+  });
+  await page.route('**/api/generate', async (route) => {
+    await generationHeld;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { audio: '49443304000000000000' },
+        lyric_timing: {
+          version: 1,
+          mode: 'minimax-section-asr',
+          durationSeconds: 24,
+          segments: [
+            { start: 0, end: 12, label: 'verse' },
+            { start: 12, end: 24, label: 'chorus' },
+          ],
+        },
+      }),
+    });
+  });
+
+  await page.goto('/');
+  await fillSong(page);
+  await page.getByRole('button', { name: 'Start the mehfil' }).click();
+  const lyricToggle = page.locator('#peek-toggle');
+  await expect(lyricToggle).toContainText('Reveal lyrics');
+  await lyricToggle.click();
+  await expect(lyricToggle).toContainText('Hide lyrics');
+  await expect(page.getByText('Verse')).toBeVisible();
+  await expect(page.getByText('Chorus')).toBeVisible();
+
+  releaseGeneration?.();
+  await expect(page.getByText('Your recording is ready.')).toBeVisible();
+
+  await expect(page.locator('#reveal-lines .lyric-section')).toHaveCount(1);
+  await expect(page.getByText('Verse')).toBeVisible();
+  await expect(page.getByText('Chorus')).toHaveCount(0);
+  await expect(lyricToggle).toBeHidden();
+
+  const audio = page.locator('audio');
+  await audio.evaluate((element) => element.dispatchEvent(new Event('pause')));
+  await expect(lyricToggle).toBeHidden();
+  await expect(page.locator('#reveal-lines .lyric-section')).toHaveCount(1);
+  await audio.evaluate((element) => element.dispatchEvent(new Event('ended')));
+  await expect(lyricToggle).toBeHidden();
+  await expect(page.locator('#reveal-lines .lyric-section')).toHaveCount(1);
+});
+
+test('ready untimed lyrics resume progressive reveal after a manual preview', async ({
+  page,
+}) => {
+  let releaseGeneration: (() => void) | undefined;
+  const generationHeld = new Promise<void>((resolve) => {
+    releaseGeneration = resolve;
+  });
+  await page.addInitScript(() => {
+    HTMLMediaElement.prototype.load = function () {
+      Object.defineProperty(this, 'duration', {
+        configurable: true,
+        value: 24,
+      });
+      Object.defineProperty(this, 'currentTime', {
+        configurable: true,
+        value: 6,
+        writable: true,
+      });
+      queueMicrotask(() => this.dispatchEvent(new Event('loadedmetadata')));
+    };
+    HTMLMediaElement.prototype.play = function () {
+      this.dispatchEvent(new Event('play'));
+      return Promise.resolve();
+    };
+  });
+  await page.route('**/api/write-lyrics', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        title: 'Untimed Rain',
+        language: 'English',
+        nativeScriptName: 'Latin',
+        isLatinScript: true,
+        lyricsNative: '[Verse]\nRain begins\n[Chorus]\nSing again',
+        lyricsRoman: '[Verse]\nRain begins\n[Chorus]\nSing again',
+        prompt: 'Warm acoustic mehfil',
+      }),
+    });
+  });
+  await page.route('**/api/generate', async (route) => {
+    await generationHeld;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { audio: '49443304000000000000' } }),
+    });
+  });
+
+  await page.goto('/');
+  await fillSong(page);
+  await page.getByRole('button', { name: 'Start the mehfil' }).click();
+  const lyricToggle = page.locator('#peek-toggle');
+  await lyricToggle.click();
+  await expect(page.getByText('Chorus')).toBeVisible();
+  await expect(page.getByText('Sing again')).toBeVisible();
+
+  releaseGeneration?.();
+  await expect(page.getByText('Your recording is ready.')).toBeVisible();
+
+  await expect(lyricToggle).toBeHidden();
+  await expect(page.getByText('Verse')).toBeVisible();
+  await expect(page.getByText('Rain begins')).toBeVisible();
+  await expect(page.getByText('Chorus')).toBeHidden();
+  await expect(page.getByText('Sing again')).toBeHidden();
+  await page
+    .locator('audio')
+    .evaluate((element) => element.dispatchEvent(new Event('pause')));
+  await expect(lyricToggle).toBeHidden();
+  await expect(page.getByText('Chorus')).toBeHidden();
 });
 
 test('a host manages a request through recording and publication', async ({

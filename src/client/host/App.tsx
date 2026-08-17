@@ -141,8 +141,7 @@ export function App() {
   const room = createHostRoomController();
   const generation = createGenerationController({ player });
   const [performanceOpen, setPerformanceOpen] = createSignal(false);
-  const [lyricsOpen, setLyricsOpen] = createSignal(false);
-  const [hasRevealed, setHasRevealed] = createSignal(false);
+  const [manualLyricsOpen, setManualLyricsOpen] = createSignal(false);
   const [shareLabel, setShareLabel] = createSignal('Share');
   const [tokenVisible, setTokenVisible] = createSignal(false);
   const [hasToken, setHasToken] = createSignal(false);
@@ -231,9 +230,16 @@ export function App() {
       (release !== null && player.currentTime() < release)
     );
   });
+  /** A ready recording owns the preview through play, pause, end, and reopen. */
+  const playbackPreviewActive = createMemo(
+    () => player.ready() && Boolean(activeLyrics()),
+  );
+  const manualRevealActive = createMemo(
+    () => manualLyricsOpen() && !playbackPreviewActive(),
+  );
   const shownSpoken = createMemo(() => {
-    if (hasRevealed()) return Number.POSITIVE_INFINITY;
-    if (!player.duration()) return 0;
+    if (manualRevealActive() || !player.duration())
+      return Number.POSITIVE_INFINITY;
     const spoken = lyricLines().filter((line) => !line.cue).length;
     return Math.ceil(
       Math.min(player.currentTime() / (player.duration() * 0.9), 1) * spoken,
@@ -320,8 +326,7 @@ export function App() {
     event.preventDefault();
     if (!tokenInput) return;
     setRoomError('');
-    setLyricsOpen(false);
-    setHasRevealed(false);
+    setManualLyricsOpen(false);
     setPerformanceOpen(true);
     setShareLabel('Share');
     try {
@@ -487,7 +492,6 @@ export function App() {
     }
     await player.toggle();
   };
-  const roomSongKey = () => room.currentSong()?.shareId ?? '';
   createEffect(() => {
     const song = room.currentSong();
     const details = room.details();
@@ -495,10 +499,6 @@ export function App() {
     if (!player.source().includes(`/s/${song.shareId}/audio`))
       player.loadRoomSong(song, new URL(details.joinUrl).origin);
     player.syncRoomSong(song);
-  });
-  createEffect(() => {
-    void roomSongKey();
-    if (player.playing() && activeLyrics()) setLyricsOpen(true);
   });
   let vocalAnalysisRun = 0;
   createEffect(() => {
@@ -1135,37 +1135,40 @@ export function App() {
                 <span>Check generation</span>
               </button>
             </Show>
-            <Show when={activeLyrics()}>
+            <Show when={activeLyrics() && !playbackPreviewActive()}>
               <div class="peek" id="peek">
                 <button
                   type="button"
                   class="peek-toggle"
                   id="peek-toggle"
-                  aria-expanded={lyricsOpen()}
+                  aria-expanded={manualLyricsOpen()}
                   aria-controls="lyric-reveal"
                   onClick={() => {
-                    const opening = !lyricsOpen();
-                    setLyricsOpen(opening);
-                    if (opening) setHasRevealed(true);
+                    setManualLyricsOpen(!manualLyricsOpen());
                   }}
                 >
                   <strong>
-                    {lyricsOpen() ? 'Hide lyrics' : 'Reveal lyrics'}
+                    {manualLyricsOpen() ? 'Hide lyrics' : 'Reveal lyrics'}
                   </strong>
                   <small>
-                    {lyricsOpen()
+                    {manualLyricsOpen()
                       ? 'Too late now.'
                       : "Wanna be surprised? Don't click me."}
                   </small>
                 </button>
               </div>
             </Show>
-            <Show when={activeLyrics() && (lyricsOpen() || player.playing())}>
+            <Show
+              when={
+                activeLyrics() &&
+                (manualRevealActive() || playbackPreviewActive())
+              }
+            >
               <div class="lyric-reveal" id="lyric-reveal">
                 <span class="reveal-language" id="reveal-language">
                   {languageLabel()}
                 </span>
-                <Show when={sectionTimeline() || !hasRevealed()}>
+                <Show when={sectionTimeline() || !manualRevealActive()}>
                   <span class="performance-timing" id="performance-timing">
                     {sectionTimeline()
                       ? 'Lines follow MiniMax sections · timing is approximate'
@@ -1183,7 +1186,7 @@ export function App() {
                               .slice(0, index())
                               .filter((candidate) => !candidate.cue).length;
                           const visible = () =>
-                            hasRevealed() ||
+                            manualRevealActive() ||
                             (line.cue
                               ? spokenBefore() ===
                                 lyricLines().filter(
@@ -1200,7 +1203,7 @@ export function App() {
                     }
                   >
                     <Show
-                      when={hasRevealed()}
+                      when={manualRevealActive()}
                       fallback={
                         <Show
                           when={activeSection()}
