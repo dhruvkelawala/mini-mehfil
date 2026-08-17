@@ -52,7 +52,6 @@ input {
   caret-color: #e6a653;
 }
 .scene,
-.scene svg,
 .grain {
   position: fixed;
   inset: 0;
@@ -61,12 +60,13 @@ input {
 }
 .scene {
   z-index: -3;
-  transition: transform 1.1s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.scene svg {
-  object-fit: cover;
+  background-image: url('/backgrounds/04-folk-modern-dusk.png');
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
   transform: scale(1.015);
-  animation: settle 1.4s cubic-bezier(0.2, 0.75, 0.2, 1) both;
+  animation: scene-in 1.4s cubic-bezier(0.2, 0.75, 0.2, 1) both;
+  transition: transform 1.1s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .scene::after {
   content: '';
@@ -808,12 +808,7 @@ select option {
   border-radius: 2px;
   background: rgba(230, 166, 83, 0.4);
 }
-.cost-hint {
-  margin: 9px 0 0;
-  color: #b39a7f;
-  font-size: 10px;
-  text-align: center;
-}
+
 .field {
   display: block;
   margin-top: 17px;
@@ -821,6 +816,15 @@ select option {
 .field > span {
   display: flex;
   justify-content: space-between;
+  margin-bottom: 6px;
+  color: #dfc39a;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.token-field > label {
+  display: block;
   margin-bottom: 6px;
   color: #dfc39a;
   font-size: 10px;
@@ -886,6 +890,142 @@ input::placeholder {
   color: #b39a7f;
   font-size: 10px;
 }
+.token-field {
+  position: relative;
+}
+.token-support {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.token-support small {
+  margin-top: 0;
+}
+.token-help-open {
+  min-height: 34px;
+  margin-right: -6px;
+  padding: 0 6px;
+  border: 0;
+  color: #e6a653;
+  background: transparent;
+  opacity: 0.8;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 750;
+  text-decoration: none;
+  transition:
+    color 0.18s,
+    opacity 0.18s;
+}
+.token-help-open:hover {
+  color: #ffd394;
+  opacity: 1;
+}
+.token-help-backdrop {
+  position: fixed;
+  z-index: 19;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.token-help {
+  position: fixed;
+  z-index: 20;
+  top: var(--token-help-top);
+  right: var(--token-help-right);
+  width: min(340px, calc(100vw - 48px));
+  padding: 18px;
+  border: 1px solid rgba(230, 166, 83, 0.34);
+  border-radius: 8px;
+  color: var(--ink);
+  background: #173936;
+  box-shadow: 0 18px 45px rgba(4, 16, 15, 0.46);
+  animation: token-help-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.token-help-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.token-help h3 {
+  margin: 0;
+  font:
+    700 20px/1.15 'Iowan Old Style',
+    Georgia,
+    serif;
+  letter-spacing: -0.02em;
+}
+.token-help-close {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  margin: -8px -8px -8px 0;
+  padding: 0;
+  border: 0;
+  color: #d8c5ad;
+  background: transparent;
+  cursor: pointer;
+}
+.token-help-close svg,
+.token-help-cta svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+.token-help ol {
+  margin: 16px 0;
+  padding-left: 22px;
+  color: #ead8c1;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.token-help li + li {
+  margin-top: 7px;
+}
+.token-help li::marker {
+  color: #e6a653;
+  font-weight: 800;
+}
+.token-help-cta {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 13px;
+  border-radius: 4px;
+  color: #fff8ec;
+  background: #a83d34;
+  font-size: 12px;
+  font-weight: 750;
+  text-decoration: none;
+  transition:
+    background 0.18s,
+    transform 0.18s;
+}
+.token-help-cta:hover {
+  background: #b8463b;
+  transform: translateY(-1px);
+}
+@keyframes token-help-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+}
 .notice {
   min-height: 18px;
   margin: 10px 0 3px;
@@ -932,8 +1072,14 @@ input::placeholder {
   cursor: wait;
   filter: saturate(0.45);
 }
-.arrow {
-  font-size: 20px;
+.generate svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .player-shell {
   position: fixed;
@@ -1483,10 +1629,10 @@ input::placeholder {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-/* While a song is being written or played, the courtyard lamps breathe. */
-.scene.is-performing svg {
+/* While a song is being written or played, the courtyard lights breathe. */
+.scene-root.is-performing .scene {
   animation:
-    settle 1.4s cubic-bezier(0.2, 0.75, 0.2, 1) both,
+    scene-in 1.4s cubic-bezier(0.2, 0.75, 0.2, 1) both,
     breathe 3.6s 1.4s ease-in-out infinite;
 }
 @keyframes breathe {
@@ -1494,14 +1640,9 @@ input::placeholder {
     filter: brightness(1.11) saturate(1.06);
   }
 }
-@keyframes settle {
+@keyframes scene-in {
   from {
     opacity: 0;
-    transform: scale(1.08);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1.015);
   }
 }
 @keyframes fade-down {
@@ -1603,11 +1744,8 @@ input::placeholder {
   .topbar-actions {
     gap: 10px;
   }
-  .topbar-actions a {
-    font-size: 0;
-  }
-  .topbar-actions a span {
-    font-size: 14px;
+  .topbar-docs {
+    display: none;
   }
   .room-open {
     min-height: 44px;
@@ -1637,6 +1775,38 @@ input::placeholder {
   }
   .composer h2 {
     font-size: 26px;
+  }
+  .token-support {
+    min-height: 44px;
+  }
+  .token-help-open {
+    min-height: 44px;
+  }
+  .token-help-backdrop {
+    z-index: 29;
+    background: rgba(5, 18, 17, 0.62);
+    backdrop-filter: blur(3px);
+  }
+  .token-help {
+    position: fixed;
+    z-index: 30;
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    padding: 22px 20px calc(22px + env(safe-area-inset-bottom));
+    border-width: 1px 0 0;
+    border-radius: 12px 12px 0 0;
+    animation-name: token-help-sheet-in;
+  }
+  .token-help-close {
+    width: 44px;
+    height: 44px;
+    margin: -10px -10px -10px 0;
+  }
+  .token-help-cta {
+    min-height: 48px;
   }
   .field-row,
   .modes {
@@ -1689,6 +1859,12 @@ input::placeholder {
     max-height: max(140px, min(55svh, calc(100svh - 330px)));
     font-size: 18px;
     line-height: 1.55;
+  }
+}
+@keyframes token-help-sheet-in {
+  from {
+    opacity: 0.5;
+    transform: translateY(18px);
   }
 }
 @media (max-height: 500px) {

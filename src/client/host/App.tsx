@@ -1,4 +1,3 @@
-/* eslint-disable solid/no-innerhtml */
 import {
   createEffect,
   createMemo,
@@ -8,6 +7,7 @@ import {
   onMount,
   Show,
 } from 'solid-js';
+import { Portal } from 'solid-js/web';
 
 import {
   activePacedLine,
@@ -22,7 +22,6 @@ import {
 } from '../../lyrics/lyric-sync.ts';
 import type { LyricsSheet, SongRequest } from '../../room/protocol.ts';
 import { emitTimingDiagnostic } from '../../timing/timing-analysis.ts';
-import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
 import { LyricLineView, TimedSectionView } from '../lyrics/timed-lyrics.tsx';
 import {
   createGenerationController,
@@ -102,6 +101,11 @@ export function App() {
   const [manualLyricsOpen, setManualLyricsOpen] = createSignal(false);
   const [shareLabel, setShareLabel] = createSignal('Share');
   const [tokenVisible, setTokenVisible] = createSignal(false);
+  const [tokenHelpOpen, setTokenHelpOpen] = createSignal(false);
+  const [tokenHelpAnchor, setTokenHelpAnchor] = createSignal({
+    top: 0,
+    right: 0,
+  });
   const [hasToken, setHasToken] = createSignal(false);
   const [roomError, setRoomError] = createSignal('');
   const [vocalAnalysisResult, setVocalAnalysisResult] =
@@ -111,6 +115,8 @@ export function App() {
   const [vibe, setVibe] = createSignal('');
   const [language, setLanguage] = createSignal('auto');
   let tokenInput: HTMLInputElement | undefined;
+  let tokenHelpDialog: HTMLElement | undefined;
+  let tokenHelpOpener: HTMLButtonElement | undefined;
   let performanceDialog: HTMLElement | undefined;
   let performanceOpener: HTMLElement | null = null;
 
@@ -272,6 +278,30 @@ export function App() {
   const closePerformance = () => {
     setPerformanceOpen(false);
     performanceOpener?.focus();
+  };
+  const openTokenHelp = () => {
+    const rect = tokenHelpOpener?.getBoundingClientRect();
+    if (rect)
+      setTokenHelpAnchor({
+        top: rect.bottom + 7,
+        right: window.innerWidth - rect.right,
+      });
+    setTokenHelpOpen(true);
+    queueMicrotask(() => {
+      if (rect && tokenHelpDialog && window.innerWidth > 560) {
+        const dialogRect = tokenHelpDialog.getBoundingClientRect();
+        if (dialogRect.bottom > window.innerHeight - 12)
+          setTokenHelpAnchor((anchor) => ({
+            ...anchor,
+            top: Math.max(12, rect.top - dialogRect.height - 7),
+          }));
+      }
+      tokenHelpDialog?.querySelector<HTMLElement>('.token-help-close')?.focus();
+    });
+  };
+  const closeTokenHelp = () => {
+    setTokenHelpOpen(false);
+    tokenHelpOpener?.focus();
   };
   const copyLink = async (url: string) => {
     try {
@@ -590,6 +620,32 @@ export function App() {
       }
     };
     const keydown = (event: KeyboardEvent) => {
+      if (tokenHelpOpen()) {
+        if (event.key === 'Escape') {
+          closeTokenHelp();
+          return;
+        }
+        if (event.key !== 'Tab' || !tokenHelpDialog) return;
+        const controls = [
+          ...tokenHelpDialog.querySelectorAll<HTMLElement>('button, a[href]'),
+        ];
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (!first || !last) return;
+        if (!tokenHelpDialog.contains(document.activeElement)) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+          return;
+        }
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+        return;
+      }
       if (!performanceOpen()) return;
       if (event.key === 'Escape') {
         closePerformance();
@@ -628,14 +684,14 @@ export function App() {
 
   return (
     <>
-      {/* Repository-owned static SVG; never contains user input. */}
       <div
         class={`scene-root ${generation.generating() || player.playing() ? 'is-performing' : ''}`}
         aria-hidden="true"
-        innerHTML={COURTYARD_SCENE}
-      />
+      >
+        <div class="scene" />
+      </div>
       <div class="grain" aria-hidden="true" />
-      <header class="topbar" inert={performanceOpen()}>
+      <header class="topbar" inert={performanceOpen() || tokenHelpOpen()}>
         <div class="time" id="clock">
           {clock()}
         </div>
@@ -684,15 +740,16 @@ export function App() {
             </span>
           </button>
           <a
+            class="topbar-docs"
             href="https://platform.minimax.io/docs/api-reference/music-generation"
             target="_blank"
             rel="noreferrer"
           >
-            API docs <span>↗</span>
+            API docs
           </a>
         </div>
       </header>
-      <main inert={performanceOpen()}>
+      <main inert={performanceOpen() || tokenHelpOpen()}>
         <section class="identity" aria-labelledby="brand-title">
           <h1 id="brand-title" aria-label="Mini Mehfil">
             <span class="mini" aria-hidden="true">
@@ -713,8 +770,8 @@ export function App() {
             <h2>Make a song</h2>
             <span class="price">≈ $0.15</span>
           </div>
-          <label class="field token-field">
-            <span>MiniMax token</span>
+          <div class="field token-field">
+            <label for="token">MiniMax token</label>
             <div class="input-wrap">
               <input
                 ref={(element) => {
@@ -722,6 +779,7 @@ export function App() {
                 }}
                 id="token"
                 name="token"
+                aria-describedby="token-privacy"
                 type={tokenVisible() ? 'text' : 'password'}
                 autocomplete="off"
                 spellcheck={false}
@@ -750,8 +808,79 @@ export function App() {
                 {tokenVisible() ? 'Hide' : 'Show'}
               </button>
             </div>
-            <small>Used for this request only. Never saved.</small>
-          </label>
+            <div class="token-support">
+              <small id="token-privacy">
+                Used for this request only. Never saved.
+              </small>
+              <button
+                ref={(element) => {
+                  tokenHelpOpener = element;
+                }}
+                id="token-help-open"
+                class="token-help-open"
+                type="button"
+                aria-controls="token-help"
+                aria-expanded={tokenHelpOpen()}
+                onClick={openTokenHelp}
+              >
+                Where do I get this?
+              </button>
+            </div>
+            <Show when={tokenHelpOpen()}>
+              <Portal>
+                <button
+                  class="token-help-backdrop"
+                  type="button"
+                  aria-label="Close MiniMax key help"
+                  onClick={closeTokenHelp}
+                />
+                <section
+                  ref={(element) => {
+                    tokenHelpDialog = element;
+                  }}
+                  id="token-help"
+                  class="token-help"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="token-help-title"
+                  style={{
+                    '--token-help-top': `${tokenHelpAnchor().top}px`,
+                    '--token-help-right': `${tokenHelpAnchor().right}px`,
+                  }}
+                >
+                  <div class="token-help-head">
+                    <h3 id="token-help-title">Get a MiniMax API key</h3>
+                    <button
+                      class="token-help-close"
+                      type="button"
+                      aria-label="Close MiniMax key help"
+                      onClick={closeTokenHelp}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M6 6l12 12M18 6 6 18" />
+                      </svg>
+                    </button>
+                  </div>
+                  <ol>
+                    <li>Create or sign in to MiniMax.</li>
+                    <li>Open API Keys and create a secret key.</li>
+                    <li>Copy the key and paste it above.</li>
+                  </ol>
+                  <a
+                    class="token-help-cta"
+                    href="https://platform.minimax.io/docs/faq/about-apis#q-obtaining-your-api-key"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <span>Open MiniMax API Keys</span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M7 17 17 7M9 7h8v8" />
+                    </svg>
+                  </a>
+                </section>
+              </Portal>
+            </Show>
+          </div>
           <label class="field">
             <span>What's the song about?</span>
             <input
@@ -823,11 +952,10 @@ export function App() {
                 ? 'Making your song…'
                 : 'Start the mehfil'}
             </span>
-            <span class="arrow">→</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 12h13M14 7l5 5-5 5" />
+            </svg>
           </button>
-          <p class="cost-hint" id="cost-hint">
-            Lyrics cost about a tenth of a cent. The song costs ≈ $0.15.
-          </p>
         </form>
         <Show when={room.details() && room.panelOpen()}>
           <aside
@@ -848,7 +976,9 @@ export function App() {
                   aria-label="Hide live mehfil controls"
                   onClick={() => room.showPanel(false)}
                 >
-                  ×
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M6 6l12 12M18 6 6 18" />
+                  </svg>
                 </button>
               </div>
             </div>
@@ -940,14 +1070,14 @@ export function App() {
                           aria-label={`Move ${item.idea} up`}
                           onClick={() => room.reorder(item.id, targets().up)}
                         >
-                          ↑
+                          Move up
                         </button>
                         <button
                           type="button"
                           aria-label={`Move ${item.idea} down`}
                           onClick={() => room.reorder(item.id, targets().down)}
                         >
-                          ↓
+                          Move down
                         </button>
                         <button
                           type="button"
@@ -1153,7 +1283,9 @@ export function App() {
             aria-label="Close performance"
             onClick={closePerformance}
           >
-            ×
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
           </button>
           <div class="performance-content">
             <div
@@ -1310,6 +1442,7 @@ export function App() {
         class={`player-shell ${player.playing() ? 'playing' : ''}`}
         id="player-shell"
         aria-label="Song player"
+        inert={tokenHelpOpen()}
       >
         <div class="record" aria-hidden="true">
           <div class="record-label">M</div>
@@ -1428,6 +1561,7 @@ export function App() {
           id="media-diagnostics-open"
           class="media-diagnostics-open"
           type="button"
+          inert={tokenHelpOpen()}
           onClick={() => diagnostics.open()}
         >
           Media diagnostics
@@ -1440,6 +1574,7 @@ export function App() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="media-diagnostics-title"
+          inert={tokenHelpOpen()}
         >
           <div class="media-diagnostics-sheet">
             <p class="media-diagnostics-kicker">

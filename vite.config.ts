@@ -16,7 +16,7 @@ export default defineConfig(({ mode }) => {
       ),
     },
     root: resolve(`src/client/${surface}`),
-    publicDir: false,
+    publicDir: surface === 'host' ? resolve('public') : false,
     build: {
       outDir: resolve(`dist/${surface}`),
       emptyOutDir: true,
