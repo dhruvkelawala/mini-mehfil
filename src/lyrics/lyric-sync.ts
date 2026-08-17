@@ -36,6 +36,11 @@ const TIMING_LABELS = new Set<string>([
 
 const MAX_TIMING_DURATION_SECONDS = 360;
 const MAX_TIMING_SEGMENTS = 64;
+// MiniMax rounds segment boundaries but reports the exact duration, so its
+// own final boundary can overshoot its own duration by a few milliseconds.
+// Boundaries within this tolerance are clamped to the duration instead of
+// voiding the whole artifact; larger overshoots stay rejected.
+const MAX_TIMING_END_OVERSHOOT_SECONDS = 1;
 
 /** Segment labels MiniMax section analysis may report. */
 export type TimingLabel =
@@ -242,10 +247,16 @@ export function normalizeLyricTiming(value: unknown): LyricTiming | null {
         !Number.isFinite(end)
       )
         return null;
-      if (start < 0 || start >= end || end > durationSeconds) return null;
+      let boundedEnd = end;
+      if (end > durationSeconds) {
+        if (end - durationSeconds > MAX_TIMING_END_OVERSHOOT_SECONDS)
+          return null;
+        boundedEnd = durationSeconds;
+      }
+      if (start < 0 || start >= boundedEnd) return null;
       if (start < previousEnd) return null;
-      segments.push({ start, end, label });
-      previousEnd = end;
+      segments.push({ start, end: boundedEnd, label });
+      previousEnd = boundedEnd;
     }
 
     return {

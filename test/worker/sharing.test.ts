@@ -598,9 +598,9 @@ test('rejects malformed timing as firmly as any other malformed detail', async (
         { start: 11, end: 90, label: 'verse' },
       ],
     },
-    'segments past the duration': {
+    'segments more than a second past the duration': {
       ...TIMED_SONG.lyricTiming,
-      segments: [{ start: 0, end: 91, label: 'verse' }],
+      segments: [{ start: 0, end: 91.5, label: 'verse' }],
     },
   };
   for (const [name, lyricTiming] of Object.entries(malformed)) {
