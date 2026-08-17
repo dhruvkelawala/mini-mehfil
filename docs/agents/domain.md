@@ -20,9 +20,10 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 ├── docs/adr/
 │   ├── 0001-....md
 │   └── 0002-....md
-├── lyricist.mjs
-├── server.js
-└── public/
+├── src/client/
+├── src/room/
+├── src/server/
+└── src/worker/
 ```
 
 ## Use the glossary's vocabulary
@@ -39,4 +40,7 @@ If your output contradicts an existing ADR, surface it explicitly rather than si
 
 ## Related, but not the same thing
 
-`PRODUCT.md` at the repo root records **product truth** — users, purpose, binding constraints (zero dependencies, one BYOK key, the mehfil visual identity). It is not a domain glossary and is maintained by a different skill. Read it for constraints; read `CONTEXT.md` for vocabulary.
+`PRODUCT.md` at the repo root records **product truth** — users, purpose,
+binding constraints (focused dependencies, one BYOK key, explicit paid actions,
+and the mehfil visual identity). It is not a domain glossary and is maintained
+by a different skill. Read it for constraints; read `CONTEXT.md` for vocabulary.

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.wrangler/
+.vercel/
+plans/
+public/
+worker-configuration.d.ts
+docs/mobile-playback-investigation-2026-08-15.md
+docs/research/minimax-native-vocals.md
