@@ -1,13 +1,10 @@
 import { createRequire } from 'node:module';
+import { readFile } from 'node:fs/promises';
 import http from 'node:http';
+import { extname, resolve } from 'node:path';
 
+import { roomPage } from '../../src/worker/room-page.ts';
 const require = createRequire(import.meta.url);
-const legacyRoomPagePath: string = '../../share/room-page.mjs';
-const roomPageModule = (await import(legacyRoomPagePath)) as {
-  roomPage: (roomId: string, nonce: string) => string;
-};
-const roomPage = (roomId: string, nonce: string) =>
-  roomPageModule.roomPage(roomId, nonce);
 const legacy = require('../../server.js') as {
   createServer(options: Record<string, unknown>): http.Server;
 };
@@ -102,20 +99,53 @@ const appHandler = app.listeners('request')[0];
 if (typeof appHandler !== 'function')
   throw new Error('Fixture app has no handler');
 
-const server = http.createServer((request, response) => {
+const listenerRoot = resolve('dist/listener');
+const listenerAsset = {
+  async fetch(assetRequest: Request) {
+    const pathname = new URL(assetRequest.url).pathname;
+    try {
+      return new Response(
+        await readFile(resolve(listenerRoot, pathname.slice(1))),
+      );
+    } catch {
+      return new Response('missing', { status: 404 });
+    }
+  },
+};
+
+const handleRequest = async (
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+) => {
   const pathname = new URL(request.url ?? '/', 'http://fixture').pathname;
+  if (pathname.startsWith('/assets/')) {
+    try {
+      const body = await readFile(resolve(listenerRoot, pathname.slice(1)));
+      const type =
+        extname(pathname) === '.css' ? 'text/css' : 'text/javascript';
+      response.writeHead(200, { 'content-type': type });
+      response.end(body);
+    } catch {
+      response.writeHead(404).end();
+    }
+    return;
+  }
   const roomMatch = /^\/r\/([A-Z2-9]{8})$/.exec(pathname);
   if (roomMatch) {
-    const html = roomPage(roomMatch[1] as string, 'fixture-nonce');
+    const html = await roomPage(roomMatch[1] as string, listenerAsset);
     response.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
       'content-security-policy':
-        "default-src 'self'; connect-src 'self'; media-src 'self' blob:; style-src 'nonce-fixture-nonce'; script-src 'nonce-fixture-nonce'; base-uri 'none'; form-action 'none'",
+        "default-src 'none'; connect-src 'self'; media-src 'self' blob:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     });
     response.end(html);
     return;
   }
   appHandler.call(app, request, response);
+};
+
+const server = http.createServer((request, response) => {
+  void handleRequest(request, response);
 });
 
 server.listen(port, '127.0.0.1', () => {

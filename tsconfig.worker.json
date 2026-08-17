@@ -4,8 +4,6 @@
     "lib": ["ES2023", "WebWorker"],
     "moduleResolution": "Bundler",
     "allowImportingTsExtensions": true,
-    "allowJs": true,
-    "checkJs": false,
     "types": [
       "./worker-configuration.d.ts",
       "vitest/globals",
