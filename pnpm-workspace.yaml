@@ -1,0 +1,6 @@
+# New packages must be at least 7 days old (minimumReleaseAge is in minutes).
+minimumReleaseAge: 10080
+
+onlyBuiltDependencies:
+  - esbuild
+  - workerd

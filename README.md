@@ -7,8 +7,8 @@ Type a few keywords in any language — `Aloopuri Khavsa`, `monsoon in Mumbai`, 
 ## Run
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```
 
 Then open [http://127.0.0.1:4173](http://127.0.0.1:4173) and paste your MiniMax API key ([get one here](https://platform.minimax.io/)). Mini Mehfil requires Node 24 or newer.
@@ -16,8 +16,8 @@ Then open [http://127.0.0.1:4173](http://127.0.0.1:4173) and paste your MiniMax 
 To build and serve the production app locally:
 
 ```bash
-npm run build
-npm start
+pnpm run build
+pnpm start
 ```
 
 ## Cost
@@ -38,7 +38,7 @@ Deploy the Cloudflare Worker described in [`share/README.md`](share/README.md), 
 ```bash
 MEHFIL_SHARE_URL=https://mini-mehfil-share.example.workers.dev \
 MEHFIL_SHARE_SECRET=replace-with-a-long-random-secret \
-npm start
+pnpm start
 ```
 
 Both variables are optional for local-only use, where synchronous generation continues to work normally. They are required together for lifecycle-safe hosted deployments: before the paid MiniMax call, the server atomically claims the browser's job ID in the Worker; it checkpoints the finished source before replying. A suspended or refreshed tab checks that same job instead of paying for another generation. If the Worker is not configured and the browser loses the response, the app explains that this deployment cannot recover it.
@@ -112,24 +112,24 @@ and Wrangler provide build and verification tooling.
 ## Test
 
 ```bash
-npm test
-npm run test:browser
-npm run test:sync-replay
-npm run check
+pnpm test
+pnpm run test:browser
+pnpm run test:sync-replay
+pnpm run check
 ```
 
-`npm test` runs the typed Vitest and Cloudflare Worker suites. The browser
-command runs the deterministic Chromium flows. `npm run check` is the same
+`pnpm test` runs the typed Vitest and Cloudflare Worker suites. The browser
+command runs the deterministic Chromium flows. `pnpm run check` is the same
 secret-free verification used by CI: formatting, linting, strict types,
 generated binding freshness, unit and Worker tests, both Vite builds, gzip
 budgets, and a Wrangler dry-run.
 
-`npm run test:sync-replay` is the fast, no-cost real-media loop. It discovers
+`pnpm run test:sync-replay` is the fast, no-cost real-media loop. It discovers
 the fixture named in `test/fixtures/sync-replay-song.json` in `~/Downloads`, or
 accepts an explicit MP3:
 
 ```bash
-npm run test:sync-replay -- /absolute/path/to/song.mp3
+pnpm run test:sync-replay -- /absolute/path/to/song.mp3
 ```
 
 The browser never intercepts generation or timing responses in this mode. The

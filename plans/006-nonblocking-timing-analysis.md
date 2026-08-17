@@ -45,7 +45,7 @@
 1. Step 0 completed without a STOP condition. The old tip was preserved as
    `codex/plan006-pre-rebase-7c8b596`, the branch was rebased rather than
    merged, `git range-diff` accounted for Plan 004/005 behavior, 97 focused
-   preservation tests passed, the space-free baseline `npm run check` passed,
+   preservation tests passed, the space-free baseline `pnpm run check` passed,
    and Chromium passed 36/36 before implementation edits.
 2. Implementation landed in four reviewable rounds:
    `b06b727` (`feat(server): decouple section timing analysis`), `263ca91`
@@ -54,7 +54,7 @@
    (`feat(timing): verify shared playback parity`). Claude Opus 4.8 structured
    review ran after every round; all accepted findings were fixed and every
    final rerun was clean.
-3. The final exact space-free `npm run check` passed with 258 unit tests and 1
+3. The final exact space-free `pnpm run check` passed with 258 unit tests and 1
    Worker integration test, both builds, all TypeScript/lint/format checks,
    bundle limits and Wrangler dry-run. Chromium passed 38/38 in the source
    worktree. The delayed-analysis browser fixture passed on desktop and mobile

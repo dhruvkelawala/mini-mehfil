@@ -20,7 +20,7 @@ An immersive single-room experience (inspired by saloon.wtf) rather than a utili
 
 ## Operating Context
 
-- Develop with `npm run dev` and serve a production build with `npm run build && npm start` (Node ≥24, default port 4173, `PORT` overridable); the Solid UI lives under `src/client/` and the proxy under `src/server/`.
+- Develop with `pnpm run dev` and serve a production build with `pnpm run build && pnpm start` (Node ≥24, default port 4173, `PORT` overridable); the Solid UI lives under `src/client/` and the proxy under `src/server/`.
 - The proxy forwards requests to `https://api.minimax.io/v1/music_generation`; each generation costs the key owner ≈ $0.15.
 - Generated MiniMax audio URLs expire after 24 hours; the Save control exists so users download tracks they want to keep.
 

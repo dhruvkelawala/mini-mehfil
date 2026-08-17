@@ -2,6 +2,7 @@
   "name": "minimax-mehfil",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "pnpm@10.29.2",
   "type": "module",
   "main": "api/index.ts",
   "description": "Mini Mehfil — a tiny local song room for MiniMax Music 3",
@@ -12,7 +13,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint --max-warnings 0 eslint.config.ts playwright.config.ts vitest.config.ts vitest.worker.config.ts vercel.mjs src api scripts test",
     "typecheck": "tsc --noEmit -p tsconfig.tools.json && tsc --noEmit -p tsconfig.room.json && tsc --noEmit -p tsconfig.client.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.worker.json",
-    "test": "npm run test:unit && npm run test:worker",
+    "test": "pnpm run test:unit && pnpm run test:worker",
     "test:dev": "node scripts/check-dev-topology.ts",
     "test:browser": "playwright test",
     "test:sync-replay": "node scripts/run-sync-replay.ts",
@@ -20,9 +21,9 @@
     "test:worker": "vitest run --config vitest.worker.config.ts --configLoader native",
     "build:listener": "vite build --mode listener",
     "build:host": "vite build --mode host",
-    "build": "npm run build:host && npm run build:listener",
+    "build": "pnpm run build:host && pnpm run build:listener",
     "check:bundle": "node scripts/check-bundle-size.ts",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run worker:types:check && npm test && npm run build && npm run test:dev && npm run check:bundle && npm run worker:dry-run",
+    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run worker:types:check && pnpm test && pnpm run build && pnpm run test:dev && pnpm run check:bundle && pnpm run worker:dry-run",
     "worker:types": "wrangler types worker-configuration.d.ts --config share/wrangler.jsonc",
     "worker:types:check": "wrangler types --check worker-configuration.d.ts --config share/wrangler.jsonc",
     "worker:dry-run": "wrangler deploy --dry-run --config share/wrangler.jsonc"
@@ -34,15 +35,15 @@
     "solid-js": "^1.9.14"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.21.3",
+    "@cloudflare/vitest-pool-workers": "^0.21.0",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.1",
     "@solidjs/testing-library": "^0.8.10",
     "@types/node": "^24.13.3",
-    "concurrently": "^10.0.5",
+    "concurrently": "^10.0.4",
     "eslint": "^10.8.1",
-    "eslint-plugin-solid": "^0.15.0",
-    "globals": "^17.11.0",
+    "eslint-plugin-solid": "^0.14.5",
+    "globals": "^17.9.0",
     "jiti": "^2.7.0",
     "jsdom": "^30.0.1",
     "prettier": "^3.9.6",
@@ -51,6 +52,6 @@
     "vite": "^8.2.1",
     "vite-plugin-solid": "^2.11.14",
     "vitest": "^4.1.10",
-    "wrangler": "^4.123.0"
+    "wrangler": "^4.120.1"
   }
 }

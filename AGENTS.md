@@ -13,17 +13,17 @@ before every paid generation.
 
 Use Node 24 or newer.
 
-- `npm install` (CI uses `npm ci`)
-- `npm run dev` — web on 4173 and API on 4174 by default; override with
-  `npm run dev -- --web-port N --api-port N`
-- `npm run check` — the full local gate: format, lint, typecheck, worker
+- `pnpm install` (CI uses `pnpm install --frozen-lockfile`)
+- `pnpm run dev` — web on 4173 and API on 4174 by default; override with
+  `pnpm run dev -- --web-port N --api-port N`
+- `pnpm run check` — the full local gate: format, lint, typecheck, worker
   types, unit + worker tests, both builds, dev topology test, bundle budget,
   and a worker dry run
-- `npm test` — unit and worker tests only
-- `npm run test:browser` — Playwright journeys (desktop and mobile Chromium)
-- `npm run test:sync-replay -- /path/to/song.mp3` — host/listener/shared
+- `pnpm test` — unit and worker tests only
+- `pnpm run test:browser` — Playwright journeys (desktop and mobile Chromium)
+- `pnpm run test:sync-replay -- /path/to/song.mp3` — host/listener/shared
   parity against real saved audio, producing a video proof artifact
-- `npm run build`, `npm start` — production build and serve
+- `pnpm run build`, `pnpm start` — production build and serve
 
 ## Topology and deployment
 
@@ -41,9 +41,9 @@ Two independently deployed halves — keep them in step:
   room pages are worker-rendered HTML templates — host UI restyles do not
   reach them unless `src/worker/` templates change too.
 - **Worker deploys**: CI's `deploy-worker` job runs
-  `npx wrangler deploy --config share/wrangler.jsonc` on every push to
+  `pnpm exec wrangler deploy --config share/wrangler.jsonc` on every push to
   `main` (requires the `CLOUDFLARE_API_TOKEN` repository secret). Manual
-  fallback: `npm run build` then the same wrangler command, plus
+  fallback: `pnpm run build` then the same wrangler command, plus
   `--name mini-mehfil-share-pr17` for the preview worker. Never let the
   worker drift behind the app: on 2026-08-17 a stale worker silently
   dropped share timing artifacts for a week's worth of shares.

@@ -15,12 +15,12 @@ audited, with `solid-js` the only browser runtime library.
 From this directory, with Wrangler authenticated:
 
 ```bash
-npx wrangler r2 bucket create mini-mehfil-shares
-npx wrangler secret put MEHFIL_SHARE_SECRET
-npx wrangler r2 bucket lifecycle add mini-mehfil-shares expire-stale-shares --expire-days 30
-npx wrangler r2 bucket lifecycle add mini-mehfil-shares expire-generation-jobs --prefix jobs/ --expire-days 1
-npx wrangler r2 bucket lifecycle list mini-mehfil-shares
-npx wrangler deploy
+pnpm exec wrangler r2 bucket create mini-mehfil-shares
+pnpm exec wrangler secret put MEHFIL_SHARE_SECRET
+pnpm exec wrangler r2 bucket lifecycle add mini-mehfil-shares expire-stale-shares --expire-days 30
+pnpm exec wrangler r2 bucket lifecycle add mini-mehfil-shares expire-generation-jobs --prefix jobs/ --expire-days 1
+pnpm exec wrangler r2 bucket lifecycle list mini-mehfil-shares
+pnpm exec wrangler deploy
 ```
 
 `wrangler.jsonc` binds `ROOMS` to `MehfilRoom`; the `v1` migration adds it as a
@@ -46,7 +46,7 @@ Vite builds the listener independently under `dist/listener`. Wrangler's
 `ASSETS` binding serves its hashed JavaScript and CSS, while `/r/:roomId`
 remains Worker-first so `room-page.ts` can inject the validated room marker and
 apply the external-only CSP. Regenerate `worker-configuration.d.ts` after any
-binding change with `npm run worker:types`.
+binding change with `pnpm run worker:types`.
 
 `createDurableRoomDirectory()` is the only implementation that knows how to
 turn a room code into `env.ROOMS.idFromName(roomId)`. Cloudflare therefore sends
@@ -102,7 +102,7 @@ After deployment, configure both local environment variables and start the app:
 ```bash
 MEHFIL_SHARE_URL=https://mini-mehfil-share.example.workers.dev \
 MEHFIL_SHARE_SECRET=replace-with-the-same-random-secret \
-npm start
+pnpm start
 ```
 
 ## Release smoke test
@@ -125,7 +125,7 @@ npm start
    Expect `206 Partial Content`, `Accept-Ranges: bytes`, and a matching
    `Content-Range` header.
 
-4. Run `npx wrangler r2 bucket lifecycle list mini-mehfil-shares` and verify the
+4. Run `pnpm exec wrangler r2 bucket lifecycle list mini-mehfil-shares` and verify the
    expiration rules cover `shares/` and retain `jobs/` no longer than one day. For a non-production expiration
    smoke test, temporarily use a short lifecycle, wait for R2's lifecycle window,
    and confirm the link returns the “left the mehfil” page before restoring the
