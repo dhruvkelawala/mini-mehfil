@@ -9,12 +9,17 @@ import {
   Show,
 } from 'solid-js';
 
-import { activePacedLine, buildLinePacing } from '../../lyrics/line-pacing.ts';
+import {
+  activePacedLine,
+  buildLinePacing,
+  type PacedLine,
+} from '../../lyrics/line-pacing.ts';
 import {
   activeTimelineEntry,
   buildSectionTimeline,
   parseLyricSheet,
   type LyricLine,
+  type LyricSection,
 } from '../../lyrics/lyric-sync.ts';
 import type { LyricsSheet, SongRequest } from '../../room/protocol.ts';
 import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
@@ -76,6 +81,40 @@ const LyricLineView = (props: {
         <span class="lyric-secondary">{props.line.secondary}</span>
       </Show>
     </Show>
+  </span>
+);
+/** Stable timed-section markup; line emphasis updates without replacing it. */
+export const TimedSectionView = (props: {
+  section: LyricSection;
+  activeLine: PacedLine | null;
+  holdLines: boolean;
+}) => (
+  <span class="lyric-section lyric-section-current">
+    <For
+      each={props.section.lines.filter((line) => !props.holdLines || line.cue)}
+    >
+      {(line, index) => {
+        const lineIndex = () => props.section.lines.indexOf(line) ?? index();
+        const current = () =>
+          !line.cue &&
+          props.activeLine?.sectionIndex === props.section.index &&
+          props.activeLine.lineIndexInSection === lineIndex();
+        const upcoming = () =>
+          Boolean(
+            !line.cue &&
+            props.activeLine &&
+            props.activeLine.sectionIndex === props.section.index &&
+            lineIndex() > props.activeLine.lineIndexInSection,
+          );
+        return (
+          <LyricLineView
+            line={line}
+            current={current()}
+            upcoming={upcoming()}
+          />
+        );
+      }}
+    </For>
   </span>
 );
 const publicLyrics = (sheet: LyricsSheet): LyricsSheet => ({
@@ -1139,42 +1178,11 @@ export function App() {
                             </Show>
                           }
                         >
-                          <span class="lyric-section lyric-section-current">
-                            <For
-                              each={(activeSection()?.lines ?? []).filter(
-                                (line) => !firstVocalLinesHeld() || line.cue,
-                              )}
-                            >
-                              {(line, index) => {
-                                const lineIndex = () =>
-                                  activeSection()?.lines.indexOf(line) ??
-                                  index();
-                                const current = () =>
-                                  !line.cue &&
-                                  activeLine()?.sectionIndex ===
-                                    activeSection()?.index &&
-                                  activeLine()?.lineIndexInSection ===
-                                    lineIndex();
-                                const upcoming = () => {
-                                  const paced = activeLine();
-                                  return Boolean(
-                                    !line.cue &&
-                                    paced &&
-                                    paced.sectionIndex ===
-                                      activeSection()?.index &&
-                                    lineIndex() > paced.lineIndexInSection,
-                                  );
-                                };
-                                return (
-                                  <LyricLineView
-                                    line={line}
-                                    current={current()}
-                                    upcoming={upcoming()}
-                                  />
-                                );
-                              }}
-                            </For>
-                          </span>
+                          <TimedSectionView
+                            section={activeSection()!}
+                            activeLine={activeLine()}
+                            holdLines={firstVocalLinesHeld()}
+                          />
                         </Show>
                       }
                     >
