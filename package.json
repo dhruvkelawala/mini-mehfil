@@ -6,6 +6,9 @@
   "description": "Mini Mehfil — a tiny local song room for MiniMax Music 3",
   "scripts": {
     "start": "node src/server/index.ts",
+    "dev:api": "node --watch src/server/index.ts --port 4174",
+    "dev:web": "vite --mode host --host 127.0.0.1 --port 4173",
+    "dev": "concurrently --kill-others-on-fail \"npm:dev:api\" \"npm:dev:web\"",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint --max-warnings 0 eslint.config.ts playwright.config.ts vitest.config.ts vitest.worker.config.ts vercel.mjs src api test/room test/worker test/browser test/fixtures test/server",
@@ -15,6 +18,8 @@
     "test:unit": "vitest run",
     "test:worker": "vitest run --config vitest.worker.config.ts --configLoader native",
     "build:listener": "vite build --mode listener",
+    "build:host": "vite build --mode host",
+    "build": "npm run build:host && npm run build:listener",
     "worker:types": "wrangler types worker-configuration.d.ts --config share/wrangler.jsonc",
     "worker:types:check": "wrangler types --check worker-configuration.d.ts --config share/wrangler.jsonc",
     "worker:dry-run": "wrangler deploy --dry-run --config share/wrangler.jsonc"
