@@ -71,6 +71,20 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
+    files: ['src/server/**/*.ts', 'api/**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: ['./tsconfig.node.json'],
+        tsconfigRootDir: projectRoot,
+      },
+    },
+  },
+  {
+    files: ['test/server/**/*.js'],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
+  },
+  {
     files: ['src/room/**/*.ts'],
     rules: {
       'no-restricted-imports': [

@@ -7,5 +7,5 @@
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["src/server/**/*.ts", "api/**/*.ts"]
+  "include": ["src/server/**/*.ts", "api/**/*.ts", "test/server/**/*.ts"]
 }

@@ -1,13 +1,9 @@
-import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import { extname, resolve } from 'node:path';
 
 import { roomPage } from '../../src/worker/room-page.ts';
-const require = createRequire(import.meta.url);
-const legacy = require('../../server.js') as {
-  createServer(options: Record<string, unknown>): http.Server;
-};
+import { createServer } from '../../src/server/index.ts';
 
 const portFlag = process.argv.indexOf('--port');
 const port = Number(portFlag >= 0 ? process.argv[portFlag + 1] : 4387);
@@ -25,7 +21,7 @@ function requestBody(body: BodyInit | null | undefined): string {
   return body;
 }
 
-function fakeFetch(input: string | URL | Request, init?: RequestInit) {
+function fakeFetchResponse(input: string | URL | Request, init?: RequestInit) {
   const url = new URL(
     typeof input === 'string' || input instanceof URL ? input : input.url,
   );
@@ -79,10 +75,13 @@ function fakeFetch(input: string | URL | Request, init?: RequestInit) {
   return json({ error: 'Unexpected fixture request' }, 500);
 }
 
-const app = legacy.createServer({
+const fakeFetch: typeof fetch = (input, init) =>
+  Promise.resolve(fakeFetchResponse(input, init));
+
+const app = createServer({
   apiBase: 'https://api.example.test',
   fetchImpl: fakeFetch,
-  writeLyrics: ({ idea }: { idea: string }) => ({
+  writeLyrics: ({ idea }) => ({
     title: idea,
     language: 'Hindi',
     nativeScriptName: 'Devanagari',
@@ -90,10 +89,13 @@ const app = legacy.createServer({
     lyricsNative: '[Verse]\nबारिश की रात',
     lyricsRoman: '[Verse]\nBaarish ki raat',
     prompt: 'Warm acoustic mehfil',
+    languageCode: 'hi',
+    usage: null,
   }),
   shareBaseUrl: 'https://rooms.example.test',
   publicBaseUrl: 'https://public.example.test',
   shareSecret: 'fixture-secret',
+  staticRoot: resolve('public'),
 });
 const appHandler = app.listeners('request')[0];
 if (typeof appHandler !== 'function')
