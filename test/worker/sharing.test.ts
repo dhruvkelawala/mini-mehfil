@@ -1143,6 +1143,7 @@ test('R2 storage returns seekable ranges, HEAD metadata, and unsatisfiable range
   assert.equal(partial.headers.get('content-range'), 'bytes 1-3/5');
   assert.equal(partial.headers.get('content-length'), '3');
   assert.equal(partial.headers.get('etag'), '"r2-etag"');
+  assert.equal(partial.headers.get('cache-control'), 'no-store');
   assert.deepEqual(
     new Uint8Array(await partial.arrayBuffer()),
     new Uint8Array([68, 51, 4]),
@@ -1153,6 +1154,10 @@ test('R2 storage returns seekable ranges, HEAD metadata, and unsatisfiable range
   );
   assert.equal(head.status, 200);
   assert.equal(head.headers.get('content-length'), '5');
+  assert.equal(
+    head.headers.get('cache-control'),
+    'public, max-age=31536000, immutable',
+  );
   assert.equal((await head.arrayBuffer()).byteLength, 0);
 
   const unsatisfiable = await handle(

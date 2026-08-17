@@ -784,6 +784,7 @@ export function createShareHandler({
         ) {
           const offset = object.range.offset;
           const length = object.range.length ?? object.size;
+          headers.set('cache-control', 'no-store');
           headers.set(
             'content-range',
             `bytes ${offset}-${offset + length - 1}/${object.size}`,

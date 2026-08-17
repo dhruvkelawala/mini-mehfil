@@ -32,5 +32,13 @@ export function createVercelConfig(environment: NodeJS.ProcessEnv = {}) {
         : []),
       { source: '/(.*)', destination: '/api/index.ts' },
     ],
+    headers: shareOrigin
+      ? [
+          {
+            source: '/s/:id/audio',
+            headers: [{ key: 'x-vercel-enable-rewrite-caching', value: '0' }],
+          },
+        ]
+      : [],
   };
 }
