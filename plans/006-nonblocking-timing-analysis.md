@@ -1,12 +1,22 @@
 # Plan 006: Make MiniMax timing analysis non-blocking and retryable
 
-> **Status**: BLOCKED — implementation and every automated gate pass, and the
-> first real non-blocking/provider path passed on 2026-08-17. The explicitly
-> approved parity retest was consumed by one guarded browser POST, but its local
-> operator route never returned a generation response to the product. It
-> retained no source and timing analysis never began, so live
-> host/listener/shared-page parity is still unproven. No further paid request is
-> authorized.
+> **Status**: DONE — closed 2026-08-18 after the 2026-08-17 diagnosis session
+> found and fixed both real-world failure causes. (1) MiniMax rounds segment
+> boundaries but reports the exact duration, so its own final boundary can
+> overshoot its own duration by milliseconds; `normalizeLyricTiming` voided the
+> whole artifact as `invalid-timing` (non-retryable). Reproduced live against
+> the 20:49 BST generation's retained source and fixed by clamping overshoots
+> up to one second. (2) The deployed Cloudflare share worker predated PR #33
+> and silently dropped `lyricTiming` from every upload, so all shared pages
+> fell back to Atmospheric regardless of analysis. Fixed by redeploying the
+> worker and adding a CI `deploy-worker` job on `main`. Live evidence: three
+> real generations (two desktop, one mobile preview) analyzed ready on attempt
+> one; the operator saw timed host playback live; the re-uploaded "London Fog"
+> share (`/s/eNYSMkG5WUswT6y3`) stores the 7-segment artifact and the operator
+> confirmed the live shared page renders timed lines. The live room-listener
+> leg rests on the automated parity suites and real-audio sync replay. The
+> earlier guarded-parity-retest failure was a harness fault, not a product
+> fault, and no further paid retest was needed.
 >
 > **Merge (2026-08-17)**: PR #33 was merged into `main` at `b5f4fa4` from the
 > reviewed head `0aa1fc0` with no additional commits. The retained
