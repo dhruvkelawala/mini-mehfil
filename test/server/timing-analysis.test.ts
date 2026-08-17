@@ -73,6 +73,49 @@ describe('MiniMax timing analysis adapter', () => {
     });
   });
 
+  test('provider status failure preserves a sanitized status message', async () => {
+    const opts = options(() =>
+      Promise.resolve(
+        Response.json({
+          base_resp: {
+            status_code: 1000,
+            status_msg:
+              'unknown error, download https://cdn.minimax.test/signed/abcdefghijklmnopqrstuvwxyz123456?sig=sk-secret failed',
+          },
+        }),
+      ),
+    );
+    const outcome = await analyzeMiniMaxTiming(input, opts);
+    expect(outcome).toEqual({
+      status: 'unavailable',
+      reason: 'provider-http',
+      retryable: true,
+    });
+    const terminal = opts.diagnostic.mock.calls
+      .map(([diagnostic]) => diagnostic)
+      .find((diagnostic) => diagnostic.event === 'provider-terminal');
+    expect(terminal?.providerStatus).toBe(1000);
+    expect(terminal?.providerMessage).toBe(
+      'unknown error, download https://cdn.minimax.test/signed/abcdefghijklmnopqrstuvwxyz123456?sig=sk-secret failed',
+    );
+  });
+
+  test('emitted provider messages scrub URLs and opaque values', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    emitTimingDiagnostic({
+      event: 'provider-terminal',
+      surface: 'provider',
+      reason: 'provider-http',
+      providerMessage:
+        'unknown error, download https://cdn.minimax.test/signed/abc?token=sk-secret failed for opaquecredential0123456789abcdef',
+    });
+    expect(info).toHaveBeenCalledOnce();
+    const serialized = JSON.stringify(info.mock.calls[0]);
+    expect(serialized).toContain('unknown error, download <url> failed');
+    expect(serialized).not.toMatch(/cdn\.minimax|sk-secret|opaquecredential/);
+    info.mockRestore();
+  });
+
   test('diagnostic runtime guard drops secrets and arbitrary provider data', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     emitTimingDiagnostic({

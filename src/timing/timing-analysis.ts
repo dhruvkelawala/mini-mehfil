@@ -66,6 +66,8 @@ export interface TimingDiagnostic {
   event: TimingDiagnosticEvent;
   surface: TimingDiagnosticSurface;
   reason?: TimingDiagnosticReason;
+  /** Provider status text, sanitized before emission. */
+  providerMessage?: string;
   attempt?: number;
   elapsedMs?: number;
   deadlineMs?: number;
@@ -92,6 +94,19 @@ const numericFields = [
 ] as const;
 
 /**
+ * Rewrites provider status text so it can never leak a URL, signed source, or
+ * token-like value: URLs and long opaque runs are replaced before truncation.
+ */
+export function sanitizeProviderMessage(value: string): string {
+  return value
+    .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, '<url>')
+    .replace(/[A-Za-z0-9_-]{24,}/g, '<opaque>')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+}
+
+/**
  * Emits only the fixed privacy-safe timing vocabulary. The explicit copy is a
  * runtime guard as well as a TypeScript boundary: accidental URLs, tokens, raw
  * payloads, lyrics, transcripts and provider identifiers are dropped.
@@ -102,6 +117,10 @@ export const emitTimingDiagnostic: TimingDiagnosticSink = (diagnostic) => {
     surface: diagnostic.surface,
   };
   if (diagnostic.reason) safe.reason = diagnostic.reason;
+  if (typeof diagnostic.providerMessage === 'string') {
+    const message = sanitizeProviderMessage(diagnostic.providerMessage);
+    if (message) safe.providerMessage = message;
+  }
   for (const field of numericFields) {
     const value = diagnostic[field];
     if (typeof value === 'number' && Number.isFinite(value))

@@ -99,7 +99,11 @@ export async function analyzeMiniMaxTiming(
   const elapsedMs = () => Math.max(0, Math.round(now() - startedAt));
   const terminal = (
     outcome: TimingAnalysisOutcome,
-    details: { httpStatus?: number; providerStatus?: number } = {},
+    details: {
+      httpStatus?: number;
+      providerStatus?: number;
+      providerMessage?: unknown;
+    } = {},
   ) => {
     diagnostic({
       event: 'provider-terminal',
@@ -114,6 +118,11 @@ export async function analyzeMiniMaxTiming(
       ...(details.providerStatus === undefined
         ? {}
         : { providerStatus: details.providerStatus }),
+      ...(typeof details.providerMessage === 'string' &&
+      details.providerMessage &&
+      outcome.status !== 'ready'
+        ? { providerMessage: details.providerMessage }
+        : {}),
       ...(outcome.status === 'ready'
         ? {
             segmentCount: outcome.timing.segments.length,
@@ -217,6 +226,7 @@ export async function analyzeMiniMaxTiming(
     return terminal(unavailable(failure.reason, failure.retryable), {
       httpStatus: response.status,
       ...(providerStatus === undefined ? {} : { providerStatus }),
+      providerMessage: baseResponse.status_msg ?? (record && record.error),
     });
   }
   if (!record) {
@@ -229,6 +239,7 @@ export async function analyzeMiniMaxTiming(
     return terminal(unavailable(failure.reason, failure.retryable), {
       httpStatus: response.status,
       providerStatus,
+      providerMessage: baseResponse.status_msg,
     });
   }
   if (typeof record.structure_result !== 'string') {
