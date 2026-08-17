@@ -7,7 +7,7 @@
 > `plans/README.md` unless a reviewer told you they maintain the index.
 >
 > **Drift check (run first)**:
-> `git diff --stat 0aa1fc0..HEAD -- src/client/host/generation-controller.ts src/client/host/timing-analysis-controller.ts src/client/host/player-controller.ts src/server/index.ts src/server/timing-analysis.ts src/timing/timing-analysis.ts src/lyrics/lyric-sync.ts src/room src/worker test scripts README.md PRODUCT.md`
+> `git diff --stat b5f4fa4..HEAD -- src/client/host/generation-controller.ts src/client/host/timing-analysis-controller.ts src/client/host/player-controller.ts src/server/index.ts src/server/timing-analysis.ts src/timing/timing-analysis.ts src/lyrics/lyric-sync.ts src/room src/worker test scripts README.md PRODUCT.md`
 > If any in-scope file changed since this plan was written, compare the
 > "Current state" excerpts against the live code before proceeding. Stop and
 > report if the provider contract, timing artifact, privacy model, or playback
@@ -20,7 +20,8 @@
 - **Risk**: HIGH
 - **Depends on**: PR #33 merged and Plan 006 marked DONE
 - **Category**: performance / reliability / direction
-- **Planned at**: commit `0aa1fc0`, 2026-08-17
+- **Planned at**: commit `0aa1fc0` (reviewed PR #33 head; merged into `main` as
+  `b5f4fa4`), 2026-08-17
 - **Issue**: https://github.com/dhruvkelawala/mini-mehfil/issues/35
 
 ## Why this matters
