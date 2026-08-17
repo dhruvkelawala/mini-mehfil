@@ -228,39 +228,55 @@ async function generateWith(mockFetch, options = {}) {
   return response;
 }
 
-test('analyzes a finished recording into normalized section timing', async () => {
-  let preprocess;
-  const song = await generateWith(async (url, init) => {
+async function analyzeWith(mockFetch, body = {}, options = {}) {
+  let response;
+  await withServer(
+    mockFetch,
+    async (base) => {
+      response = await (
+        await fetch(`${base}/api/analyze-timing`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            token: 'sk-cp-analysis',
+            source: 'https://cdn.minimax.test/song.mp3',
+            attempt: 1,
+            ...body,
+          }),
+        })
+      ).json();
+    },
+    options,
+  );
+  return response;
+}
+
+test('generation returns finished audio without invoking timing analysis', async () => {
+  let preprocessCalls = 0;
+  const song = await generateWith(async (url) => {
     if (url === 'https://mock.minimax.test/v1/music_generation')
       return generatedSong();
     if (url === 'https://mock.minimax.test/v1/music_cover_preprocess') {
-      preprocess = { init, body: JSON.parse(init.body) };
+      preprocessCalls += 1;
       return preprocessed();
     }
     throw new Error(`Unexpected URL: ${url}`);
   });
 
-  assert.deepEqual(song.lyric_timing, {
-    version: 1,
-    mode: 'minimax-section-asr',
-    durationSeconds: 90,
-    segments: SECTION_SEGMENTS,
-  });
-  assert.equal(preprocess.init.headers.Authorization, 'Bearer sk-cp-analysis');
-  assert.equal(preprocess.body.model, 'music-cover');
-  assert.equal(preprocess.body.audio_url, 'https://cdn.minimax.test/song.mp3');
-  const serialized = JSON.stringify(song);
-  assert.doesNotMatch(serialized, /formatted_lyrics|raw ASR transcript/);
-  assert.doesNotMatch(serialized, /cover_feature_id|feature-1234/);
-  assert.doesNotMatch(serialized, /trace-5678/);
+  assert.equal(song.data.audio, 'https://cdn.minimax.test/song.mp3');
+  assert.equal(song.lyric_timing, undefined);
+  assert.equal(preprocessCalls, 0);
 });
 
-test('allows enough time for live section analysis and normalizes real provider aliases', async () => {
-  assert.equal(ANALYSIS_TIMEOUT_MS, 60_000);
-  const song = await generateWith(async (url) => {
-    if (url === 'https://mock.minimax.test/v1/music_generation')
-      return generatedSong();
-    if (url === 'https://mock.minimax.test/v1/music_cover_preprocess')
+test('analysis uses a 180 second attempt and returns only normalized timing', async () => {
+  assert.equal(ANALYSIS_TIMEOUT_MS, 180_000);
+  let preprocess;
+  const diagnostics = [];
+  const outcome = await analyzeWith(
+    async (url, init) => {
+      if (url !== 'https://mock.minimax.test/v1/music_cover_preprocess')
+        throw new Error(`Unexpected URL: ${url}`);
+      preprocess = { init, body: JSON.parse(init.body) };
       return preprocessed({
         audio_duration: 90,
         structure_result: JSON.stringify({
@@ -271,19 +287,31 @@ test('allows enough time for live section analysis and normalizes real provider 
           ],
         }),
       });
-    throw new Error(`Unexpected URL: ${url}`);
-  });
+    },
+    {},
+    { timingDiagnostic: (diagnostic) => diagnostics.push(diagnostic) },
+  );
 
-  assert.deepEqual(song.lyric_timing?.segments, [
+  assert.deepEqual(outcome.timing?.segments, [
     { start: 0, end: 30, label: 'verse' },
     { start: 30, end: 45, label: 'verse' },
     { start: 45, end: 90, label: 'chorus' },
   ]);
+  assert.equal(preprocess.init.headers.Authorization, 'Bearer sk-cp-analysis');
+  assert.equal(preprocess.body.model, 'music-cover');
+  assert.equal(preprocess.body.audio_url, 'https://cdn.minimax.test/song.mp3');
+  const serialized = JSON.stringify({ outcome, diagnostics });
+  assert.doesNotMatch(serialized, /formatted_lyrics|raw ASR transcript/);
+  assert.doesNotMatch(serialized, /cover_feature_id|feature-1234/);
+  assert.doesNotMatch(serialized, /trace-5678|sk-cp-analysis|cdn\.minimax/);
 });
 
-test('delivers audio without timing when section analysis cannot be trusted', async () => {
+test('analysis returns discriminated terminal outcomes for untrusted results', async () => {
   const unusable = {
-    'a rejected request': () => new Response('nope', { status: 401 }),
+    'a rejected request': {
+      reply: () => new Response('nope', { status: 401 }),
+      expected: { reason: 'authentication', retryable: false },
+    },
     'an upstream status code': () =>
       preprocessed({ base_resp: { status_code: 1002, status_msg: 'busy' } }),
     'an unreadable body': () => new Response('not json', { status: 200 }),
@@ -306,40 +334,49 @@ test('delivers audio without timing when section analysis cannot be trusted', as
     'a missing duration': () => preprocessed({ audio_duration: undefined }),
   };
 
-  for (const [name, reply] of Object.entries(unusable)) {
-    const song = await generateWith(async (url) => {
-      if (url === 'https://mock.minimax.test/v1/music_generation')
-        return generatedSong();
-      if (url === 'https://mock.minimax.test/v1/music_cover_preprocess')
-        return reply();
-      throw new Error(`Unexpected URL: ${url}`);
+  for (const [name, entry] of Object.entries(unusable)) {
+    const reply = typeof entry === 'function' ? entry : entry.reply;
+    const outcome = await analyzeWith(async (url) => {
+      if (url !== 'https://mock.minimax.test/v1/music_cover_preprocess')
+        throw new Error(`Unexpected URL: ${url}`);
+      return reply();
     });
-    assert.equal(song.data.audio, 'https://cdn.minimax.test/song.mp3', name);
-    assert.equal(song.lyric_timing, undefined, name);
+    assert.equal(outcome.status, 'unavailable', name);
+    if (typeof entry !== 'function') {
+      assert.equal(outcome.reason, entry.expected.reason, name);
+      assert.equal(outcome.retryable, entry.expected.retryable, name);
+    } else if (name === 'an upstream status code') {
+      assert.equal(outcome.reason, 'provider-busy', name);
+      assert.equal(outcome.retryable, true, name);
+    } else {
+      assert.equal(outcome.retryable, false, name);
+    }
   }
 });
 
-test('a hung analysis never delays or fails audio delivery past its timeout', async () => {
-  const song = await generateWith(
+test('a hung analysis returns a retryable timeout outcome', async () => {
+  const outcome = await analyzeWith(
     async (url, init) => {
-      if (url === 'https://mock.minimax.test/v1/music_generation')
-        return generatedSong();
       if (url === 'https://mock.minimax.test/v1/music_cover_preprocess') {
         return new Promise((resolve, reject) => {
           init.signal.addEventListener('abort', () =>
-            reject(new Error('aborted')),
+            reject(init.signal.reason),
           );
         });
       }
       throw new Error(`Unexpected URL: ${url}`);
     },
+    {},
     { analysisTimeoutMs: 25 },
   );
-  assert.equal(song.data.audio, 'https://cdn.minimax.test/song.mp3');
-  assert.equal(song.lyric_timing, undefined);
+  assert.deepEqual(outcome, {
+    status: 'unavailable',
+    reason: 'timeout',
+    retryable: true,
+  });
 });
 
-test('never analyzes an inline recording and never trusts browser-supplied timing', async () => {
+test('rejects inline analysis and never trusts generation timing fields', async () => {
   let preprocessCalls = 0;
   const song = await generateWith(async (url) => {
     if (url === 'https://mock.minimax.test/v1/music_generation') {
@@ -365,9 +402,23 @@ test('never analyzes an inline recording and never trusts browser-supplied timin
   });
   assert.equal(preprocessCalls, 0);
   assert.equal(song.lyric_timing, undefined);
+
+  const outcome = await analyzeWith(
+    async () => {
+      preprocessCalls += 1;
+      return preprocessed();
+    },
+    { source: '49443304' },
+  );
+  assert.deepEqual(outcome, {
+    status: 'unavailable',
+    reason: 'unsupported-source',
+    retryable: false,
+  });
+  assert.equal(preprocessCalls, 0);
 });
 
-test('carries server-issued timing through recovery and into share metadata', async () => {
+test('generation recovery checkpoints audio without waiting for timing', async () => {
   let uploaded;
   let job;
   const mockFetch = async (url, init = {}) => {
@@ -418,13 +469,13 @@ test('carries server-issued timing through recovery and into share metadata', as
           }),
         })
       ).json();
-      assert.deepEqual(song.lyric_timing.segments, SECTION_SEGMENTS);
+      assert.equal(song.lyric_timing, undefined);
 
-      // A second reader of the same job gets the same stored timing.
+      // A second reader gets the paid result immediately, still timing-free.
       const recovered = await (
         await fetch(`${base}/api/generation-status?id=${JOB_ID}`)
       ).json();
-      assert.deepEqual(recovered.lyric_timing.segments, SECTION_SEGMENTS);
+      assert.equal(recovered.lyric_timing, undefined);
 
       const shared = await fetch(`${base}/api/share`, {
         method: 'POST',
@@ -454,12 +505,7 @@ test('carries server-issued timing through recovery and into share metadata', as
     },
   );
 
-  assert.deepEqual(uploaded.metadata.lyricTiming, {
-    version: 1,
-    mode: 'minimax-section-asr',
-    durationSeconds: 90,
-    segments: SECTION_SEGMENTS,
-  });
+  assert.equal(uploaded.metadata.lyricTiming, null);
   assert.doesNotMatch(
     JSON.stringify(uploaded),
     /formatted_lyrics|feature-1234/,
