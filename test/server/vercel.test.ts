@@ -1,9 +1,21 @@
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
 
 import { test } from 'vitest';
 
 import handler from '../../api/index.ts';
 import { createVercelConfig } from '../../src/server/vercel-config.ts';
+
+test('package metadata declares the typed Vercel entrypoint', () => {
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+  ) as { main?: unknown };
+  assert.equal(packageJson.main, 'api/index.ts');
+  assert.equal(
+    existsSync(new URL(`../../${String(packageJson.main)}`, import.meta.url)),
+    true,
+  );
+});
 
 test('Vercel gives the catch-all function enough time to finish one paid generation', () => {
   const config = createVercelConfig({

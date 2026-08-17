@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "main": "api/index.ts",
   "description": "Mini Mehfil — a tiny local song room for MiniMax Music 3",
   "scripts": {
     "start": "node src/server/index.ts",
