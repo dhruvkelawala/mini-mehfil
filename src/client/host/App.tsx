@@ -23,6 +23,7 @@ import {
   type LyricSection,
 } from '../../lyrics/lyric-sync.ts';
 import type { LyricsSheet, SongRequest } from '../../room/protocol.ts';
+import { emitTimingDiagnostic } from '../../timing/timing-analysis.ts';
 import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
 import {
   createGenerationController,
@@ -34,6 +35,7 @@ import {
 } from './host-room-controller.ts';
 import { createMediaDiagnostics } from './media-diagnostics.ts';
 import { createPlayerController } from './player-controller.ts';
+import { createTimingAnalysisController } from './timing-analysis-controller.ts';
 import {
   detectVocalEntry,
   reconcileVocalAnalysisResult,
@@ -135,11 +137,27 @@ const publicLyrics = (sheet: LyricsSheet): LyricsSheet => ({
 const TOKEN_REQUIRED_MESSAGE =
   'Paste your MiniMax token before queueing a recording.';
 
+export function PerformanceTimingCopy(props: {
+  pending: boolean;
+  timed: boolean;
+}) {
+  return (
+    <span class="performance-timing" id="performance-timing">
+      {props.pending
+        ? 'Analyzing MiniMax sections · music is ready'
+        : props.timed
+          ? 'Lines follow MiniMax sections · timing is approximate'
+          : 'Atmospheric reveal · timing is approximate'}
+    </span>
+  );
+}
+
 export function App() {
   const diagnostics = createMediaDiagnostics();
   const player = createPlayerController(diagnostics);
+  const timingAnalysis = createTimingAnalysisController();
   const room = createHostRoomController();
-  const generation = createGenerationController({ player });
+  const generation = createGenerationController({ player, timingAnalysis });
   const [performanceOpen, setPerformanceOpen] = createSignal(false);
   const [manualLyricsOpen, setManualLyricsOpen] = createSignal(false);
   const [shareLabel, setShareLabel] = createSignal('Share');
@@ -169,6 +187,23 @@ export function App() {
   const sectionTimeline = createMemo(() =>
     buildSectionTimeline(lyricSheet().sections, player.timing()),
   );
+  const timingPending = createMemo(
+    () => timingAnalysis.state().status === 'pending',
+  );
+  createEffect(() => {
+    if (!player.ready() || !activeLyrics()) return;
+    const timing = player.timing();
+    const timeline = sectionTimeline();
+    emitTimingDiagnostic({
+      event: 'host-map',
+      surface: 'host',
+      reason: timeline ? 'mapped' : 'weak-map',
+      segmentCount: timing?.segments.length ?? 0,
+      sectionCount:
+        timeline?.filter((entry) => entry.sectionIndex !== null).length ?? 0,
+      ...(timing ? { analyzedDurationSeconds: timing.durationSeconds } : {}),
+    });
+  });
   const activeEntry = createMemo(() =>
     activeTimelineEntry(sectionTimeline(), player.currentTime()),
   );
@@ -1168,12 +1203,17 @@ export function App() {
                 <span class="reveal-language" id="reveal-language">
                   {languageLabel()}
                 </span>
-                <Show when={sectionTimeline() || !manualRevealActive()}>
-                  <span class="performance-timing" id="performance-timing">
-                    {sectionTimeline()
-                      ? 'Lines follow MiniMax sections · timing is approximate'
-                      : 'Atmospheric reveal · timing is approximate'}
-                  </span>
+                <Show
+                  when={
+                    timingPending() ||
+                    sectionTimeline() ||
+                    !manualRevealActive()
+                  }
+                >
+                  <PerformanceTimingCopy
+                    pending={timingPending()}
+                    timed={Boolean(sectionTimeline())}
+                  />
                 </Show>
                 <p class="reveal-lines" id="reveal-lines">
                   <Show

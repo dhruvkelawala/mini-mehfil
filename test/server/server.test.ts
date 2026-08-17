@@ -505,7 +505,12 @@ test('generation recovery checkpoints audio without waiting for timing', async (
     },
   );
 
-  assert.equal(uploaded.metadata.lyricTiming, null);
+  assert.deepEqual(uploaded.metadata.lyricTiming, {
+    version: 1,
+    mode: 'minimax-section-asr',
+    durationSeconds: 5,
+    segments: [{ start: 0, end: 5, label: 'outro' }],
+  });
   assert.doesNotMatch(
     JSON.stringify(uploaded),
     /formatted_lyrics|feature-1234/,

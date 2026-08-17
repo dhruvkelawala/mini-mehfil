@@ -5,6 +5,10 @@ import {
   type LyricTiming,
 } from '../../lyrics/lyric-sync.ts';
 import type { RoomSong } from '../../room/protocol.ts';
+import {
+  emitTimingDiagnostic,
+  type TimingDiagnosticSink,
+} from '../../timing/timing-analysis.ts';
 import type { HostLyrics } from './generation-recovery.ts';
 import type { MediaDiagnostics } from './media-diagnostics.ts';
 
@@ -32,6 +36,11 @@ export interface PlayerController {
     reference?: string | null,
     timing?: unknown,
   ): Promise<void>;
+  /**
+   * Applies analysis only to the recording that requested it. This never
+   * reloads, seeks, pauses, or starts the media element.
+   */
+  applyTiming(expectedSource: string, timing: unknown): boolean;
   loadRoomSong(song: RoomSong, origin: string): void;
   syncRoomSong(song: RoomSong): void;
   clear(): void;
@@ -67,6 +76,7 @@ function sourceUrl(source: string): {
 
 export function createPlayerController(
   diagnostics: MediaDiagnostics,
+  timingDiagnostic: TimingDiagnosticSink = emitTimingDiagnostic,
 ): PlayerController {
   const [ready, setReady] = createSignal(false);
   const [playing, setPlaying] = createSignal(false);
@@ -124,9 +134,43 @@ export function createPlayerController(
     if (!timing || !Number.isFinite(mediaDuration) || mediaDuration <= 0)
       return setTimingMatchesMedia(false);
     const tolerance = Math.max(1, mediaDuration * 0.02);
-    return setTimingMatchesMedia(
-      Math.abs(timing.durationSeconds - mediaDuration) <= tolerance,
-    );
+    const matches =
+      Math.abs(timing.durationSeconds - mediaDuration) <= tolerance;
+    timingDiagnostic({
+      event: 'host-media-validation',
+      surface: 'host',
+      reason: matches ? 'duration-match' : 'duration-mismatch',
+      segmentCount: timing.segments.length,
+      analyzedDurationSeconds: timing.durationSeconds,
+      mediaDurationSeconds: mediaDuration,
+    });
+    setTimingMatchesMedia(matches);
+  };
+  const applyTiming = (expectedSource: string, value: unknown): boolean => {
+    const timing = normalizeLyricTiming(value);
+    timingDiagnostic({
+      event: 'host-artifact-receipt',
+      surface: 'host',
+      reason: timing ? 'ready' : 'invalid-timing',
+      ...(timing
+        ? {
+            segmentCount: timing.segments.length,
+            analyzedDurationSeconds: timing.durationSeconds,
+          }
+        : {}),
+    });
+    const sourceMatches =
+      Boolean(expectedSource) && source() === expectedSource;
+    timingDiagnostic({
+      event: 'host-source-validation',
+      surface: 'host',
+      reason: sourceMatches ? 'source-match' : 'source-mismatch',
+    });
+    if (!sourceMatches || !timing) return false;
+    setLoadedTiming(timing);
+    setTimingMatchesMedia(false);
+    matchTimingToMedia(duration());
+    return true;
   };
   const clear = () => {
     releaseObjectUrl();
@@ -165,6 +209,7 @@ export function createPlayerController(
     analysisBytes,
     shareReference,
     timing: () => (timingMatchesMedia() ? loadedTiming() : null),
+    applyTiming,
     bindAudio(element) {
       audio = element;
       element.addEventListener('play', () => {
@@ -204,10 +249,12 @@ export function createPlayerController(
       setTitle(lyrics.title || 'Your Mehfil recording');
       setSubtitle('Fresh from MiniMax Music 3');
       setShareReference(reference);
-      setLoadedTiming(normalizeLyricTiming(timing));
+      setLoadedTiming(null);
       setTimingMatchesMedia(false);
       setReady(true);
       setEnded(false);
+      if (timing !== undefined && timing !== null)
+        applyTiming(resolved.url, timing);
       await play();
     },
     loadRoomSong(song, origin) {

@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from '@solidjs/testing-library';
-import { createSignal } from 'solid-js';
+import { createSignal, Show } from 'solid-js';
 import { afterEach, describe, expect, test } from 'vitest';
 
-import { App, TimedSectionView } from '../../../src/client/host/App.tsx';
+import {
+  App,
+  PerformanceTimingCopy,
+  TimedSectionView,
+} from '../../../src/client/host/App.tsx';
 import {
   activePacedLine,
   buildLinePacing,
@@ -23,6 +27,62 @@ test('renders the host shell with release pacing initialized', () => {
 });
 
 describe('host timed lyric rendering', () => {
+  test('upgrades pending copy to one timed section and current line at the existing clock', async () => {
+    const sheet = parseLyricSheet({
+      isLatinScript: true,
+      lyricsNative: '',
+      lyricsRoman: '[Verse]\nRain\nWind\nSoft\nGlow\n[Chorus]\nAgain',
+    });
+    const [pending, setPending] = createSignal(true);
+    const [timing, setTiming] =
+      createSignal<Parameters<typeof buildSectionTimeline>[1]>(null);
+    const timeline = () => buildSectionTimeline(sheet.sections, timing());
+    const clock = 8;
+    render(() => (
+      <>
+        <PerformanceTimingCopy
+          pending={pending()}
+          timed={Boolean(timeline())}
+        />
+        <Show when={timeline()}>
+          {(readyTimeline) => (
+            <TimedSectionView
+              section={sheet.sections[0]!}
+              activeLine={activePacedLine(
+                buildLinePacing(sheet.sections, readyTimeline()),
+                clock,
+              )}
+              holdLines={false}
+            />
+          )}
+        </Show>
+      </>
+    ));
+
+    expect(
+      screen.getByText('Analyzing MiniMax sections · music is ready'),
+    ).toBeTruthy();
+    expect(document.querySelector('.lyric-section')).toBeNull();
+
+    setTiming({
+      version: 1,
+      mode: 'minimax-section-asr',
+      durationSeconds: 20,
+      segments: [
+        { start: 0, end: 10, label: 'verse' },
+        { start: 10, end: 20, label: 'chorus' },
+      ],
+    });
+    setPending(false);
+    await Promise.resolve();
+
+    expect(
+      screen.getByText('Lines follow MiniMax sections · timing is approximate'),
+    ).toBeTruthy();
+    expect(document.querySelectorAll('.lyric-section')).toHaveLength(1);
+    expect(document.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
+  });
+
   test('holds sung lines then reveals the first spoken line from real pacing at gate cutover', async () => {
     const sheet = parseLyricSheet({
       isLatinScript: true,

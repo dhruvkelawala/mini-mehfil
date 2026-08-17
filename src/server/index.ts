@@ -726,6 +726,11 @@ export function createServer(options: ServerOptions = {}): http.Server {
               ? recovered.value.source
               : '',
         };
+        const lyricTiming = normalizeLyricTiming(body.lyricTiming);
+        if (body.lyricTiming != null && !lyricTiming)
+          return sendJson(res, 400, {
+            error: 'The section timing artifact is invalid.',
+          });
 
         const metadata = {
           title: typeof body.title === 'string' ? body.title : '',
@@ -739,9 +744,10 @@ export function createServer(options: ServerOptions = {}): http.Server {
             typeof body.lyricsNative === 'string' ? body.lyricsNative : '',
           lyricsRoman:
             typeof body.lyricsRoman === 'string' ? body.lyricsRoman : '',
-          // Read from the server-issued generation record only. A browser can
-          // never supply timing for a recording it did not analyze.
-          lyricTiming: normalizeLyricTiming(recovered.value.lyricTiming),
+          // The opaque share reference still proves this is a server-issued
+          // recording. The browser supplies only the normalized artifact from
+          // the separate, request-only timing analysis.
+          lyricTiming,
         };
 
         let audio = decodeAudioSource(entry.source);

@@ -70,6 +70,7 @@ function fakePlayer(load = vi.fn(() => Promise.resolve())): PlayerController {
     analysisBytes: () => null,
     shareReference: () => null,
     timing: () => null,
+    applyTiming: vi.fn(() => true),
     bindAudio: vi.fn(),
     load,
     loadRoomSong: vi.fn(),
@@ -224,6 +225,64 @@ async function loadedPlayer(timing: unknown, mediaDuration: number) {
 }
 
 describe('host section timing', () => {
+  test('applies matching late timing without restarting, seeking, or mutating it', async () => {
+    const audio = new FakeAudio();
+    const diagnostics = vi.fn();
+    const player = createPlayerController(
+      createMediaDiagnostics(),
+      diagnostics,
+    );
+    player.bindAudio(audio as unknown as HTMLAudioElement);
+    const load = vi.spyOn(audio, 'load');
+    const play = vi.spyOn(audio, 'play');
+    await player.load('https://cdn.example/song.mp3', lyrics);
+    audio.duration = 90;
+    audio.currentTime = 37;
+    audio.emit('loadedmetadata');
+    const loadsBeforeAnalysis = load.mock.calls.length;
+    const playsBeforeAnalysis = play.mock.calls.length;
+
+    expect(
+      player.applyTiming('https://cdn.example/song.mp3', SECTION_TIMING),
+    ).toBe(true);
+    expect(player.timing()).toEqual(SECTION_TIMING);
+    expect(player.timing()).not.toBe(SECTION_TIMING);
+    expect(audio.currentTime).toBe(37);
+    expect(load).toHaveBeenCalledTimes(loadsBeforeAnalysis);
+    expect(play).toHaveBeenCalledTimes(playsBeforeAnalysis);
+    expect(SECTION_TIMING.segments[0]).toEqual({
+      start: 0,
+      end: 12,
+      label: 'intro',
+    });
+    expect(diagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'host-media-validation',
+        reason: 'duration-match',
+      }),
+    );
+  });
+
+  test('rejects late timing for stale sources and mismatched durations', async () => {
+    const { audio, player } = await loadedPlayer(undefined, 90);
+    audio.currentTime = 24;
+    expect(
+      player.applyTiming('https://cdn.example/stale.mp3', SECTION_TIMING),
+    ).toBe(false);
+    expect(player.timing()).toBeNull();
+    expect(audio.currentTime).toBe(24);
+
+    expect(
+      player.applyTiming('https://cdn.example/song.mp3', {
+        ...SECTION_TIMING,
+        durationSeconds: 60,
+        segments: [{ start: 0, end: 60, label: 'verse' }],
+      }),
+    ).toBe(true);
+    expect(player.timing()).toBeNull();
+    expect(audio.currentTime).toBe(24);
+  });
+
   test('activates timed mode only when the media matches the analyzed length', async () => {
     const cases: Array<[string, number, boolean]> = [
       ['an exact match', 90, true],
