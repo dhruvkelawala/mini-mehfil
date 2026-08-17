@@ -31,12 +31,20 @@ test('Vercel gives the catch-all function enough time to finish one paid generat
     { source: '/s/:path*', destination: 'https://share.example/s/:path*' },
     { source: '/(.*)', destination: '/api/index.ts' },
   ]);
+  assert.deepEqual(config.headers, [
+    {
+      source: '/s/:id/audio',
+      headers: [{ key: 'x-vercel-enable-rewrite-caching', value: '0' }],
+    },
+  ]);
 });
 
 test('Vercel leaves the share route disabled without a valid Worker origin', () => {
-  assert.deepEqual(createVercelConfig({}).rewrites, [
+  const config = createVercelConfig({});
+  assert.deepEqual(config.rewrites, [
     { source: '/(.*)', destination: '/api/index.ts' },
   ]);
+  assert.deepEqual(config.headers, []);
   assert.deepEqual(
     createVercelConfig({ MEHFIL_SHARE_URL: 'https://share.example/path' })
       .rewrites,
