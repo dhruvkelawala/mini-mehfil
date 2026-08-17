@@ -45,4 +45,6 @@ test('the selected folk-modern scene ships with all four background candidates',
     styles,
     /@media \(max-width: 560px\)[\s\S]*\.topbar-docs\s*\{\s*display:\s*none;\s*\}/,
   );
+  assert.doesNotMatch(app, /Lyrics cost about a tenth of a cent/);
+  assert.doesNotMatch(styles, /\.cost-hint/);
 });

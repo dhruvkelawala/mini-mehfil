@@ -828,9 +828,6 @@ export function App() {
               <path d="M5 12h13M14 7l5 5-5 5" />
             </svg>
           </button>
-          <p class="cost-hint" id="cost-hint">
-            Lyrics cost about a tenth of a cent. The song costs ≈ $0.15.
-          </p>
         </form>
         <Show when={room.details() && room.panelOpen()}>
           <aside

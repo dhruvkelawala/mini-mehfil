@@ -811,12 +811,7 @@ select option {
   border-radius: 2px;
   background: rgba(230, 166, 83, 0.4);
 }
-.cost-hint {
-  margin: 9px 0 0;
-  color: #b39a7f;
-  font-size: 10px;
-  text-align: center;
-}
+
 .field {
   display: block;
   margin-top: 17px;
