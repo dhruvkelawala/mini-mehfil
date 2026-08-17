@@ -848,7 +848,9 @@ export function App() {
                   aria-label="Hide live mehfil controls"
                   onClick={() => room.showPanel(false)}
                 >
-                  ×
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M6 6l12 12M18 6 6 18" />
+                  </svg>
                 </button>
               </div>
             </div>
@@ -1153,7 +1155,9 @@ export function App() {
             aria-label="Close performance"
             onClick={closePerformance}
           >
-            ×
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
           </button>
           <div class="performance-content">
             <div

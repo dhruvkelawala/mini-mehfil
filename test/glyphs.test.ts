@@ -11,7 +11,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 // Intentional Unicode ranges include joiners and combining icon selectors.
 const iconGlyph =
   // eslint-disable-next-line no-misleading-character-class
-  /[\u00a9\u00ae\u200d\u203c\u2049\u20e3\u2122\u2139\u2190-\u21ff\u2300-\u23ff\u2460-\u24ff\u25a0-\u27bf\u2b00-\u2bff\u3030\u303d\u3297\u3299\ufe0e\ufe0f\u{1f000}-\u{1faff}\u{e0020}-\u{e007f}]/u;
+  /[\u00a9\u00ae\u00d7\u200d\u203c\u2049\u20e3\u2122\u2139\u2190-\u21ff\u2300-\u23ff\u2460-\u24ff\u25a0-\u27bf\u2b00-\u2bff\u3030\u303d\u3297\u3299\ufe0e\ufe0f\u{1f000}-\u{1faff}\u{e0020}-\u{e007f}]/u;
 
 function trackedTextFiles() {
   const files = new Set(
