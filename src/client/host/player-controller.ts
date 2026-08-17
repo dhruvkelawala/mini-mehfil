@@ -61,7 +61,7 @@ function sourceUrl(source: string): {
     bytes: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,
-    ) as ArrayBuffer,
+    ),
   };
 }
 
