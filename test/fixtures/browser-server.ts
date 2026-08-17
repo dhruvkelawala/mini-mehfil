@@ -12,9 +12,38 @@ import { createServer } from '../../src/server/index.ts';
 
 const portFlag = process.argv.indexOf('--port');
 const port = Number(portFlag >= 0 ? process.argv[portFlag + 1] : 4387);
+const localOrigin = `http://127.0.0.1:${port}`;
 const generatedAudio = '49443304000000000000';
 const sharedSongId = 'AbCdEfGhIjKlMnOp';
 const jobRecords = new Map<string, Record<string, unknown>>();
+const replayAudioPath = process.env.MEHFIL_REPLAY_AUDIO?.trim() ?? '';
+const replayAudio = replayAudioPath ? await readFile(replayAudioPath) : null;
+const replaySong = JSON.parse(
+  await readFile(resolve('test/fixtures/sync-replay-song.json'), 'utf8'),
+) as {
+  durationSeconds: number;
+  lyrics: {
+    title: string;
+    language: string;
+    nativeScriptName: string;
+    isLatinScript: boolean;
+    lyricsNative: string;
+    lyricsRoman: string;
+  };
+  timing: {
+    segments: Array<{ start: number; end: number; label: string }>;
+  };
+};
+const replayState = {
+  generationRequests: 0,
+  timingRequests: 0,
+  shareRequests: 0,
+  timingReleased: false,
+};
+let releaseReplayTiming: (() => void) | undefined;
+const replayTimingHeld = new Promise<void>((resolveTiming) => {
+  releaseReplayTiming = resolveTiming;
+});
 
 const json = (value: unknown, status = 200): Response =>
   new Response(JSON.stringify(value), {
@@ -27,16 +56,35 @@ function requestBody(body: BodyInit | null | undefined): string {
   return body;
 }
 
-function fakeFetchResponse(input: string | URL | Request, init?: RequestInit) {
+async function fakeFetchResponse(
+  input: string | URL | Request,
+  init?: RequestInit,
+) {
   const url = new URL(
     typeof input === 'string' || input instanceof URL ? input : input.url,
   );
   if (url.pathname === '/v1/music_generation') {
+    replayState.generationRequests += 1;
     const body = JSON.parse(requestBody(init?.body)) as { jobId?: string };
     return json({
       jobId: body.jobId,
-      data: { audio: generatedAudio },
+      data: {
+        audio: replayAudio
+          ? `${localOrigin}/__fixture/song.mp3`
+          : generatedAudio,
+      },
       share_ref: body.jobId,
+    });
+  }
+  if (url.pathname === '/v1/music_cover_preprocess') {
+    replayState.timingRequests += 1;
+    if (replayAudio) await replayTimingHeld;
+    return json({
+      base_resp: { status_code: 0, status_msg: 'success' },
+      audio_duration: replaySong.durationSeconds,
+      structure_result: JSON.stringify({
+        segments: replaySong.timing.segments,
+      }),
     });
   }
   if (url.pathname === '/rooms') {
@@ -52,13 +100,16 @@ function fakeFetchResponse(input: string | URL | Request, init?: RequestInit) {
     );
   }
   if (url.pathname === '/shares' && init?.method === 'POST') {
-    return json(
-      {
-        id: sharedSongId,
-        url: `https://rooms.example.test/s/${sharedSongId}`,
-      },
-      201,
-    );
+    if (!replayAudio)
+      return json(
+        {
+          id: sharedSongId,
+          url: `https://rooms.example.test/s/${sharedSongId}`,
+        },
+        201,
+      );
+    replayState.shareRequests += 1;
+    return routeShareRequest(new Request(url, init));
   }
   const job = /^\/generation-jobs\/([A-Za-z0-9_-]{24})(?:\/claim)?$/.exec(
     url.pathname,
@@ -82,6 +133,11 @@ function fakeFetchResponse(input: string | URL | Request, init?: RequestInit) {
     const record = jobRecords.get(jobId);
     return record ? json(record) : json({ error: 'missing' }, 404);
   }
+  if (url.pathname === '/__fixture/song.mp3' && replayAudio) {
+    return new Response(replayAudio, {
+      headers: { 'content-type': 'audio/mpeg' },
+    });
+  }
   if (url.hostname === 'audio.example.test') {
     return new Response(new Uint8Array([73, 68, 51]), {
       headers: { 'content-type': 'audio/mpeg' },
@@ -90,27 +146,35 @@ function fakeFetchResponse(input: string | URL | Request, init?: RequestInit) {
   return json({ error: 'Unexpected fixture request' }, 500);
 }
 
-const fakeFetch: typeof fetch = (input, init) =>
-  Promise.resolve(fakeFetchResponse(input, init));
+const fakeFetch: typeof fetch = (input, init) => fakeFetchResponse(input, init);
 
 const app = createServer({
   apiBase: 'https://api.example.test',
   fetchImpl: fakeFetch,
-  writeLyrics: ({ idea }) => ({
-    title: idea,
-    language: 'Hindi',
-    nativeScriptName: 'Devanagari',
-    isLatinScript: false,
-    lyricsNative: '[Verse]\nबारिश की रात',
-    lyricsRoman: '[Verse]\nBaarish ki raat',
-    prompt: 'Warm acoustic mehfil',
-    languageCode: 'hi',
-    usage: null,
-  }),
-  shareBaseUrl: 'https://rooms.example.test',
-  publicBaseUrl: 'https://public.example.test',
+  writeLyrics: ({ idea }) =>
+    replayAudio
+      ? {
+          ...replaySong.lyrics,
+          prompt: 'Local replay fixture',
+          languageCode: 'en',
+          usage: null,
+        }
+      : {
+          title: idea,
+          language: 'Hindi',
+          nativeScriptName: 'Devanagari',
+          isLatinScript: false,
+          lyricsNative: '[Verse]\nबारिश की रात',
+          lyricsRoman: '[Verse]\nBaarish ki raat',
+          prompt: 'Warm acoustic mehfil',
+          languageCode: 'hi',
+          usage: null,
+        },
+  shareBaseUrl: replayAudio ? localOrigin : 'https://rooms.example.test',
+  publicBaseUrl: replayAudio ? localOrigin : 'https://public.example.test',
   shareSecret: 'fixture-secret',
   staticRoot: resolve('dist/host'),
+  allowLocalHttpAudioSource: Boolean(replayAudio),
 });
 const appHandler = app.listeners('request')[0];
 if (typeof appHandler !== 'function')
@@ -145,18 +209,31 @@ const sharedMetadata = {
   isLatinScript: false,
   lyricsNative: '[Verse]\nઆ સાંજ ધીમે\nમહેકે છે',
   lyricsRoman: '[Verse]\naa saanj dhime\nmaheke chhe',
+  lyricTiming: null,
   createdAt: new Date(0).toISOString(),
 };
+let storedShare: Parameters<ShareStorage['put']>[1] | null = null;
 const shareStorage: ShareStorage = {
-  put: () => Promise.resolve(),
+  put: (_id, share) => {
+    storedShare = share;
+    return Promise.resolve();
+  },
   getMetadata: (id) =>
-    Promise.resolve(id === sharedSongId ? sharedMetadata : null),
+    Promise.resolve(
+      id === sharedSongId ? (storedShare?.metadata ?? sharedMetadata) : null,
+    ),
   getAudio: (id) =>
     Promise.resolve(
       id === sharedSongId
         ? ({
-            body: new Response(Uint8Array.from([73, 68, 51])).body,
-            size: 3,
+            body: new Response(
+              storedShare
+                ? new Uint8Array(storedShare.audio)
+                : (replayAudio ?? Uint8Array.from([73, 68, 51])),
+            ).body,
+            size: storedShare
+              ? storedShare.audio.byteLength
+              : (replayAudio?.byteLength ?? 3),
             etag: 'fixture',
             httpMetadata: { contentType: 'audio/mpeg' },
           } as never)
@@ -166,7 +243,12 @@ const shareStorage: ShareStorage = {
   getJob: () => Promise.resolve(null),
   transitionJob: () => Promise.resolve({ conflict: true }),
 };
-const routeShareRequest = createShareHandler({ storage: shareStorage });
+const routeShareRequest = createShareHandler({
+  storage: shareStorage,
+  idGenerator: () => Promise.resolve(sharedSongId),
+  uploadSecret: 'fixture-secret',
+  publicBaseUrl: localOrigin,
+});
 
 async function sendWebResponse(
   result: Response,
@@ -181,6 +263,41 @@ const handleRequest = async (
   response: http.ServerResponse,
 ) => {
   const pathname = new URL(request.url ?? '/', 'http://fixture').pathname;
+  if (pathname === '/__fixture/replay-state') {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(
+      JSON.stringify({
+        ...replayState,
+        replay: Boolean(replayAudio),
+        audioBytes: replayAudio?.byteLength ?? 0,
+      }),
+    );
+    return;
+  }
+  if (pathname === '/__fixture/release-timing' && request.method === 'POST') {
+    replayState.timingReleased = true;
+    releaseReplayTiming?.();
+    response.writeHead(204).end();
+    return;
+  }
+  if (pathname === '/__fixture/song.mp3' && replayAudio) {
+    const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range ?? '');
+    const start = range ? Number(range[1]) : 0;
+    const requestedEnd = range?.[2] ? Number(range[2]) : replayAudio.length - 1;
+    const end = Math.min(requestedEnd, replayAudio.length - 1);
+    const body = replayAudio.subarray(start, end + 1);
+    response.writeHead(range ? 206 : 200, {
+      'content-type': 'audio/mpeg',
+      'content-length': body.byteLength,
+      'accept-ranges': 'bytes',
+      ...(range
+        ? { 'content-range': `bytes ${start}-${end}/${replayAudio.length}` }
+        : {}),
+    });
+    if (request.method === 'HEAD') response.end();
+    else response.end(body);
+    return;
+  }
   if (pathname.startsWith('/assets/')) {
     try {
       let body: Uint8Array;

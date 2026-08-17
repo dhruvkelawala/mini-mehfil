@@ -9,8 +9,21 @@ import {
   Show,
 } from 'solid-js';
 
+import {
+  activePacedLine,
+  buildLinePacing,
+  effectiveFirstVocalRelease,
+} from '../../lyrics/line-pacing.ts';
+import {
+  activeTimelineEntry,
+  buildSectionTimeline,
+  parseLyricSheet,
+  type LyricTiming,
+} from '../../lyrics/lyric-sync.ts';
 import type { LyricsSheet, SongRequest } from '../../room/protocol.ts';
+import { emitTimingDiagnostic } from '../../timing/timing-analysis.ts';
 import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
+import { LyricLineView, TimedSectionView } from '../lyrics/timed-lyrics.tsx';
 import {
   createGenerationController,
   type GeneratedSong,
@@ -21,6 +34,14 @@ import {
 } from './host-room-controller.ts';
 import { createMediaDiagnostics } from './media-diagnostics.ts';
 import { createPlayerController } from './player-controller.ts';
+import { createTimingAnalysisController } from './timing-analysis-controller.ts';
+import {
+  detectVocalEntry,
+  reconcileVocalAnalysisResult,
+  vocalAnalysisRelease,
+  vocalGateSeconds,
+  type VocalAnalysisResult,
+} from './vocal-onset.ts';
 
 const languages = [
   'auto',
@@ -42,6 +63,7 @@ const formatTime = (seconds: number) =>
   Number.isFinite(seconds)
     ? `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
     : '0:00';
+export { TimedSectionView } from '../lyrics/timed-lyrics.tsx';
 const publicLyrics = (sheet: LyricsSheet): LyricsSheet => ({
   title: sheet.title,
   language: sheet.language,
@@ -52,19 +74,38 @@ const publicLyrics = (sheet: LyricsSheet): LyricsSheet => ({
 });
 const TOKEN_REQUIRED_MESSAGE =
   'Paste your MiniMax token before queueing a recording.';
+const TOKEN_FORMAT_MESSAGE = 'MiniMax tokens start with sk-.';
+const validMiniMaxToken = (value: string) => value.trim().startsWith('sk-');
+
+export function PerformanceTimingCopy(props: {
+  pending: boolean;
+  timed: boolean;
+}) {
+  return (
+    <span class="performance-timing" id="performance-timing">
+      {props.pending
+        ? 'Analyzing MiniMax sections · music is ready'
+        : props.timed
+          ? 'Lines follow MiniMax sections · timing is approximate'
+          : 'Atmospheric reveal · timing is approximate'}
+    </span>
+  );
+}
 
 export function App() {
   const diagnostics = createMediaDiagnostics();
   const player = createPlayerController(diagnostics);
+  const timingAnalysis = createTimingAnalysisController();
   const room = createHostRoomController();
-  const generation = createGenerationController({ player });
+  const generation = createGenerationController({ player, timingAnalysis });
   const [performanceOpen, setPerformanceOpen] = createSignal(false);
-  const [lyricsOpen, setLyricsOpen] = createSignal(false);
-  const [hasRevealed, setHasRevealed] = createSignal(false);
+  const [manualLyricsOpen, setManualLyricsOpen] = createSignal(false);
   const [shareLabel, setShareLabel] = createSignal('Share');
   const [tokenVisible, setTokenVisible] = createSignal(false);
   const [hasToken, setHasToken] = createSignal(false);
   const [roomError, setRoomError] = createSignal('');
+  const [vocalAnalysisResult, setVocalAnalysisResult] =
+    createSignal<VocalAnalysisResult | null>(null);
   const [clock, setClock] = createSignal('--:--');
   const [idea, setIdea] = createSignal('');
   const [vibe, setVibe] = createSignal('');
@@ -76,27 +117,110 @@ export function App() {
   const activeLyrics = createMemo(
     () => room.currentSong()?.lyrics ?? generation.lyrics(),
   );
-  const lyricLines = createMemo(() => {
-    const sheet = activeLyrics();
-    if (!sheet) return [];
-    const roman = sheet.lyricsRoman.split('\n').filter((line) => line.trim());
-    const native = sheet.lyricsNative.split('\n').filter((line) => line.trim());
-    const useNative = !sheet.isLatinScript && native.length > 0;
-    return (useNative ? native : roman).map((primary, index) => {
-      const romanLine = roman[index] ?? '';
-      const cue = /^\[.+\]$/.test(romanLine || primary);
-      return {
-        cue,
-        primary: cue
-          ? (romanLine || primary).replace(/^\[(.+)\]$/, '$1')
-          : primary,
-        secondary: useNative && !cue && romanLine !== primary ? romanLine : '',
-      };
+  const lyricSheet = createMemo(() => parseLyricSheet(activeLyrics()));
+  const lyricLines = createMemo(() => lyricSheet().lines);
+  /**
+   * Non-null only when this recording's own section analysis maps onto the
+   * written sections. Everything below reads the media clock through it — no
+   * timers, no cursors — so seeking backwards is as correct as playing forward.
+   */
+  const sectionTimeline = createMemo(() =>
+    buildSectionTimeline(lyricSheet().sections, player.timing()),
+  );
+  const timingPending = createMemo(
+    () => timingAnalysis.state().status === 'pending',
+  );
+  createEffect(() => {
+    if (!player.ready() || !activeLyrics()) return;
+    const timing = player.timing();
+    const timeline = sectionTimeline();
+    emitTimingDiagnostic({
+      event: 'host-map',
+      surface: 'host',
+      reason: timeline
+        ? 'mapped'
+        : timing
+          ? 'weak-map'
+          : timingPending()
+            ? 'pending'
+            : 'untimed',
+      segmentCount: timing?.segments.length ?? 0,
+      sectionCount:
+        timeline?.filter((entry) => entry.sectionIndex !== null).length ?? 0,
+      ...(timing ? { analyzedDurationSeconds: timing.durationSeconds } : {}),
     });
   });
+  const activeEntry = createMemo(() =>
+    activeTimelineEntry(sectionTimeline(), player.currentTime()),
+  );
+  const firstVocalEntry = createMemo(() =>
+    sectionTimeline()?.find(
+      (entry) =>
+        entry.sectionIndex !== null &&
+        entry.label !== 'inst' &&
+        entry.label !== 'silence',
+    ),
+  );
+  /**
+   * `undefined` means same-origin analysis is pending, `null` means the clean
+   * no-gate path, and a number is the fixed gate/pacing release origin.
+   * Matching result inputs keep a prior song's async result from flashing.
+   */
+  const vocalRelease = createMemo<number | null | undefined>(() => {
+    const bytes = player.analysisBytes();
+    const timeline = sectionTimeline();
+    return vocalAnalysisRelease(
+      vocalAnalysisResult(),
+      player.source(),
+      timeline,
+      Boolean(bytes && timeline && firstVocalEntry()),
+    );
+  });
+  const linePacing = createMemo(() =>
+    buildLinePacing(lyricSheet().sections, sectionTimeline(), vocalRelease()),
+  );
+  const activeLine = createMemo(() =>
+    activePacedLine(linePacing(), player.currentTime()),
+  );
+  const activeSection = createMemo(() => {
+    const index = activeEntry()?.sectionIndex;
+    return typeof index === 'number'
+      ? lyricSheet().sections.find((section) => section.index === index)
+      : undefined;
+  });
+  const restLabel = createMemo(() => {
+    const entry = activeEntry();
+    if (!entry || entry.sectionIndex !== null) return '';
+    if (entry.label === 'inst') return 'Instrumental';
+    return entry.label === 'silence' ? 'Pause' : '';
+  });
+  const firstVocalLinesHeld = createMemo(() => {
+    const active = activeEntry();
+    const first = firstVocalEntry();
+    if (
+      !active ||
+      !first ||
+      active.start !== first.start ||
+      active.end !== first.end ||
+      active.sectionIndex !== first.sectionIndex
+    )
+      return false;
+    const release = vocalRelease();
+    return (
+      release === undefined ||
+      (release !== null && player.currentTime() < release)
+    );
+  });
+  /** A ready recording owns the preview through play, pause, end, and reopen. */
+  const playbackPreviewActive = createMemo(
+    () => player.ready() && Boolean(activeLyrics()),
+  );
+  const manualRevealActive = createMemo(
+    () => manualLyricsOpen() && !playbackPreviewActive(),
+  );
   const shownSpoken = createMemo(() => {
-    if (hasRevealed()) return Number.POSITIVE_INFINITY;
-    if (!player.duration()) return 0;
+    if (manualRevealActive() || !player.duration())
+      return Number.POSITIVE_INFINITY;
     const spoken = lyricLines().filter((line) => !line.cue).length;
     return Math.ceil(
       Math.min(player.currentTime() / (player.duration() * 0.9), 1) * spoken,
@@ -164,16 +288,51 @@ export function App() {
       field.remove();
     }
   };
+  const settleRoomTiming = async (
+    song: GeneratedSong,
+  ): Promise<LyricTiming | null> => {
+    const current = timingAnalysis.state();
+    if (current.status === 'pending')
+      emitTimingDiagnostic({
+        event: 'room-waiting',
+        surface: 'room',
+        reason: 'pending',
+        attempt: current.attempt,
+      });
+    const settled = await song.timingSettled;
+    if (settled.status === 'ready') {
+      emitTimingDiagnostic({
+        event: 'room-ready',
+        surface: 'room',
+        reason: 'ready',
+        segmentCount: settled.timing.segments.length,
+        analyzedDurationSeconds: settled.timing.durationSeconds,
+      });
+      return settled.timing;
+    }
+    emitTimingDiagnostic({
+      event: 'room-terminal-untimed',
+      surface: 'room',
+      reason: settled.reason,
+    });
+    return null;
+  };
   const publishStandalone = async (song: GeneratedSong) => {
     if (!room.details()) return;
     if (!room.authenticated())
       throw new Error(
         'Your recording is ready, but the live room is reconnecting. Try sharing it again once connected.',
       );
+    const roomTiming = settleRoomTiming(song);
     const result = await generation.share(false, song);
+    const lyricTiming = await roomTiming;
     if (
       !result ||
-      !room.publishStandalone(result.url, publicLyrics(song.lyricSheet))
+      !room.publishStandalone(
+        result.url,
+        publicLyrics(song.lyricSheet),
+        lyricTiming,
+      )
     )
       throw new Error(
         'Your recording is ready, but the live room lost its connection.',
@@ -182,15 +341,21 @@ export function App() {
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
     if (!tokenInput) return;
+    const token = tokenInput.value.trim();
+    if (!validMiniMaxToken(token)) {
+      setRoomError(token ? TOKEN_FORMAT_MESSAGE : TOKEN_REQUIRED_MESSAGE);
+      setPerformanceOpen(false);
+      tokenInput.focus();
+      return;
+    }
     setRoomError('');
-    setLyricsOpen(false);
-    setHasRevealed(false);
+    setManualLyricsOpen(false);
     setPerformanceOpen(true);
     setShareLabel('Share');
     try {
       await generation.generate(
         {
-          token: tokenInput.value,
+          token,
           idea: idea(),
           vibe: vibe(),
           language: language(),
@@ -198,7 +363,9 @@ export function App() {
         room.details() ? { onReady: publishStandalone } : {},
       );
     } catch {
-      /* Controller owns visible generation errors. */
+      // The controller owns the message; return to the form so it is visible.
+      setPerformanceOpen(false);
+      tokenInput.focus();
     }
   };
   const share = async () => {
@@ -212,8 +379,9 @@ export function App() {
     }
   };
   const recordRequest = (item: SongRequest) => {
-    if (!hasToken() || !tokenInput?.value.trim()) {
-      setRoomError(TOKEN_REQUIRED_MESSAGE);
+    const token = tokenInput?.value.trim() ?? '';
+    if (!hasToken() || !validMiniMaxToken(token)) {
+      setRoomError(token ? TOKEN_FORMAT_MESSAGE : TOKEN_REQUIRED_MESSAGE);
       tokenInput?.focus();
       return;
     }
@@ -241,13 +409,22 @@ export function App() {
           lyrics: publicLyrics(sheet),
         }),
       onReady: async (song: GeneratedSong) => {
+        const roomTiming = settleRoomTiming(song);
         const result = await generation.share(false, song);
+        const lyricTiming = await roomTiming;
         const match = result
           ? /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(result.url).pathname)
           : null;
         if (!match?.[1])
           throw new Error('The share service returned an invalid link.');
-        if (!room.send({ type: 'song-ready', requestId, shareId: match[1] }))
+        if (
+          !room.send({
+            type: 'song-ready',
+            requestId,
+            shareId: match[1],
+            lyricTiming,
+          })
+        )
           throw new Error('The live room lost its connection.');
       },
       onFailed: () => {
@@ -350,7 +527,6 @@ export function App() {
     }
     await player.toggle();
   };
-  const roomSongKey = () => room.currentSong()?.shareId ?? '';
   createEffect(() => {
     const song = room.currentSong();
     const details = room.details();
@@ -359,9 +535,33 @@ export function App() {
       player.loadRoomSong(song, new URL(details.joinUrl).origin);
     player.syncRoomSong(song);
   });
+  let vocalAnalysisRun = 0;
   createEffect(() => {
-    void roomSongKey();
-    if (player.playing() && activeLyrics()) setLyricsOpen(true);
+    const bytes = player.analysisBytes();
+    const source = player.source();
+    const timeline = sectionTimeline();
+    const first = firstVocalEntry();
+    const eligible = Boolean(bytes && timeline && first);
+    const run = ++vocalAnalysisRun;
+    setVocalAnalysisResult((result) =>
+      reconcileVocalAnalysisResult(result, source, timeline, eligible),
+    );
+    if (!bytes || !timeline || !first) return;
+    void detectVocalEntry(bytes, Math.max(0, first.start - 1), first.end).then(
+      (onset) => {
+        if (run !== vocalAnalysisRun) return;
+        const gate = vocalGateSeconds(timeline, onset);
+        setVocalAnalysisResult({
+          source,
+          timeline,
+          release: effectiveFirstVocalRelease(
+            timeline,
+            gate,
+            player.currentTime(),
+          ),
+        });
+      },
+    );
   });
   createEffect(() => {
     document.body.classList.toggle('performance-open', performanceOpen());
@@ -529,9 +729,13 @@ export function App() {
                 required
                 disabled={generation.generating()}
                 onInput={(event) => {
-                  const ready = Boolean(event.currentTarget.value.trim());
+                  const ready = validMiniMaxToken(event.currentTarget.value);
                   setHasToken(ready);
-                  if (ready && roomError() === TOKEN_REQUIRED_MESSAGE)
+                  if (
+                    ready &&
+                    (roomError() === TOKEN_REQUIRED_MESSAGE ||
+                      roomError() === TOKEN_FORMAT_MESSAGE)
+                  )
                     setRoomError('');
                 }}
               />
@@ -970,76 +1174,121 @@ export function App() {
                 <span>Check generation</span>
               </button>
             </Show>
-            <Show when={activeLyrics()}>
+            <Show when={activeLyrics() && !playbackPreviewActive()}>
               <div class="peek" id="peek">
                 <button
                   type="button"
                   class="peek-toggle"
                   id="peek-toggle"
-                  aria-expanded={lyricsOpen()}
+                  aria-expanded={manualLyricsOpen()}
                   aria-controls="lyric-reveal"
                   onClick={() => {
-                    const opening = !lyricsOpen();
-                    setLyricsOpen(opening);
-                    if (opening) setHasRevealed(true);
+                    setManualLyricsOpen(!manualLyricsOpen());
                   }}
                 >
                   <strong>
-                    {lyricsOpen() ? 'Hide lyrics' : 'Reveal lyrics'}
+                    {manualLyricsOpen() ? 'Hide lyrics' : 'Reveal lyrics'}
                   </strong>
                   <small>
-                    {lyricsOpen()
+                    {manualLyricsOpen()
                       ? 'Too late now.'
                       : "Wanna be surprised? Don't click me."}
                   </small>
                 </button>
               </div>
             </Show>
-            <Show when={activeLyrics() && (lyricsOpen() || player.playing())}>
+            <Show
+              when={
+                activeLyrics() &&
+                (manualRevealActive() || playbackPreviewActive())
+              }
+            >
               <div class="lyric-reveal" id="lyric-reveal">
                 <span class="reveal-language" id="reveal-language">
                   {languageLabel()}
                 </span>
-                <Show when={!hasRevealed()}>
-                  <span class="performance-timing" id="performance-timing">
-                    Atmospheric reveal · timing is approximate
-                  </span>
+                <Show
+                  when={
+                    timingPending() ||
+                    sectionTimeline() ||
+                    !manualRevealActive()
+                  }
+                >
+                  <PerformanceTimingCopy
+                    pending={timingPending()}
+                    timed={Boolean(sectionTimeline())}
+                  />
                 </Show>
                 <p class="reveal-lines" id="reveal-lines">
-                  <For each={lyricLines()}>
-                    {(line, index) => {
-                      const spokenBefore = () =>
-                        lyricLines()
-                          .slice(0, index())
-                          .filter((candidate) => !candidate.cue).length;
-                      const visible = () =>
-                        hasRevealed() ||
-                        (line.cue
-                          ? spokenBefore() ===
-                            lyricLines().filter((candidate) => !candidate.cue)
-                              .length
-                            ? shownSpoken() >= spokenBefore()
-                            : shownSpoken() > spokenBefore()
-                          : shownSpoken() >= spokenBefore() + 1);
-                      return (
-                        <span
-                          class={
-                            line.cue ? 'lyric-line lyric-cue' : 'lyric-line'
-                          }
-                          hidden={!visible()}
-                        >
-                          <Show when={!line.cue} fallback={line.primary}>
-                            <span class="lyric-primary">{line.primary}</span>
-                            <Show when={line.secondary}>
-                              <span class="lyric-secondary">
-                                {line.secondary}
+                  <Show
+                    when={sectionTimeline()}
+                    fallback={
+                      <For each={lyricLines()}>
+                        {(line, index) => {
+                          const spokenBefore = () =>
+                            lyricLines()
+                              .slice(0, index())
+                              .filter((candidate) => !candidate.cue).length;
+                          const visible = () =>
+                            manualRevealActive() ||
+                            (line.cue
+                              ? spokenBefore() ===
+                                lyricLines().filter(
+                                  (candidate) => !candidate.cue,
+                                ).length
+                                ? shownSpoken() >= spokenBefore()
+                                : shownSpoken() > spokenBefore()
+                              : shownSpoken() >= spokenBefore() + 1);
+                          return (
+                            <LyricLineView line={line} hidden={!visible()} />
+                          );
+                        }}
+                      </For>
+                    }
+                  >
+                    <Show
+                      when={manualRevealActive()}
+                      fallback={
+                        <Show
+                          when={activeSection()}
+                          fallback={
+                            <Show when={restLabel()}>
+                              <span class="lyric-line lyric-cue">
+                                {restLabel()}
                               </span>
                             </Show>
-                          </Show>
-                        </span>
-                      );
-                    }}
-                  </For>
+                          }
+                        >
+                          <TimedSectionView
+                            section={activeSection()!}
+                            activeLine={activeLine()}
+                            holdLines={firstVocalLinesHeld()}
+                          />
+                        </Show>
+                      }
+                    >
+                      <For each={lyricSheet().sections}>
+                        {(section) => {
+                          const current = () =>
+                            activeEntry()?.sectionIndex === section.index;
+                          return (
+                            <span
+                              class={
+                                current()
+                                  ? 'lyric-section lyric-section-current'
+                                  : 'lyric-section'
+                              }
+                              aria-current={current() ? 'true' : undefined}
+                            >
+                              <For each={section.lines}>
+                                {(line) => <LyricLineView line={line} />}
+                              </For>
+                            </span>
+                          );
+                        }}
+                      </For>
+                    </Show>
+                  </Show>
                 </p>
               </div>
             </Show>

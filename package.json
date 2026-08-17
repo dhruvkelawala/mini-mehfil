@@ -15,6 +15,7 @@
     "test": "npm run test:unit && npm run test:worker",
     "test:dev": "node scripts/check-dev-topology.ts",
     "test:browser": "playwright test",
+    "test:sync-replay": "node scripts/run-sync-replay.ts",
     "test:unit": "vitest run",
     "test:worker": "vitest run --config vitest.worker.config.ts --configLoader native",
     "build:listener": "vite build --mode listener",

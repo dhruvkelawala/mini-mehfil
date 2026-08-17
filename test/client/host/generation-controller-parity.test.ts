@@ -6,6 +6,11 @@ import {
   type HostLyrics,
 } from '../../../src/client/host/generation-recovery.ts';
 import type { PlayerController } from '../../../src/client/host/player-controller.ts';
+import {
+  createTimingAnalysisController,
+  type TimingAnalysisPort,
+} from '../../../src/client/host/timing-analysis-controller.ts';
+import type { TimingAnalysisOutcome } from '../../../src/timing/timing-analysis.ts';
 
 const SHEET: HostLyrics = {
   title: 'Rain',
@@ -18,6 +23,12 @@ const SHEET: HostLyrics = {
   prompt: 'warm',
 };
 const INPUT = { token: 'secret', idea: 'rain', vibe: '', language: 'auto' };
+const TIMING = {
+  version: 1 as const,
+  mode: 'minimax-section-asr' as const,
+  durationSeconds: 10,
+  segments: [{ start: 0, end: 10, label: 'verse' as const }],
+};
 class MemoryStorage implements Storage {
   readonly values = new Map<string, string>();
   get length() {
@@ -39,7 +50,10 @@ class MemoryStorage implements Storage {
     this.values.set(key, value);
   }
 }
-function player(): PlayerController {
+function player(
+  load = vi.fn(() => Promise.resolve()),
+  applyTiming = vi.fn(() => true),
+): PlayerController {
   return {
     ready: () => false,
     playing: () => false,
@@ -49,9 +63,12 @@ function player(): PlayerController {
     duration: () => 0,
     currentTime: () => 0,
     source: () => '',
+    analysisBytes: () => null,
     shareReference: () => null,
+    timing: () => null,
+    applyTiming,
     bindAudio: vi.fn(),
-    load: vi.fn(() => Promise.resolve()),
+    load,
     loadRoomSong: vi.fn(),
     syncRoomSong: vi.fn(),
     clear: vi.fn(),
@@ -72,7 +89,158 @@ const completeFetch = (input: string) =>
         }),
   );
 
+function requestBody(init?: RequestInit): Record<string, unknown> {
+  if (typeof init?.body !== 'string') return {};
+  const value: unknown = JSON.parse(init.body);
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 describe('typed generation lifecycle parity', () => {
+  test('starts remote playback before analysis settles and upgrades it in place', async () => {
+    let settleAnalysis: ((outcome: TimingAnalysisOutcome) => void) | undefined;
+    const port: TimingAnalysisPort = {
+      analyze: vi.fn(
+        () =>
+          new Promise<TimingAnalysisOutcome>((resolve) => {
+            settleAnalysis = resolve;
+          }),
+      ),
+    };
+    const analysis = createTimingAnalysisController({
+      port,
+      diagnostic: vi.fn(),
+    });
+    const load = vi.fn(() => Promise.resolve());
+    const applyTiming = vi.fn(() => true);
+    const target = player(load, applyTiming);
+    const controller = createGenerationController({
+      player: target,
+      storage: new MemoryStorage(),
+      timingAnalysis: analysis,
+      timingDiagnostic: vi.fn(),
+      fetcher: async (input) =>
+        input === '/api/write-lyrics'
+          ? Response.json(SHEET)
+          : Response.json({
+              data: { audio: 'https://cdn.example/song.mp3' },
+              share_ref: 'reference',
+            }),
+    });
+    const song = await controller.generate(INPUT);
+    expect(song).toBeDefined();
+    expect(load).toHaveBeenCalledOnce();
+    expect(analysis.state()).toEqual({ status: 'pending', attempt: 1 });
+    expect(applyTiming).not.toHaveBeenCalled();
+
+    settleAnalysis?.({ status: 'ready', timing: TIMING });
+    await song?.timingSettled;
+    await Promise.resolve();
+    expect(applyTiming).toHaveBeenCalledWith(
+      'https://cdn.example/song.mp3',
+      TIMING,
+    );
+  });
+
+  test('a share waits for terminal analysis and sends only normalized timing', async () => {
+    let settleAnalysis: ((outcome: TimingAnalysisOutcome) => void) | undefined;
+    const analysis = createTimingAnalysisController({
+      port: {
+        analyze: () =>
+          new Promise<TimingAnalysisOutcome>((resolve) => {
+            settleAnalysis = resolve;
+          }),
+      },
+      diagnostic: vi.fn(),
+    });
+    const requests: Array<{ input: string; body: Record<string, unknown> }> =
+      [];
+    const diagnostic = vi.fn();
+    const controller = createGenerationController({
+      player: player(),
+      storage: new MemoryStorage(),
+      timingAnalysis: analysis,
+      timingDiagnostic: diagnostic,
+      fetcher: async (input, init) => {
+        requests.push({ input, body: requestBody(init) });
+        if (input === '/api/write-lyrics') return Response.json(SHEET);
+        if (input === '/api/generate')
+          return Response.json({
+            data: { audio: 'https://cdn.example/song.mp3' },
+            share_ref: 'reference',
+          });
+        return Response.json({
+          url: 'https://rooms.example/s/AbCdEfGhIjKlMnOp',
+        });
+      },
+    });
+    await controller.generate(INPUT);
+    const sharing = controller.share(false);
+    await Promise.resolve();
+    expect(requests.some((request) => request.input === '/api/share')).toBe(
+      false,
+    );
+
+    settleAnalysis?.({ status: 'ready', timing: TIMING });
+    await expect(sharing).resolves.toEqual({
+      url: 'https://rooms.example/s/AbCdEfGhIjKlMnOp',
+      copied: false,
+    });
+    const share = requests.find((request) => request.input === '/api/share');
+    expect(share?.body.lyricTiming).toEqual(TIMING);
+    expect(JSON.stringify(share?.body)).not.toContain(INPUT.token);
+    expect(diagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'share-waiting' }),
+    );
+    expect(diagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'share-ready' }),
+    );
+  });
+
+  test('a terminal analysis failure shares explicitly untimed', async () => {
+    const analysis = createTimingAnalysisController({
+      port: {
+        analyze: () =>
+          Promise.resolve({
+            status: 'unavailable',
+            reason: 'invalid-timing',
+            retryable: false,
+          }),
+      },
+      diagnostic: vi.fn(),
+    });
+    let sharedBody: Record<string, unknown> | undefined;
+    const diagnostic = vi.fn();
+    const controller = createGenerationController({
+      player: player(),
+      storage: new MemoryStorage(),
+      timingAnalysis: analysis,
+      timingDiagnostic: diagnostic,
+      fetcher: async (input, init) => {
+        if (input === '/api/write-lyrics') return Response.json(SHEET);
+        if (input === '/api/generate')
+          return Response.json({
+            data: { audio: 'https://cdn.example/song.mp3' },
+            share_ref: 'reference',
+          });
+        sharedBody = requestBody(init);
+        return Response.json({
+          url: 'https://rooms.example/s/AbCdEfGhIjKlMnOp',
+        });
+      },
+    });
+    await controller.generate(INPUT);
+    await controller.share(false);
+    expect(sharedBody?.lyricTiming).toBeNull();
+    expect(diagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'share-terminal-untimed',
+        reason: 'invalid-timing',
+      }),
+    );
+  });
+
   test('loading messages keep looping and user-facing copy contains no em dashes', async () => {
     let release: (() => void) | undefined;
     const controller = createGenerationController({
@@ -302,6 +470,70 @@ describe('typed generation lifecycle parity', () => {
     expect(urls).toEqual([
       '/api/generation-status?id=AbCdEfGhIjKlMnOpQrStUvWx',
     ]);
+  });
+
+  test('same-page recovery keeps the token only in memory and starts timing analysis', async () => {
+    const storage = new MemoryStorage();
+    const applyTiming = vi.fn(() => true);
+    const target = player(
+      vi.fn(() => Promise.resolve()),
+      applyTiming,
+    );
+    const analyze = vi.fn(() =>
+      Promise.resolve<TimingAnalysisOutcome>({
+        status: 'ready',
+        timing: TIMING,
+      }),
+    );
+    const analysis = createTimingAnalysisController({
+      port: { analyze },
+      diagnostic: vi.fn(),
+    });
+    let paidCalls = 0;
+    let statusCalls = 0;
+    let persistedDuringRecovery = '';
+    const controller = createGenerationController({
+      player: target,
+      storage,
+      timingAnalysis: analysis,
+      timingDiagnostic: vi.fn(),
+      fetcher: async (input) => {
+        if (input === '/api/write-lyrics') return Response.json(SHEET);
+        if (input === '/api/generate') {
+          paidCalls += 1;
+          return Response.json({ status: 'pending' });
+        }
+        statusCalls += 1;
+        persistedDuringRecovery = storage.getItem(GENERATION_STORAGE_KEY) ?? '';
+        const jobId = new URL(input, 'https://fixture.test').searchParams.get(
+          'id',
+        );
+        return Response.json({
+          jobId,
+          status: 'complete',
+          data: { audio: 'https://cdn.example/song.mp3' },
+          share_ref: 'reference',
+        });
+      },
+    });
+
+    await controller.generate(INPUT);
+    await vi.waitFor(() => expect(analyze).toHaveBeenCalledOnce());
+    expect(analyze).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'https://cdn.example/song.mp3',
+        token: INPUT.token,
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(applyTiming).toHaveBeenCalledWith(
+        'https://cdn.example/song.mp3',
+        TIMING,
+      ),
+    );
+    expect(paidCalls).toBe(1);
+    expect(statusCalls).toBe(1);
+    expect(persistedDuringRecovery).not.toContain(INPUT.token);
   });
 
   test('background, foreground, and pageshow preserve the ordinary recording UI without another paid request', async () => {

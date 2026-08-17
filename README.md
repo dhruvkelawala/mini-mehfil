@@ -55,8 +55,8 @@ The same sharing configuration enables live mehfils. Press **Open this mehfil to
 
 Rooms are transient and host-controlled. The host's player is authoritative: play,
 pause, and seeking are synchronized to listeners, whose room page shows the
-current native-script lyric and romanization as the song advances. The public
-join URL contains only an eight-character room code. The separate host
+same active lyric section and approximately paced current line as the host. The
+public join URL contains only an eight-character room code. The separate host
 credential stays in that browser tab's `sessionStorage`, while the MiniMax key
 continues to travel only between the host browser and local proxy.
 
@@ -64,8 +64,46 @@ continues to travel only between the host browser and local proxy.
 
 - `src/client/host/` — the Solid host surface and typed controllers. The courtyard scene remains a single hand-built SVG.
 - `src/server/` — the typed Node proxy and provider boundary.
+- `src/lyrics/` — platform-independent lyric parsing, section timing, and derived line pacing shared by the host and the Worker.
 - `src/room/` — platform-independent room protocol, state transitions, and transport ports.
 - `src/worker/` — the Cloudflare Worker, room router, and thin `MehfilRoom` Durable Object adapter.
+
+Once Music 3 finishes, the proxy returns the paid recording immediately and
+the host starts playback. The browser then makes a separate request to
+MiniMax's free `music_cover_preprocess` endpoint with the same request-only key
+to learn where the song's sections fall. Each background attempt has a
+three-minute ceiling, with at most two attempts and retries limited to timeout,
+network, provider-busy, 408/429 and 5xx failures. A slow or failed optional
+analysis can therefore never hold the finished song hostage.
+
+While analysis is pending the performance says exactly
+`Analyzing MiniMax sections · music is ready`. When a trusted artifact arrives
+and lines up with the written sections and media duration, the already-playing
+recording upgrades at its current clock without reload, restart or seek. The
+reveal follows those sections while a syllable-weighted display heuristic paces
+the current-line emphasis inside each one. Timed mode says exactly
+`Lines follow MiniMax sections · timing is approximate`: provider truth stops
+at the section boundaries, and nothing here is line, word, or karaoke timing.
+Terminal failures and weak mappings keep the existing Atmospheric reveal.
+
+Save remains immediate. A requested standalone share or live-room publication
+waits for analysis to become ready or terminal while private playback
+continues, then carries either the same normalized immutable timing artifact or
+an explicit untimed result. Host, live listener and standalone shared playback
+derive active sections and lines from that same artifact and media clock; old
+rooms and shares without timing remain compatible.
+
+For inline audio bytes, the host also makes one best-effort, band-limited onset
+check and holds the first section's sung lines until the likely vocal entry.
+That release is also the first section's line-pacing origin; if analysis
+finishes late, pacing starts at the media clock where the hold is released so
+hidden intervals cannot skip the opening lines. Provider section boundaries
+remain unchanged.
+Remote audio URLs and shared pages skip that gate; playback never waits for it.
+Both line pacing and the vocal-entry gate are approximate render-time
+heuristics. Nothing from provider analysis is kept except normalized section
+boundaries; transcripts, trace identifiers, feature identifiers, signed URLs
+and derived pacing never enter the persisted timing artifact.
 
 The project intentionally keeps dependencies focused. `solid-js` is the only
 browser runtime library; Vite, TypeScript, Vitest, Playwright, ESLint, Prettier,
@@ -76,11 +114,35 @@ and Wrangler provide build and verification tooling.
 ```bash
 npm test
 npm run test:browser
+npm run test:sync-replay
 npm run check
 ```
 
 `npm test` runs the typed Vitest and Cloudflare Worker suites. The browser
-command runs the intercepted Chromium flows. `npm run check` is the same
+command runs the deterministic Chromium flows. `npm run check` is the same
 secret-free verification used by CI: formatting, linting, strict types,
 generated binding freshness, unit and Worker tests, both Vite builds, gzip
 budgets, and a Wrangler dry-run.
+
+`npm run test:sync-replay` is the fast, no-cost real-media loop. It discovers
+the fixture named in `test/fixtures/sync-replay-song.json` in `~/Downloads`, or
+accepts an explicit MP3:
+
+```bash
+npm run test:sync-replay -- /absolute/path/to/song.mp3
+```
+
+The browser never intercepts generation or timing responses in this mode. The
+normal Node proxy talks to an in-process MiniMax stub, which serves the local
+MP3 with byte-range support and holds timing until the test explicitly releases
+it. The test then samples the same media clock on the host, live-listener, and
+standalone shared surfaces—including a backward seek—and requires exactly one
+generation, timing, and share request. It clears `MINIMAX_API_TOKEN`, so it
+cannot make a paid call. A combined proof video is written to
+`.claude/artifacts/sync-replay/sync-replay-proof.webm`.
+
+The checked-in sidecar currently verifies transport, late upgrade, seeking,
+diagnostics, and three-surface parity; `audiblyVerified` is deliberately false
+because the downloaded MP3 contains no embedded lyric sheet. Replace its lyric
+text and section timestamps with a human-checked transcription before treating
+the replay as evidence of audible lyric alignment.

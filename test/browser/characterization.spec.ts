@@ -21,10 +21,46 @@ test('host writes, records, and exposes the finished player', async ({
   await expect(page.getByRole('button', { name: 'Play' })).toBeEnabled();
 });
 
+test('an invalid token stays on the composer with a useful validation message', async ({
+  page,
+}) => {
+  let lyricRequests = 0;
+  await page.route('**/api/write-lyrics', async (route) => {
+    lyricRequests += 1;
+    await route.fulfill({
+      status: 401,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        error: 'MiniMax rejected the API token. Check it and try again.',
+      }),
+    });
+  });
+  await page.goto('/');
+  await page.getByLabel(/MiniMax token/).fill('not-a-minimax-token');
+  await page.getByLabel(/What's the song about\?/).fill('Monsoon Song');
+  await page.getByRole('button', { name: 'Start the mehfil' }).click();
+
+  await expect(page.getByText('MiniMax tokens start with sk-.')).toBeVisible();
+  await expect(page.locator('#performance')).toHaveCount(0);
+  await expect(page.getByLabel(/MiniMax token/)).toBeFocused();
+  expect(lyricRequests).toBe(0);
+
+  await page.getByLabel(/MiniMax token/).fill('sk-still-invalid');
+  await page.getByRole('button', { name: 'Start the mehfil' }).click();
+
+  await expect(
+    page.getByText('MiniMax rejected the API token. Check it and try again.'),
+  ).toBeVisible();
+  await expect(page.locator('#performance')).toHaveCount(0);
+  await expect(page.getByLabel(/MiniMax token/)).toBeFocused();
+  expect(lyricRequests).toBe(1);
+});
+
 test('a lost paid response is recovered without a second paid POST', async ({
   page,
 }) => {
   let generatePosts = 0;
+  const timingBodies: Array<Record<string, unknown>> = [];
   await page.route('**/api/generate', async (route) => {
     generatePosts += 1;
     await route.fulfill({
@@ -40,16 +76,40 @@ test('a lost paid response is recovered without a second paid POST', async ({
       body: JSON.stringify({
         jobId,
         status: 'complete',
-        data: { audio: '49443304000000000000' },
+        data: { audio: 'https://audio.example.test/recovered-song.mp3' },
         share_ref: jobId,
       }),
     });
   });
+  await page.route('**/api/analyze-timing', async (route) => {
+    timingBodies.push(
+      route.request().postDataJSON() as Record<string, unknown>,
+    );
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'unavailable',
+        reason: 'invalid-timing',
+        retryable: false,
+      }),
+    });
+  });
+  await page.route('https://audio.example.test/**', (route) =>
+    route.fulfill({ contentType: 'audio/mpeg', body: 'ID3' }),
+  );
   await page.goto('/');
   await fillSong(page);
   await page.getByRole('button', { name: 'Start the mehfil' }).click();
   await expect(page.getByText('Your recording is ready.')).toBeVisible();
   expect(generatePosts).toBe(1);
+  await expect.poll(() => timingBodies.length).toBe(1);
+  expect(timingBodies[0]).toEqual(
+    expect.objectContaining({
+      source: 'https://audio.example.test/recovered-song.mp3',
+      token: 'sk-fixture-secret-token',
+      attempt: 1,
+    }),
+  );
 });
 
 test('playback rejection exposes diagnostics and a recovery action', async ({

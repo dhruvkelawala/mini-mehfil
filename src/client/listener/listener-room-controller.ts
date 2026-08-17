@@ -1,13 +1,22 @@
 import { createSignal, getOwner, onCleanup } from 'solid-js';
 
+import {
+  normalizeLyricTiming,
+  type LyricTiming,
+} from '../../lyrics/lyric-sync.ts';
 import { isRecord, parseLyricsSheet } from '../../room/protocol.ts';
 import type { LyricsSheet, RoomPlayback } from '../../room/protocol.ts';
+import {
+  emitTimingDiagnostic,
+  type TimingDiagnosticSink,
+} from '../../timing/timing-analysis.ts';
 
 export interface ListenerSong {
   shareId: string;
   title: string;
   language: string;
   lyrics: LyricsSheet;
+  lyricTiming?: LyricTiming | null;
   playback: RoomPlayback;
 }
 
@@ -33,6 +42,7 @@ export interface ListenerRoomController {
   currentTime: () => number;
   duration: () => number;
   playing: () => boolean;
+  timing: () => LyricTiming | null;
   bindAudio(element: HTMLAudioElement): void;
   enableAudio(): Promise<void>;
   connect(name: string): void;
@@ -58,11 +68,14 @@ function parseSong(value: unknown): ListenerSong | null {
   ) {
     return null;
   }
+  const lyricTiming = normalizeLyricTiming(value.lyricTiming);
+  if (value.lyricTiming != null && !lyricTiming) return null;
   return {
     shareId: value.shareId,
     title,
     language,
     lyrics,
+    ...(value.lyricTiming === undefined ? {} : { lyricTiming }),
     playback: {
       status: playback.status,
       positionMs: playback.positionMs,
@@ -142,10 +155,12 @@ export function createListenerRoomController({
   roomId,
   socketFactory = (url) => new WebSocket(url),
   storage = sessionStorage,
+  timingDiagnostic = emitTimingDiagnostic,
 }: {
   roomId: string;
   socketFactory?: (url: string) => WebSocket;
   storage?: Storage;
+  timingDiagnostic?: TimingDiagnosticSink;
 }): ListenerRoomController {
   const credentialKey = `mini-mehfil-room:${roomId}`;
   const [status, setStatus] = createSignal('Take a seat in the courtyard.');
@@ -159,9 +174,14 @@ export function createListenerRoomController({
   const [currentTime, setCurrentTime] = createSignal(0);
   const [duration, setDuration] = createSignal(0);
   const [playing, setPlaying] = createSignal(false);
+  const [loadedTiming, setLoadedTiming] = createSignal<LyricTiming | null>(
+    null,
+  );
+  const [timingMatchesMedia, setTimingMatchesMedia] = createSignal(false);
   let socket: WebSocket | null = null;
   let audio: HTMLAudioElement | null = null;
   let lastShareId: string | null = null;
+  let timingRevision = '';
   let playbackRevision: string | null = null;
   let playbackTimer: ReturnType<typeof setTimeout> | undefined;
   let playbackClock: ReturnType<typeof setInterval> | undefined;
@@ -174,6 +194,45 @@ export function createListenerRoomController({
     if (!audio) return;
     setCurrentTime(Number.isFinite(audio.currentTime) ? audio.currentTime : 0);
     setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
+  };
+  const matchTimingToMedia = (mediaDuration: number) => {
+    const timing = loadedTiming();
+    if (!timing || !Number.isFinite(mediaDuration) || mediaDuration <= 0) {
+      setTimingMatchesMedia(false);
+      return;
+    }
+    const tolerance = Math.max(1, mediaDuration * 0.02);
+    const matches =
+      Math.abs(timing.durationSeconds - mediaDuration) <= tolerance;
+    timingDiagnostic({
+      event: 'listener-media-validation',
+      surface: 'listener',
+      reason: matches ? 'duration-match' : 'duration-mismatch',
+      segmentCount: timing.segments.length,
+      analyzedDurationSeconds: timing.durationSeconds,
+      mediaDurationSeconds: mediaDuration,
+    });
+    setTimingMatchesMedia(matches);
+  };
+  const receiveTiming = (song: ListenerSong | null) => {
+    const timing = normalizeLyricTiming(song?.lyricTiming);
+    const revision = song
+      ? `${song.shareId}:${timing?.durationSeconds ?? 0}:${timing?.segments
+          .map((segment) => `${segment.start}:${segment.end}:${segment.label}`)
+          .join(',')}`
+      : '';
+    if (revision === timingRevision) return;
+    timingRevision = revision;
+    setLoadedTiming(timing);
+    setTimingMatchesMedia(false);
+    timingDiagnostic({
+      event: 'listener-artifact-receipt',
+      surface: 'listener',
+      reason: timing ? 'ready' : 'untimed',
+      segmentCount: timing?.segments.length ?? 0,
+      ...(timing ? { analyzedDurationSeconds: timing.durationSeconds } : {}),
+    });
+    matchTimingToMedia(duration());
   };
   const stopPlaybackClock = () => {
     if (playbackClock) clearInterval(playbackClock);
@@ -304,6 +363,7 @@ export function createListenerRoomController({
         }
         setSnapshot(parsed);
         applyPlayback(parsed.currentSong);
+        receiveTiming(parsed.currentSong);
         setJoined(true);
         setStatus(
           parsed.hostPresent
@@ -356,8 +416,12 @@ export function createListenerRoomController({
 
   const bindAudio = (element: HTMLAudioElement) => {
     audio = element;
-    audio.addEventListener('loadedmetadata', syncPlaybackClock);
-    audio.addEventListener('durationchange', syncPlaybackClock);
+    const syncMediaMetadata = () => {
+      syncPlaybackClock();
+      matchTimingToMedia(element.duration);
+    };
+    audio.addEventListener('loadedmetadata', syncMediaMetadata);
+    audio.addEventListener('durationchange', syncMediaMetadata);
     audio.addEventListener('timeupdate', syncPlaybackClock);
     audio.addEventListener('play', () => {
       setPlaybackLabel('Playing with the host');
@@ -374,7 +438,9 @@ export function createListenerRoomController({
       setPlaying(false);
       stopPlaybackClock();
     });
-    applyPlayback(snapshot()?.currentSong ?? null);
+    const song = snapshot()?.currentSong ?? null;
+    applyPlayback(song);
+    receiveTiming(song);
   };
 
   const enableAudio = async () => {
@@ -394,6 +460,7 @@ export function createListenerRoomController({
     currentTime,
     duration,
     playing,
+    timing: () => (timingMatchesMedia() ? loadedTiming() : null),
     bindAudio,
     enableAudio,
     connect,

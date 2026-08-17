@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 
+import type { LyricTiming } from '../../../src/lyrics/lyric-sync.ts';
 import type { LyricsSheet, RoomState } from '../../../src/room/protocol.ts';
 import { projectRoomState } from '../../../src/room/state.ts';
 import {
@@ -69,6 +70,15 @@ const LYRICS: LyricsSheet = {
   lyricsNative: 'बारिश',
   lyricsRoman: 'baarish',
 };
+const TIMING = {
+  version: 1,
+  mode: 'minimax-section-asr',
+  durationSeconds: 20,
+  segments: [
+    { start: 0, end: 10, label: 'verse' },
+    { start: 10, end: 20, label: 'chorus' },
+  ],
+} satisfies LyricTiming;
 const state = (): RoomState => ({
   version: 1,
   roomId: 'ABCDEFGH',
@@ -117,12 +127,14 @@ describe('typed host room parity', () => {
       room.publishStandalone(
         'https://rooms.example/s/AbCdEfGhIjKlMnOp',
         LYRICS,
+        TIMING,
       ),
     ).toBe(true);
     expect(JSON.parse(socket.sent.at(-1) ?? '{}')).toEqual({
       type: 'song-shared',
       shareId: 'AbCdEfGhIjKlMnOp',
       lyrics: LYRICS,
+      lyricTiming: TIMING,
     });
   });
 

@@ -7,6 +7,7 @@ import type {
   TransitionResult,
 } from './protocol.ts';
 import { isRecord } from './protocol.ts';
+import { normalizeLyricTiming } from '../lyrics/lyric-sync.ts';
 
 export const ROOM_LIMITS = Object.freeze({
   listeners: 20,
@@ -363,7 +364,9 @@ export function transitionRoom(
     case 'song-shared': {
       const validShareId = /^[A-Za-z0-9_-]{16}$/.test(event.shareId);
       const lyrics = cleanLyrics(event.lyrics);
-      if (!validShareId || !lyrics || state.currentRecording) {
+      const lyricTiming = normalizeLyricTiming(event.lyricTiming);
+      const invalidTiming = event.lyricTiming != null && !lyricTiming;
+      if (!validShareId || !lyrics || state.currentRecording || invalidTiming) {
         return fail(state, 'invalid-song');
       }
       const next = structuredClone(state);
@@ -374,6 +377,7 @@ export function transitionRoom(
         language: lyrics.language,
         startedAt: event.startedAt,
         lyrics,
+        ...(event.lyricTiming === undefined ? {} : { lyricTiming }),
       };
       next.setlist = next.setlist.filter(
         (song) => song.shareId !== event.shareId,
@@ -393,6 +397,8 @@ export function transitionRoom(
     case 'song-ready': {
       const recording = state.currentRecording;
       const validShareId = /^[A-Za-z0-9_-]{16}$/.test(event.shareId);
+      const lyricTiming = normalizeLyricTiming(event.lyricTiming);
+      const invalidTiming = event.lyricTiming != null && !lyricTiming;
       const existing = state.setlist.find(
         (song) => song.requestId === event.requestId,
       );
@@ -400,7 +406,11 @@ export function transitionRoom(
       if (!recording && existing && existingRequest?.status === 'ready') {
         return ok(structuredClone(state));
       }
-      if (recording?.requestId !== event.requestId || !validShareId) {
+      if (
+        recording?.requestId !== event.requestId ||
+        !validShareId ||
+        invalidTiming
+      ) {
         return fail(state, 'invalid-transition');
       }
       const lyrics = recording.lyrics ?? cleanLyrics(event.lyrics);
@@ -416,6 +426,7 @@ export function transitionRoom(
         language: lyrics.language,
         startedAt: event.startedAt,
         lyrics,
+        ...(event.lyricTiming === undefined ? {} : { lyricTiming }),
       };
       next.setlist = next.setlist.filter(
         (song) => song.requestId !== event.requestId,

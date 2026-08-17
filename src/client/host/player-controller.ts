@@ -1,8 +1,17 @@
 import { createSignal, getOwner, onCleanup } from 'solid-js';
 
+import {
+  normalizeLyricTiming,
+  type LyricTiming,
+} from '../../lyrics/lyric-sync.ts';
 import type { RoomSong } from '../../room/protocol.ts';
+import {
+  emitTimingDiagnostic,
+  type TimingDiagnosticSink,
+} from '../../timing/timing-analysis.ts';
 import type { HostLyrics } from './generation-recovery.ts';
 import type { MediaDiagnostics } from './media-diagnostics.ts';
+import { trustedRemoteAudioSource } from './replay-source.ts';
 
 export interface PlayerController {
   ready: () => boolean;
@@ -13,13 +22,26 @@ export interface PlayerController {
   duration: () => number;
   currentTime: () => number;
   source: () => string;
+  /** Decoded generation payload bytes, present only for the inline-hex path. */
+  analysisBytes: () => ArrayBuffer | null;
   shareReference: () => string | null;
+  /**
+   * Section timing for the loaded recording, or `null` until the media element
+   * has confirmed its own duration agrees with the artifact's.
+   */
+  timing: () => LyricTiming | null;
   bindAudio(element: HTMLAudioElement): void;
   load(
     source: string,
     lyrics: HostLyrics,
     reference?: string | null,
+    timing?: unknown,
   ): Promise<void>;
+  /**
+   * Applies analysis only to the recording that requested it. This never
+   * reloads, seeks, pauses, or starts the media element.
+   */
+  applyTiming(expectedSource: string, timing: unknown): boolean;
   loadRoomSong(song: RoomSong, origin: string): void;
   syncRoomSong(song: RoomSong): void;
   clear(): void;
@@ -30,8 +52,13 @@ export interface PlayerController {
   replay(): Promise<void>;
 }
 
-function sourceUrl(source: string): { url: string; disposable: boolean } {
-  if (/^https:\/\//i.test(source)) return { url: source, disposable: false };
+function sourceUrl(source: string): {
+  url: string;
+  disposable: boolean;
+  bytes: ArrayBuffer | null;
+} {
+  if (trustedRemoteAudioSource(source))
+    return { url: source, disposable: false, bytes: null };
   const hex = source.replace(/^0x/i, '');
   if (!hex || hex.length % 2 || !/^[0-9a-f]+$/i.test(hex))
     throw new Error('The finished recording is unavailable.');
@@ -41,11 +68,16 @@ function sourceUrl(source: string): { url: string; disposable: boolean } {
   return {
     url: URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' })),
     disposable: true,
+    bytes: bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ),
   };
 }
 
 export function createPlayerController(
   diagnostics: MediaDiagnostics,
+  timingDiagnostic: TimingDiagnosticSink = emitTimingDiagnostic,
 ): PlayerController {
   const [ready, setReady] = createSignal(false);
   const [playing, setPlaying] = createSignal(false);
@@ -55,7 +87,14 @@ export function createPlayerController(
   const [duration, setDuration] = createSignal(0);
   const [currentTime, setCurrentTime] = createSignal(0);
   const [source, setSource] = createSignal('');
+  const [analysisBytes, setAnalysisBytes] = createSignal<ArrayBuffer | null>(
+    null,
+  );
   const [shareReference, setShareReference] = createSignal<string | null>(null);
+  const [loadedTiming, setLoadedTiming] = createSignal<LyricTiming | null>(
+    null,
+  );
+  const [timingMatchesMedia, setTimingMatchesMedia] = createSignal(false);
   let audio: HTMLAudioElement | null = null;
   let objectUrl: string | null = null;
   let roomTimer: ReturnType<typeof setTimeout> | null = null;
@@ -86,6 +125,54 @@ export function createPlayerController(
       return false;
     }
   };
+  /**
+   * Section timings describe one specific recording. If the media element
+   * reports a materially different length, the file is not the one that was
+   * analyzed, so the timeline is discarded rather than stretched onto it.
+   */
+  const matchTimingToMedia = (mediaDuration: number) => {
+    const timing = loadedTiming();
+    if (!timing || !Number.isFinite(mediaDuration) || mediaDuration <= 0)
+      return setTimingMatchesMedia(false);
+    const tolerance = Math.max(1, mediaDuration * 0.02);
+    const matches =
+      Math.abs(timing.durationSeconds - mediaDuration) <= tolerance;
+    timingDiagnostic({
+      event: 'host-media-validation',
+      surface: 'host',
+      reason: matches ? 'duration-match' : 'duration-mismatch',
+      segmentCount: timing.segments.length,
+      analyzedDurationSeconds: timing.durationSeconds,
+      mediaDurationSeconds: mediaDuration,
+    });
+    setTimingMatchesMedia(matches);
+  };
+  const applyTiming = (expectedSource: string, value: unknown): boolean => {
+    const timing = normalizeLyricTiming(value);
+    timingDiagnostic({
+      event: 'host-artifact-receipt',
+      surface: 'host',
+      reason: timing ? 'ready' : 'invalid-timing',
+      ...(timing
+        ? {
+            segmentCount: timing.segments.length,
+            analyzedDurationSeconds: timing.durationSeconds,
+          }
+        : {}),
+    });
+    const sourceMatches =
+      Boolean(expectedSource) && source() === expectedSource;
+    timingDiagnostic({
+      event: 'host-source-validation',
+      surface: 'host',
+      reason: sourceMatches ? 'source-match' : 'source-mismatch',
+    });
+    if (!sourceMatches || !timing) return false;
+    setLoadedTiming(timing);
+    setTimingMatchesMedia(false);
+    matchTimingToMedia(duration());
+    return true;
+  };
   const clear = () => {
     releaseObjectUrl();
     if (roomTimer) clearTimeout(roomTimer);
@@ -103,7 +190,10 @@ export function createPlayerController(
     setDuration(0);
     setCurrentTime(0);
     setSource('');
+    setAnalysisBytes(null);
     setShareReference(null);
+    setLoadedTiming(null);
+    setTimingMatchesMedia(false);
     setTitle('Your song will appear here');
     setSubtitle('MiniMax Music 3');
   };
@@ -117,7 +207,10 @@ export function createPlayerController(
     duration,
     currentTime,
     source,
+    analysisBytes,
     shareReference,
+    timing: () => (timingMatchesMedia() ? loadedTiming() : null),
+    applyTiming,
     bindAudio(element) {
       audio = element;
       element.addEventListener('play', () => {
@@ -135,6 +228,7 @@ export function createPlayerController(
       element.addEventListener('loadedmetadata', () => {
         setDuration(Number.isFinite(element.duration) ? element.duration : 0);
         setCurrentTime(element.currentTime);
+        matchTimingToMedia(element.duration);
       });
       element.addEventListener('error', () => {
         diagnostics.recordFailure(
@@ -143,7 +237,7 @@ export function createPlayerController(
         );
       });
     },
-    async load(value, lyrics, reference = null) {
+    async load(value, lyrics, reference = null, timing = null) {
       releaseObjectUrl();
       const resolved = sourceUrl(value);
       objectUrl = resolved.disposable ? resolved.url : null;
@@ -152,21 +246,33 @@ export function createPlayerController(
         audio.load();
       }
       setSource(resolved.url);
+      setAnalysisBytes(resolved.bytes);
       setTitle(lyrics.title || 'Your Mehfil recording');
       setSubtitle('Fresh from MiniMax Music 3');
       setShareReference(reference);
+      setLoadedTiming(null);
+      setTimingMatchesMedia(false);
       setReady(true);
       setEnded(false);
+      if (timing !== undefined && timing !== null)
+        applyTiming(resolved.url, timing);
       await play();
     },
     loadRoomSong(song, origin) {
       releaseObjectUrl();
+      setAnalysisBytes(null);
+      setLoadedTiming(null);
+      setTimingMatchesMedia(false);
       const url = `${origin}/s/${song.shareId}/audio`;
       if (audio && audio.src !== url) {
         audio.src = url;
         audio.load();
       }
+      setDuration(0);
+      setCurrentTime(0);
       setSource(url);
+      if (song.lyricTiming !== undefined && song.lyricTiming !== null)
+        applyTiming(url, song.lyricTiming);
       setTitle(song.title || 'Mehfil recording');
       setSubtitle(song.language || 'MiniMax Music 3');
       setShareReference(null);

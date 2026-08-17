@@ -2,6 +2,10 @@ import { describe, expect, test, vi } from 'vitest';
 
 import { createGenerationController } from '../../../src/client/host/generation-controller.ts';
 import {
+  activePacedLine,
+  buildLinePacing,
+} from '../../../src/lyrics/line-pacing.ts';
+import {
   clearPendingGeneration,
   createJobId,
   GENERATION_STORAGE_KEY,
@@ -10,7 +14,17 @@ import {
   type HostLyrics,
 } from '../../../src/client/host/generation-recovery.ts';
 import { createMediaDiagnostics } from '../../../src/client/host/media-diagnostics.ts';
-import type { PlayerController } from '../../../src/client/host/player-controller.ts';
+import {
+  createPlayerController,
+  type PlayerController,
+} from '../../../src/client/host/player-controller.ts';
+import { trustedRemoteAudioSource } from '../../../src/client/host/replay-source.ts';
+import {
+  activeTimelineEntry,
+  buildSectionTimeline,
+  parseLyricSheet,
+  type LyricTiming,
+} from '../../../src/lyrics/lyric-sync.ts';
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>();
@@ -55,7 +69,10 @@ function fakePlayer(load = vi.fn(() => Promise.resolve())): PlayerController {
     duration: () => 0,
     currentTime: () => 0,
     source: () => '',
+    analysisBytes: () => null,
     shareReference: () => null,
+    timing: () => null,
+    applyTiming: vi.fn(() => true),
     bindAudio: vi.fn(),
     load,
     loadRoomSong: vi.fn(),
@@ -163,5 +180,267 @@ describe('host generation modules', () => {
     expect(diagnostics.available()).toBe(false);
     expect(diagnostics.visible()).toBe(false);
     expect(diagnostics.report()).toBe('');
+  });
+});
+
+class FakeAudio {
+  readonly listeners = new Map<string, () => void>();
+  duration = 0;
+  currentTime = 0;
+  paused = true;
+  src = '';
+  addEventListener(type: string, listener: () => void) {
+    this.listeners.set(type, listener);
+  }
+  removeAttribute() {}
+  load() {}
+  pause() {}
+  play() {
+    this.paused = false;
+    return Promise.resolve();
+  }
+  emit(type: string) {
+    this.listeners.get(type)?.();
+  }
+}
+
+const SECTION_TIMING = {
+  version: 1,
+  mode: 'minimax-section-asr',
+  durationSeconds: 90,
+  segments: [
+    { start: 0, end: 12, label: 'intro' },
+    { start: 12, end: 40, label: 'verse' },
+    { start: 40, end: 52, label: 'inst' },
+    { start: 52, end: 90, label: 'chorus' },
+  ],
+} satisfies LyricTiming;
+
+async function loadedPlayer(timing: unknown, mediaDuration: number) {
+  const audio = new FakeAudio();
+  const player = createPlayerController(createMediaDiagnostics());
+  player.bindAudio(audio as unknown as HTMLAudioElement);
+  await player.load('https://cdn.example/song.mp3', lyrics, null, timing);
+  audio.duration = mediaDuration;
+  audio.emit('loadedmetadata');
+  return { audio, player };
+}
+
+describe('host section timing', () => {
+  test('admits loopback HTTP only in an explicit replay build', () => {
+    expect(
+      trustedRemoteAudioSource('http://127.0.0.1:4387/__fixture/song.mp3'),
+    ).toBe(false);
+    vi.stubGlobal('__MEHFIL_REPLAY__', true);
+    try {
+      expect(
+        trustedRemoteAudioSource('http://127.0.0.1:4387/__fixture/song.mp3'),
+      ).toBe(true);
+      expect(trustedRemoteAudioSource('http://example.com/song.mp3')).toBe(
+        false,
+      );
+      expect(trustedRemoteAudioSource('https://cdn.example/song.mp3')).toBe(
+        true,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('applies matching late timing without restarting, seeking, or mutating it', async () => {
+    const audio = new FakeAudio();
+    const diagnostics = vi.fn();
+    const player = createPlayerController(
+      createMediaDiagnostics(),
+      diagnostics,
+    );
+    player.bindAudio(audio as unknown as HTMLAudioElement);
+    const load = vi.spyOn(audio, 'load');
+    const play = vi.spyOn(audio, 'play');
+    await player.load('https://cdn.example/song.mp3', lyrics);
+    audio.duration = 90;
+    audio.currentTime = 37;
+    audio.emit('loadedmetadata');
+    const loadsBeforeAnalysis = load.mock.calls.length;
+    const playsBeforeAnalysis = play.mock.calls.length;
+
+    expect(
+      player.applyTiming('https://cdn.example/song.mp3', SECTION_TIMING),
+    ).toBe(true);
+    expect(player.timing()).toEqual(SECTION_TIMING);
+    expect(player.timing()).not.toBe(SECTION_TIMING);
+    expect(audio.currentTime).toBe(37);
+    expect(load).toHaveBeenCalledTimes(loadsBeforeAnalysis);
+    expect(play).toHaveBeenCalledTimes(playsBeforeAnalysis);
+    expect(SECTION_TIMING.segments[0]).toEqual({
+      start: 0,
+      end: 12,
+      label: 'intro',
+    });
+    expect(diagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'host-media-validation',
+        reason: 'duration-match',
+      }),
+    );
+  });
+
+  test('rejects late timing for stale sources and mismatched durations', async () => {
+    const { audio, player } = await loadedPlayer(undefined, 90);
+    audio.currentTime = 24;
+    expect(
+      player.applyTiming('https://cdn.example/stale.mp3', SECTION_TIMING),
+    ).toBe(false);
+    expect(player.timing()).toBeNull();
+    expect(audio.currentTime).toBe(24);
+
+    expect(
+      player.applyTiming('https://cdn.example/song.mp3', {
+        ...SECTION_TIMING,
+        durationSeconds: 60,
+        segments: [{ start: 0, end: 60, label: 'verse' }],
+      }),
+    ).toBe(true);
+    expect(player.timing()).toBeNull();
+    expect(audio.currentTime).toBe(24);
+  });
+
+  test('activates timed mode only when the media matches the analyzed length', async () => {
+    const cases: Array<[string, number, boolean]> = [
+      ['an exact match', 90, true],
+      ['drift inside the one second floor', 90.9, true],
+      ['drift inside two percent of a long track', 91.8, true],
+      ['drift past the two percent ceiling', 93, false],
+      ['a materially shorter file', 60, false],
+      ['a media element with no duration yet', Number.NaN, false],
+    ];
+    for (const [name, mediaDuration, expected] of cases) {
+      const { player } = await loadedPlayer(SECTION_TIMING, mediaDuration);
+      expect(Boolean(player.timing()), name).toBe(expected);
+    }
+  });
+
+  test('falls back to no timing for absent or out-of-contract artifacts', async () => {
+    for (const timing of [
+      undefined,
+      null,
+      { version: 2, mode: 'minimax-section-asr', durationSeconds: 90 },
+      { ...SECTION_TIMING, mode: 'guesswork' },
+    ]) {
+      const { player } = await loadedPlayer(timing, 90);
+      expect(player.timing()).toBeNull();
+      expect(buildSectionTimeline([], player.timing())).toBeNull();
+    }
+  });
+
+  test('selects the section the media clock is inside, forwards and backwards', async () => {
+    const { player } = await loadedPlayer(SECTION_TIMING, 90);
+    const sheet = parseLyricSheet({
+      isLatinScript: true,
+      lyricsNative: '',
+      lyricsRoman:
+        '[Intro]\nOoh\n[Verse]\nRain on the window\n[Inst]\n—\n[Chorus]\nSing it back',
+    });
+    const timeline = buildSectionTimeline(sheet.sections, player.timing());
+    const sectionAt = (time: number) =>
+      activeTimelineEntry(timeline, time)?.sectionIndex;
+
+    expect(sectionAt(0)).toBe(0);
+    expect(sectionAt(11.999)).toBe(0);
+    expect(sectionAt(12)).toBe(1);
+    expect(sectionAt(45)).toBe(2);
+    expect(sectionAt(52)).toBe(3);
+    expect(sectionAt(89.999)).toBe(3);
+    // A backward seek is a fresh lookup, never a rewound cursor.
+    expect(sectionAt(5)).toBe(0);
+    // Past the end of the analyzed audio nothing is active, so no stale
+    // section can linger on screen.
+    expect(activeTimelineEntry(timeline, 90)).toBeNull();
+  });
+
+  test('activates derived line pacing only with a validated section timeline', async () => {
+    const { player } = await loadedPlayer(SECTION_TIMING, 90);
+    const sheet = parseLyricSheet({
+      isLatinScript: true,
+      lyricsNative: '',
+      lyricsRoman:
+        '[Intro]\nSoftly now\n[Verse]\nbanana papaya\nsoft rain\n[Inst]\n—\n[Chorus]\nSing it back',
+    });
+    const timeline = buildSectionTimeline(sheet.sections, player.timing());
+    const pacing = buildLinePacing(sheet.sections, timeline);
+    expect(activePacedLine(pacing, 19)?.sectionIndex).toBe(1);
+    expect(buildLinePacing(sheet.sections, null)).toEqual([]);
+  });
+
+  test('exposes analysis bytes only for inline-hex audio and skips URL sources', async () => {
+    const audio = new FakeAudio();
+    const player = createPlayerController(createMediaDiagnostics());
+    player.bindAudio(audio as unknown as HTMLAudioElement);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    try {
+      await player.load('49443304', lyrics, null, SECTION_TIMING);
+      expect(
+        new Uint8Array(player.analysisBytes() ?? new ArrayBuffer(0)),
+      ).toEqual(new Uint8Array([73, 68, 51, 4]));
+
+      await player.load(
+        'https://cdn.example/song.mp3',
+        lyrics,
+        null,
+        SECTION_TIMING,
+      );
+      expect(player.analysisBytes()).toBeNull();
+
+      vi.stubGlobal('__MEHFIL_REPLAY__', true);
+      await player.load(
+        'http://127.0.0.1:4387/__fixture/song.mp3',
+        lyrics,
+        null,
+        SECTION_TIMING,
+      );
+      expect(audio.src).toBe('http://127.0.0.1:4387/__fixture/song.mp3');
+      expect(player.analysisBytes()).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test('drops timing when a different recording is loaded or the player clears', async () => {
+    const { audio, player } = await loadedPlayer(SECTION_TIMING, 90);
+    expect(player.timing()).not.toBeNull();
+
+    player.clear();
+    expect(player.timing()).toBeNull();
+
+    await player.load('https://cdn.example/other.mp3', lyrics, null, undefined);
+    audio.duration = 90;
+    audio.emit('loadedmetadata');
+    expect(player.timing()).toBeNull();
+  });
+
+  test('retains normalized timing when the host loads a room song', () => {
+    const audio = new FakeAudio();
+    const player = createPlayerController(createMediaDiagnostics(), vi.fn());
+    player.bindAudio(audio as unknown as HTMLAudioElement);
+    player.loadRoomSong(
+      {
+        requestId: null,
+        shareId: 'AbCdEfGhIjKlMnOp',
+        title: 'Rain',
+        language: 'Hindi',
+        startedAt: 1,
+        lyrics,
+        lyricTiming: SECTION_TIMING,
+        playback: { status: 'paused', positionMs: 0, changedAt: 1 },
+      },
+      'https://rooms.example',
+    );
+    audio.duration = 90;
+    audio.emit('loadedmetadata');
+    expect(player.timing()).toEqual(SECTION_TIMING);
+    expect(player.analysisBytes()).toBeNull();
   });
 });

@@ -1,0 +1,23 @@
+{
+  "audioBasename": "music_prod_tts-20260814212034-QGntBxVfiuRkMKpv.mp3",
+  "durationSeconds": 152.949841,
+  "lyrics": {
+    "title": "Local replay fixture",
+    "language": "English",
+    "nativeScriptName": "Latin",
+    "isLatinScript": true,
+    "lyricsNative": "[Verse]\nReplay verse one\nReplay verse two\n[Chorus]\nReplay chorus one\nReplay chorus two\n[Outro]\nReplay outro",
+    "lyricsRoman": "[Verse]\nReplay verse one\nReplay verse two\n[Chorus]\nReplay chorus one\nReplay chorus two\n[Outro]\nReplay outro"
+  },
+  "timing": {
+    "version": 1,
+    "mode": "minimax-section-asr",
+    "durationSeconds": 152.949841,
+    "segments": [
+      { "start": 0, "end": 70, "label": "verse" },
+      { "start": 70, "end": 130, "label": "chorus" },
+      { "start": 130, "end": 152.949841, "label": "outro" }
+    ]
+  },
+  "audiblyVerified": false
+}

@@ -1,4 +1,8 @@
 import { isRecord } from './primitives.ts';
+import {
+  normalizeLyricTiming,
+  type LyricTiming,
+} from '../lyrics/lyric-sync.ts';
 
 export { isRecord } from './primitives.ts';
 
@@ -82,6 +86,7 @@ export interface RoomSong {
   language: string;
   startedAt: number;
   lyrics: LyricsSheet;
+  lyricTiming?: LyricTiming | null;
   playback: RoomPlayback;
 }
 
@@ -92,6 +97,7 @@ export interface SetlistSong {
   language: string;
   startedAt: number;
   lyrics: LyricsSheet | null;
+  lyricTiming?: LyricTiming | null;
 }
 
 export interface CurrentRecording {
@@ -177,12 +183,14 @@ export type RoomEvent =
       lyrics?: unknown;
       title?: string;
       language?: string;
+      lyricTiming?: unknown;
     })
   | (EventBase & {
       type: 'song-shared';
       shareId: string;
       lyrics: unknown;
       startedAt: number;
+      lyricTiming?: unknown;
     })
   | (EventBase & { type: 'song-selected'; shareId: string })
   | (EventBase & {
@@ -248,8 +256,18 @@ export type ClientMessage =
   | { type: 'recording-started'; requestId: string; coordinatorId: string }
   | { type: 'lyrics-ready'; requestId: string; lyrics: unknown }
   | { type: 'recording-failed'; requestId: string }
-  | { type: 'song-ready'; requestId: string; shareId: string }
-  | { type: 'song-shared'; shareId: string; lyrics: unknown }
+  | {
+      type: 'song-ready';
+      requestId: string;
+      shareId: string;
+      lyricTiming?: LyricTiming | null;
+    }
+  | {
+      type: 'song-shared';
+      shareId: string;
+      lyrics: unknown;
+      lyricTiming?: LyricTiming | null;
+    }
   | { type: 'song-selected'; shareId: string }
   | {
       type: 'playback-updated';
@@ -291,6 +309,15 @@ function isRequestStatus(value: string): value is RequestStatus {
     value === 'declined' ||
     value === 'ready'
   );
+}
+
+function optionalLyricTiming(
+  value: unknown,
+): { lyricTiming?: LyricTiming | null } | null {
+  if (value === undefined) return {};
+  if (value === null) return { lyricTiming: null };
+  const timing = normalizeLyricTiming(value);
+  return timing ? { lyricTiming: timing } : null;
 }
 
 export function parseClientMessage(value: unknown): ClientMessage | null {
@@ -340,18 +367,34 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
         ? { type: value.type, requestId: value.requestId, lyrics: value.lyrics }
         : null;
     case 'song-ready':
-      return typeof value.requestId === 'string' &&
-        typeof value.shareId === 'string'
+      if (
+        typeof value.requestId !== 'string' ||
+        typeof value.shareId !== 'string'
+      )
+        return null;
+      {
+        const timing = optionalLyricTiming(value.lyricTiming);
+        return timing
+          ? {
+              type: value.type,
+              requestId: value.requestId,
+              shareId: value.shareId,
+              ...timing,
+            }
+          : null;
+      }
+    case 'song-shared': {
+      if (typeof value.shareId !== 'string') return null;
+      const timing = optionalLyricTiming(value.lyricTiming);
+      return timing
         ? {
             type: value.type,
-            requestId: value.requestId,
             shareId: value.shareId,
+            lyrics: value.lyrics,
+            ...timing,
           }
         : null;
-    case 'song-shared':
-      return typeof value.shareId === 'string'
-        ? { type: value.type, shareId: value.shareId, lyrics: value.lyrics }
-        : null;
+    }
     case 'song-selected':
       return typeof value.shareId === 'string'
         ? { type: value.type, shareId: value.shareId }
@@ -473,6 +516,8 @@ export function parseRoomState(value: unknown): RoomState | null {
       typeof item.requestId !== 'string'
     )
       return null;
+    const timing = optionalLyricTiming(item.lyricTiming);
+    if (!timing) return null;
     return {
       requestId: typeof item.requestId === 'string' ? item.requestId : null,
       shareId: item.shareId,
@@ -480,6 +525,7 @@ export function parseRoomState(value: unknown): RoomState | null {
       language: item.language,
       startedAt: item.startedAt,
       lyrics,
+      ...timing,
     };
   };
   const setlist: SetlistSong[] = [];

@@ -1,6 +1,11 @@
 import { createSignal, getOwner, onCleanup } from 'solid-js';
 
+import { normalizeLyricTiming } from '../../lyrics/lyric-sync.ts';
 import { isRecord, parseLyricsSheet } from '../../room/protocol.ts';
+import {
+  emitTimingDiagnostic,
+  type TimingDiagnosticSink,
+} from '../../timing/timing-analysis.ts';
 import {
   createRecoveryCoordinator,
   type GenerationContext,
@@ -9,6 +14,13 @@ import {
   type StatusResponse,
 } from './generation-recovery.ts';
 import type { PlayerController } from './player-controller.ts';
+import {
+  createHttpTimingAnalysisPort,
+  createTimingAnalysisController,
+  type SettledTimingState,
+  type TimingAnalysisController,
+} from './timing-analysis-controller.ts';
+import { trustedRemoteAudioSource } from './replay-source.ts';
 
 const WRITING_LINES = [
   'Listening to your idea…',
@@ -35,6 +47,8 @@ export interface GeneratedSong {
   shareReference: string | null;
   requestRun: number;
   context: GenerationContext;
+  source: string;
+  timingSettled: Promise<SettledTimingState>;
 }
 export interface ShareResult {
   url: string;
@@ -120,13 +134,23 @@ export function createGenerationController({
   now = Date.now,
   visible = () =>
     typeof document === 'undefined' || document.visibilityState === 'visible',
+  timingAnalysis,
+  timingDiagnostic = emitTimingDiagnostic,
 }: {
   player: PlayerController;
   fetcher?: GenerationFetch;
   storage?: Storage;
   now?: () => number;
   visible?: () => boolean;
+  timingAnalysis?: TimingAnalysisController;
+  timingDiagnostic?: TimingDiagnosticSink;
 }): GenerationController {
+  const analysis =
+    timingAnalysis ??
+    createTimingAnalysisController({
+      port: createHttpTimingAnalysisPort(fetcher),
+      diagnostic: timingDiagnostic,
+    });
   const [status, setStatus] = createSignal('');
   const [statusWorking, setStatusWorking] = createSignal(false);
   const [generating, setGenerating] = createSignal(false);
@@ -140,8 +164,10 @@ export function createGenerationController({
   let generationRequestInFlight = false;
   let lifecycleBackgroundVersion = 0;
   let activeHooks: GenerationHooks = {};
+  let latestSong: GeneratedSong | null = null;
   let waitingTimer: ReturnType<typeof setInterval> | null = null;
   const foregroundWaiters: Array<() => void> = [];
+  const analysisTokens = new Map<string, string>();
 
   const setBusy = (lines: readonly string[]) => {
     if (waitingTimer) clearInterval(waitingTimer);
@@ -158,6 +184,8 @@ export function createGenerationController({
     onCleanup(() => {
       if (waitingTimer) clearInterval(waitingTimer);
       recovery.cancel();
+      analysis.cancel();
+      analysisTokens.clear();
     });
 
   const requestJson = async (
@@ -192,12 +220,16 @@ export function createGenerationController({
   const finalize = async (
     result: Record<string, unknown>,
     pending: PendingGeneration & { run: number },
-  ): Promise<boolean> => {
+  ): Promise<GeneratedSong | null> => {
     if (
       pending.run !== run ||
       (result.jobId !== undefined && result.jobId !== pending.jobId)
-    )
-      return false;
+    ) {
+      analysisTokens.delete(pending.jobId);
+      return null;
+    }
+    const analysisToken = analysisTokens.get(pending.jobId);
+    analysisTokens.delete(pending.jobId);
     const background = pending.context?.kind === 'room-recording';
     const source = audioSource(result);
     if (!source) {
@@ -206,7 +238,7 @@ export function createGenerationController({
       );
       fail(error.message, !background, background);
       activeHooks.onFailed?.(error, pending.run);
-      return false;
+      return null;
     }
     if (!background) setLyrics(pending.lyricSheet);
     const reference =
@@ -216,21 +248,49 @@ export function createGenerationController({
       setShareUrl(null);
     }
     setCheckGenerationVisible(false);
-    if (!background) await player.load(source, pending.lyricSheet, reference);
-    if (!background) recovery.clear();
+    if (!background) {
+      await player.load(
+        source,
+        pending.lyricSheet,
+        reference,
+        result.lyric_timing,
+      );
+      recovery.clear();
+    }
+    let timingSettled: Promise<SettledTimingState>;
+    if (analysisToken && trustedRemoteAudioSource(source)) {
+      void analysis.analyze({ source, token: analysisToken });
+      timingSettled = analysis.settled();
+      if (!background) {
+        void timingSettled.then((settled) => {
+          if (settled.status === 'ready')
+            player.applyTiming(source, settled.timing);
+        });
+      }
+    } else {
+      const legacyTiming = normalizeLyricTiming(result.lyric_timing);
+      timingSettled = Promise.resolve(
+        legacyTiming
+          ? { status: 'ready', timing: legacyTiming }
+          : { status: 'unavailable', reason: 'unsupported-source' },
+      );
+    }
     setGenerating(false);
     setBusy([]);
     setStatusWorking(true);
     setStatus('Your recording is ready.');
     if (!background) setPerformanceAvailable(true);
-    const song = {
+    const song: GeneratedSong = {
       lyricSheet: pending.lyricSheet,
       shareReference: reference,
       requestRun: run,
       context: pending.context ?? null,
+      source,
+      timingSettled,
     };
+    if (!background) latestSong = song;
     await activeHooks.onReady?.(song);
-    return true;
+    return song;
   };
 
   const recovery = createRecoveryCoordinator({
@@ -263,6 +323,7 @@ export function createGenerationController({
     },
     onFailed: (value, pending) => {
       if (pending.run !== run) return;
+      analysisTokens.delete(pending.jobId);
       const error = new Error(
         typeof value.error === 'string' ? value.error : 'Generation failed.',
       );
@@ -272,6 +333,7 @@ export function createGenerationController({
     },
     onExpired: (value, pending) => {
       if (pending.run !== run) return;
+      analysisTokens.delete(pending.jobId);
       const error = new Error(
         typeof value.error === 'string'
           ? value.error
@@ -395,6 +457,8 @@ export function createGenerationController({
         return undefined;
       recovery.cancel();
       recovery.clear();
+      analysis.cancel();
+      analysisTokens.clear();
       if (!background) player.clear();
       run += 1;
       const requestRun = run;
@@ -403,6 +467,7 @@ export function createGenerationController({
         setLyrics(null);
         setShareReference(null);
         setShareUrl(null);
+        latestSong = null;
         setPerformanceAvailable(true);
       }
       setGenerating(true);
@@ -426,6 +491,7 @@ export function createGenerationController({
           ...recovery.save({ jobId, lyricSheet: sheet, context }),
           run: requestRun,
         };
+        analysisTokens.set(jobId, input.token);
         generationRequestInFlight = true;
         let result: Record<string, unknown>;
         try {
@@ -444,22 +510,15 @@ export function createGenerationController({
           return undefined;
         }
         stage = 'load-song';
-        const completed = await finalize(
-          {
-            ...result,
-            jobId: typeof result.jobId === 'string' ? result.jobId : jobId,
-          },
-          pending,
+        return (
+          (await finalize(
+            {
+              ...result,
+              jobId: typeof result.jobId === 'string' ? result.jobId : jobId,
+            },
+            pending,
+          )) ?? undefined
         );
-        return completed
-          ? {
-              lyricSheet: sheet,
-              shareReference:
-                typeof result.share_ref === 'string' ? result.share_ref : null,
-              requestRun,
-              context,
-            }
-          : undefined;
       } catch (value) {
         const error =
           value instanceof Error ? value : new Error('Generation failed.');
@@ -471,7 +530,10 @@ export function createGenerationController({
           resumePending('generate-request-rejected', hooks, pending);
           return undefined;
         }
-        if (pending && !background) recovery.clear();
+        if (pending) {
+          analysisTokens.delete(pending.jobId);
+          if (!background) recovery.clear();
+        }
         setStatusWorking(false);
         setStatus(error.message);
         if (!background) setPerformanceAvailable(false);
@@ -485,10 +547,41 @@ export function createGenerationController({
       }
     },
     async share(copy = true, song) {
-      const reference = song?.shareReference ?? shareReference();
-      const sheet = song?.lyricSheet ?? lyrics();
-      const requestRun = song?.requestRun ?? run;
+      const selectedSong = song ?? latestSong;
+      const reference = selectedSong?.shareReference ?? shareReference();
+      const sheet = selectedSong?.lyricSheet ?? lyrics();
+      const requestRun = selectedSong?.requestRun ?? run;
       if (!reference || !sheet) return undefined;
+      const pendingTiming = selectedSong?.timingSettled;
+      let lyricTiming = null;
+      if (pendingTiming) {
+        const current = analysis.state();
+        if (current.status === 'pending')
+          timingDiagnostic({
+            event: 'share-waiting',
+            surface: 'share',
+            reason: 'pending',
+            attempt: current.attempt,
+          });
+        const settled = await pendingTiming;
+        if (requestRun !== run) return undefined;
+        if (settled.status === 'ready') {
+          lyricTiming = settled.timing;
+          timingDiagnostic({
+            event: 'share-ready',
+            surface: 'share',
+            reason: 'ready',
+            segmentCount: settled.timing.segments.length,
+            analyzedDurationSeconds: settled.timing.durationSeconds,
+          });
+        } else {
+          timingDiagnostic({
+            event: 'share-terminal-untimed',
+            surface: 'share',
+            reason: settled.reason,
+          });
+        }
+      }
       let url = song ? null : shareUrl();
       if (!url) {
         const result = await requestJson('/api/share', {
@@ -499,6 +592,7 @@ export function createGenerationController({
           isLatinScript: sheet.isLatinScript,
           lyricsNative: sheet.lyricsNative,
           lyricsRoman: sheet.lyricsRoman,
+          lyricTiming,
         });
         if (requestRun !== run || (!song && reference !== shareReference()))
           return undefined;

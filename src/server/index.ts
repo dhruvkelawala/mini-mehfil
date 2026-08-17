@@ -4,9 +4,16 @@ import path from 'node:path';
 import { Buffer } from 'node:buffer';
 
 import { isDirectEntry, parseTcpPort } from '../config/runtime.ts';
+import { normalizeLyricTiming } from '../lyrics/lyric-sync.ts';
 import { isRoomId } from '../room/primitives.ts';
 import { isRecord } from '../room/protocol.ts';
 import type { LyricsResult, WriteLyricsOptions } from './lyricist.ts';
+import { analyzeMiniMaxTiming } from './timing-analysis.ts';
+import {
+  emitTimingDiagnostic,
+  type TimingAnalysisOutcome,
+  type TimingDiagnosticSink,
+} from '../timing/timing-analysis.ts';
 
 const DEFAULT_STATIC_ROOT = path.resolve(process.cwd(), 'dist/host');
 const MAX_BODY_BYTES = 64 * 1024;
@@ -14,6 +21,7 @@ const MAX_SHARE_AUDIO_BYTES = 10 * 1024 * 1024;
 const JOB_ID_PATTERN = /^[A-Za-z0-9_-]{24}$/;
 const RECOVERY_TIMEOUT_MS = 15 * 1000;
 const GENERATION_TIMEOUT_MS = 4 * 60 * 1000;
+export const ANALYSIS_TIMEOUT_MS = 180 * 1000;
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -37,8 +45,12 @@ export interface ServerOptions {
   shareSecret?: string;
   vercelProjectProductionUrl?: string;
   generationTimeoutMs?: number;
+  analysisTimeoutMs?: number;
+  timingDiagnostic?: TimingDiagnosticSink;
   roomTimeoutMs?: number;
   staticRoot?: string;
+  /** Test-only seam for a loopback replay provider. Never enabled from env. */
+  allowLocalHttpAudioSource?: boolean;
 }
 
 export type ServerFetch = (
@@ -102,7 +114,10 @@ function readJson(
   });
 }
 
-function audioSource(result: JsonRecord): string | null {
+function audioSource(
+  result: JsonRecord,
+  allowLocalHttpAudioSource = false,
+): string | null {
   const data = isRecord(result.data) ? result.data : {};
   const audio = isRecord(result.audio) ? result.audio : {};
   const source = data.audio || audio.url || result.audio;
@@ -115,7 +130,13 @@ function audioSource(result: JsonRecord): string | null {
     return source;
   try {
     const url = new URL(source);
-    return url.protocol === 'https:' && !url.username && !url.password
+    const loopbackHttp =
+      allowLocalHttpAudioSource &&
+      url.protocol === 'http:' &&
+      (url.hostname === '127.0.0.1' || url.hostname === 'localhost');
+    return (url.protocol === 'https:' || loopbackHttp) &&
+      !url.username &&
+      !url.password
       ? source
       : null;
   } catch {
@@ -155,8 +176,22 @@ async function readLimitedBody(
   return Buffer.concat(chunks, size);
 }
 
-function decodeAudioSource(source: string): Buffer | null {
-  if (/^https:\/\//i.test(source)) return null;
+function decodeAudioSource(
+  source: string,
+  allowLocalHttpAudioSource = false,
+): Buffer | null {
+  try {
+    const url = new URL(source);
+    if (
+      url.protocol === 'https:' ||
+      (allowLocalHttpAudioSource &&
+        url.protocol === 'http:' &&
+        (url.hostname === '127.0.0.1' || url.hostname === 'localhost'))
+    )
+      return null;
+  } catch {
+    // Inline-hex decoding follows.
+  }
   const hex = source.replace(/^0x/i, '');
   if (!hex || hex.length % 2 || !/^[0-9a-f]+$/i.test(hex))
     throw Object.assign(new Error('The finished recording is unavailable.'), {
@@ -201,6 +236,8 @@ function completedGeneration(record: JsonRecord): JsonRecord {
     share_ref: record.jobId,
   };
   if (record.traceId) result.trace_id = record.traceId;
+  const timing = normalizeLyricTiming(record.lyricTiming);
+  if (timing) result.lyric_timing = timing;
   return result;
 }
 
@@ -219,6 +256,9 @@ function publicFailure(message: unknown, code = 'GENERATION_FAILED') {
     safe = 'Generation failed while contacting MiniMax.';
   return { code, message: safe };
 }
+
+const MINIMAX_TOKEN_FORMAT_ERROR = 'MiniMax tokens start with sk-.';
+const validMiniMaxToken = (token: string) => token.startsWith('sk-');
 
 function staticFile(
   req: http.IncomingMessage,
@@ -287,7 +327,10 @@ export function createServer(options: ServerOptions = {}): http.Server {
   const sharingConfigured = Boolean(shareBaseUrl && shareSecret);
   const generationTimeoutMs =
     options.generationTimeoutMs ?? GENERATION_TIMEOUT_MS;
+  const analysisTimeoutMs = options.analysisTimeoutMs ?? ANALYSIS_TIMEOUT_MS;
+  const timingDiagnostic = options.timingDiagnostic ?? emitTimingDiagnostic;
   const staticRoot = options.staticRoot ?? DEFAULT_STATIC_ROOT;
+  const allowLocalHttpAudioSource = options.allowLocalHttpAudioSource === true;
   const sharedUrls = new Map<string, string>();
 
   async function recoveryRequest(
@@ -376,6 +419,8 @@ export function createServer(options: ServerOptions = {}): http.Server {
 
         if (!token)
           return sendJson(res, 400, { error: 'Add your MiniMax API token.' });
+        if (!validMiniMaxToken(token))
+          return sendJson(res, 400, { error: MINIMAX_TOKEN_FORMAT_ERROR });
         if (!idea)
           return sendJson(res, 400, {
             error: 'Tell me what the song is about.',
@@ -412,8 +457,49 @@ export function createServer(options: ServerOptions = {}): http.Server {
             error: 'The lyricist took too long. Try again.',
           });
         return sendJson(res, details.status || 502, {
-          error: details.message || 'Could not write lyrics.',
+          error:
+            details.status === 401
+              ? 'MiniMax rejected the API token. Check it and try again.'
+              : details.message || 'Could not write lyrics.',
         });
+      }
+    }
+
+    if (req.method === 'POST' && req.url === '/api/analyze-timing') {
+      try {
+        const body = await readJson(req);
+        const token = typeof body.token === 'string' ? body.token.trim() : '';
+        const source =
+          typeof body.source === 'string' ? body.source.trim() : '';
+        const attempt =
+          typeof body.attempt === 'number' ? body.attempt : undefined;
+        let outcome: TimingAnalysisOutcome;
+        if (!validMiniMaxToken(token)) {
+          outcome = {
+            status: 'unavailable',
+            reason: 'authentication',
+            retryable: false,
+          };
+        } else {
+          outcome = await analyzeMiniMaxTiming(
+            { source, token, ...(attempt === undefined ? {} : { attempt }) },
+            {
+              apiBase,
+              fetchImpl,
+              timeoutMs: analysisTimeoutMs,
+              diagnostic: timingDiagnostic,
+              allowLocalHttpSource: allowLocalHttpAudioSource,
+            },
+          );
+        }
+        return sendJson(res, validMiniMaxToken(token) ? 200 : 400, outcome);
+      } catch {
+        const outcome: TimingAnalysisOutcome = {
+          status: 'unavailable',
+          reason: 'malformed-response',
+          retryable: false,
+        };
+        return sendJson(res, 400, outcome);
       }
     }
 
@@ -432,6 +518,8 @@ export function createServer(options: ServerOptions = {}): http.Server {
 
         if (!token)
           return sendJson(res, 400, { error: 'Add your MiniMax API token.' });
+        if (!validMiniMaxToken(token))
+          return sendJson(res, 400, { error: MINIMAX_TOKEN_FORMAT_ERROR });
         if (!lyrics)
           return sendJson(res, 400, { error: 'Add some lyrics first.' });
         if (lyrics.length > 3500)
@@ -511,6 +599,8 @@ export function createServer(options: ServerOptions = {}): http.Server {
         const result = parseJsonRecord(text) ?? {
           error: text || 'MiniMax returned an unreadable response.',
         };
+        // Timing is server-issued only; never let an upstream field masquerade.
+        delete result.lyric_timing;
         const baseResponse = isRecord(result.base_resp) ? result.base_resp : {};
         const resultError = isRecord(result.error) ? result.error : {};
 
@@ -530,7 +620,7 @@ export function createServer(options: ServerOptions = {}): http.Server {
             error: failure.message,
           });
         }
-        const source = audioSource(result);
+        const source = audioSource(result, allowLocalHttpAudioSource);
         if (!source) {
           const failure = publicFailure(
             'MiniMax succeeded but did not return an audio file.',
@@ -673,6 +763,11 @@ export function createServer(options: ServerOptions = {}): http.Server {
               ? recovered.value.source
               : '',
         };
+        const lyricTiming = normalizeLyricTiming(body.lyricTiming);
+        if (body.lyricTiming != null && !lyricTiming)
+          return sendJson(res, 400, {
+            error: 'The section timing artifact is invalid.',
+          });
 
         const metadata = {
           title: typeof body.title === 'string' ? body.title : '',
@@ -686,9 +781,13 @@ export function createServer(options: ServerOptions = {}): http.Server {
             typeof body.lyricsNative === 'string' ? body.lyricsNative : '',
           lyricsRoman:
             typeof body.lyricsRoman === 'string' ? body.lyricsRoman : '',
+          // The opaque share reference still proves this is a server-issued
+          // recording. The browser supplies only the normalized artifact from
+          // the separate, request-only timing analysis.
+          lyricTiming,
         };
 
-        let audio = decodeAudioSource(entry.source);
+        let audio = decodeAudioSource(entry.source, allowLocalHttpAudioSource);
         if (!audio) {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 2 * 60 * 1000);
