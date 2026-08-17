@@ -3,11 +3,13 @@ import http from 'node:http';
 import { extname, resolve } from 'node:path';
 
 import { roomPage } from '../../src/worker/room-page.ts';
+import { playbackPage } from '../../src/worker/playback-page.ts';
 import { createServer } from '../../src/server/index.ts';
 
 const portFlag = process.argv.indexOf('--port');
 const port = Number(portFlag >= 0 ? process.argv[portFlag + 1] : 4387);
 const generatedAudio = '49443304000000000000';
+const sharedSongId = 'AbCdEfGhIjKlMnOp';
 const jobRecords = new Map<string, Record<string, unknown>>();
 
 const json = (value: unknown, status = 200): Response =>
@@ -41,6 +43,15 @@ function fakeFetchResponse(input: string | URL | Request, init?: RequestInit) {
         socketUrl: 'wss://rooms.example.test/rooms/ABCDEFGH/ws',
         hostSecret: 'A'.repeat(43),
         expiresAt: Date.now() + 60_000,
+      },
+      201,
+    );
+  }
+  if (url.pathname === '/shares' && init?.method === 'POST') {
+    return json(
+      {
+        id: sharedSongId,
+        url: `https://rooms.example.test/s/${sharedSongId}`,
       },
       201,
     );
@@ -135,6 +146,39 @@ const handleRequest = async (
     } catch {
       response.writeHead(404).end();
     }
+    return;
+  }
+  if (pathname === `/s/${sharedSongId}`) {
+    const origin = new URL(
+      request.url ?? '/',
+      `http://${request.headers.host ?? `127.0.0.1:${port}`}`,
+    ).origin;
+    const nonce = 'fixture-nonce';
+    response.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'content-security-policy': `default-src 'none'; media-src 'self'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'`,
+    });
+    response.end(
+      playbackPage(
+        sharedSongId,
+        {
+          title: 'Aloopuri Khavsa',
+          language: 'Gujarati',
+          nativeScriptName: 'Gujarati',
+          isLatinScript: false,
+          lyricsNative: '[Verse]\nઆ સાંજ ધીમે\nમહેકે છે',
+          lyricsRoman: '[Verse]\naa saanj dhime\nmaheke chhe',
+        },
+        nonce,
+        origin,
+        '',
+      ),
+    );
+    return;
+  }
+  if (pathname === `/s/${sharedSongId}/audio`) {
+    response.writeHead(200, { 'content-type': 'audio/mpeg' });
+    response.end(Uint8Array.from([73, 68, 51]));
     return;
   }
   const roomMatch = /^\/r\/([A-Z2-9]{8})$/.exec(pathname);
