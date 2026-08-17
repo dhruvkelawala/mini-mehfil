@@ -365,8 +365,7 @@ h1 {
   white-space: nowrap;
 }
 .host-queue,
-.host-setlist,
-.recording-up-next ol {
+.host-setlist {
   padding-left: 20px;
   font-size: 12px;
 }
@@ -377,14 +376,12 @@ h1 {
 }
 .host-participants li,
 .host-queue li,
-.host-setlist li,
-.recording-up-next li {
+.host-setlist li {
   margin: 10px 0;
 }
 .host-queue button,
 .host-participants button,
-.host-setlist button,
-.recording-up-next button {
+.host-setlist button {
   width: auto;
   min-height: 34px;
   margin: 4px 4px 0 0;
@@ -394,21 +391,145 @@ h1 {
 .host-setlist a {
   color: #e6a653;
 }
+.recording-workflow:not(:empty) {
+  margin: 15px 0 4px;
+  border-block: 1px solid rgba(249, 237, 218, 0.14);
+}
 .recording-now,
 .recording-up-next {
-  margin-top: 14px;
-  padding: 10px 12px;
-  border: 1px solid rgba(249, 237, 218, 0.14);
-  border-radius: 7px;
-  background: rgba(8, 24, 23, 0.28);
+  padding: 13px 0;
+}
+.recording-now + .recording-up-next {
+  border-top: 1px solid rgba(249, 237, 218, 0.1);
+}
+.recording-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 .room-panel .recording-now h3,
 .room-panel .recording-up-next h3 {
-  margin-top: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
 }
-.room-panel .recording-now p {
-  margin-bottom: 0;
+.recording-section-heading > span {
+  color: rgba(221, 203, 184, 0.72);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.recording-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #7be0a4;
+  animation: pulse 2.2s ease-in-out infinite;
+}
+.room-panel .recording-track {
+  margin: 9px 0 0;
+  display: grid;
+  gap: 2px;
+}
+.recording-track strong,
+.recording-copy strong {
   color: #fff8ec;
+  font:
+    700 14px/1.25 'Iowan Old Style',
+    Georgia,
+    serif;
+  overflow-wrap: anywhere;
+}
+.recording-track span,
+.recording-copy small {
+  color: rgba(221, 203, 184, 0.76);
+  font-size: 9px;
+  line-height: 1.35;
+}
+.recording-up-next ol {
+  margin: 9px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+  list-style: none;
+}
+.recording-up-next li {
+  min-width: 0;
+  margin: 0;
+  padding: 9px 8px 9px 10px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  border-radius: 8px;
+  background: rgba(8, 24, 23, 0.3);
+}
+.recording-position {
+  color: #e6a653;
+  font:
+    700 11px/1 'Iowan Old Style',
+    Georgia,
+    serif;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.recording-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.recording-copy small {
+  display: block;
+}
+.recording-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.recording-up-next .recording-actions button {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(249, 237, 218, 0.2);
+  border-radius: 7px;
+  color: var(--muted);
+  background: rgba(249, 237, 218, 0.04);
+  cursor: pointer;
+  transition:
+    border-color 0.18s,
+    color 0.18s,
+    background 0.18s,
+    transform 0.18s;
+}
+.recording-up-next .recording-actions button:hover {
+  border-color: rgba(230, 166, 83, 0.62);
+  color: #fff8ec;
+  background: rgba(230, 166, 83, 0.1);
+}
+.recording-up-next .recording-actions button:active {
+  transform: translateY(1px);
+}
+.recording-up-next .recording-actions .recording-remove:hover {
+  border-color: rgba(241, 185, 159, 0.58);
+  color: #f1b99f;
+  background: rgba(159, 73, 57, 0.18);
+}
+.recording-actions svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .room-close {
   width: 100%;

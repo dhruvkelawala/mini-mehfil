@@ -762,52 +762,89 @@ export function App() {
                 }}
               </For>
             </ol>
-            <div aria-live="polite" aria-atomic="true">
+            <div
+              class="recording-workflow"
+              aria-live="polite"
+              aria-atomic="true"
+            >
               <Show when={currentRecording()}>
                 {(item) => (
                   <section class="recording-now" aria-label="Recording now">
-                    <h3>Recording now</h3>
-                    <p>
-                      {item().requesterName}: {item().idea}
+                    <div class="recording-section-heading">
+                      <h3>
+                        <span class="recording-pulse" aria-hidden="true" />
+                        Recording now
+                      </h3>
+                      <span>In progress</span>
+                    </div>
+                    <p class="recording-track">
+                      <strong>{item().idea}</strong>
+                      <span>Requested by {item().requesterName}</span>
                     </p>
                   </section>
                 )}
               </Show>
               <Show when={recordingQueue().length > 0}>
                 <section class="recording-up-next" aria-label="Up next">
-                  <h3>Up next</h3>
+                  <div class="recording-section-heading">
+                    <h3>Up next</h3>
+                    <span>
+                      {recordingQueue().length}{' '}
+                      {recordingQueue().length === 1 ? 'song' : 'songs'}
+                    </span>
+                  </div>
                   <ol>
                     <For each={recordingQueue()}>
                       {(item, index) => (
                         <li>
-                          {item.requesterName}: {item.idea}
-                          <button
-                            type="button"
-                            aria-label={`Move ${item.idea} up in recording queue`}
-                            disabled={index() === 0}
-                            onClick={() =>
-                              room.reorderRecording(item.id, index() - 1)
-                            }
-                          >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Move ${item.idea} down in recording queue`}
-                            disabled={index() === recordingQueue().length - 1}
-                            onClick={() =>
-                              room.reorderRecording(item.id, index() + 1)
-                            }
-                          >
-                            ↓
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Remove ${item.idea} from recording queue`}
-                            onClick={() => room.removeRecording(item.id)}
-                          >
-                            Remove
-                          </button>
+                          <span class="recording-position" aria-hidden="true">
+                            {index() + 1}
+                          </span>
+                          <span class="recording-copy">
+                            <strong>{item.idea}</strong>
+                            <small>Requested by {item.requesterName}</small>
+                          </span>
+                          <span class="recording-actions">
+                            <Show when={index() > 0}>
+                              <button
+                                type="button"
+                                title="Move up"
+                                aria-label={`Move ${item.idea} up in recording queue`}
+                                onClick={() =>
+                                  room.reorderRecording(item.id, index() - 1)
+                                }
+                              >
+                                <svg viewBox="0 0 18 18" aria-hidden="true">
+                                  <path d="m4.5 9 4.5-4.5L13.5 9M9 4.5v9" />
+                                </svg>
+                              </button>
+                            </Show>
+                            <Show when={index() < recordingQueue().length - 1}>
+                              <button
+                                type="button"
+                                title="Move down"
+                                aria-label={`Move ${item.idea} down in recording queue`}
+                                onClick={() =>
+                                  room.reorderRecording(item.id, index() + 1)
+                                }
+                              >
+                                <svg viewBox="0 0 18 18" aria-hidden="true">
+                                  <path d="m4.5 9 4.5 4.5L13.5 9M9 13.5v-9" />
+                                </svg>
+                              </button>
+                            </Show>
+                            <button
+                              class="recording-remove"
+                              type="button"
+                              title="Remove from queue"
+                              aria-label={`Remove ${item.idea} from recording queue`}
+                              onClick={() => room.removeRecording(item.id)}
+                            >
+                              <svg viewBox="0 0 18 18" aria-hidden="true">
+                                <path d="m5 5 8 8M13 5l-8 8" />
+                              </svg>
+                            </button>
+                          </span>
                         </li>
                       )}
                     </For>
