@@ -147,3 +147,34 @@ PR #15 added one playback-refresh regression after the migration baseline at
 `3aa1978`. It is preserved as
 `test/worker/sharing.test.ts — shared playback advances progress and lyrics
 without relying on timeupdate`, alongside the 134 mapped baseline assertions.
+
+## Deliberate behavior change: MiniMax section timing
+
+Plan 004 gave songs a second reveal mode. When MiniMax's section analysis
+returns a timing artifact for a recording, **and** that artifact maps onto the
+written sections, **and** the media element's own duration agrees with the
+analyzed length within `max(1 s, 2 %)`, the reveal follows the song by section
+and its disclosure reads `Section timing from MiniMax analysis`. If any of those
+three conditions fails, the approximate reveal and the copy
+`Atmospheric reveal · timing is approximate` are reproduced exactly.
+
+Parity consequences:
+
+- **No baseline assertion changed.** Every browser fixture generates audio the
+  server delivers inline rather than by URL, so no fixture song carries timing
+  and all 24 browser tests pass against the original assertions unchanged. That
+  is the intended proof that the untimed fallback is byte-identical, not an
+  oversight.
+- `test/lyrics/lyric-sync.test.ts — reads cues from the romanized sheet first,
+matching the host reveal` pins the shared parser against a verbatim copy of the
+  host's original `lyricLines` memo, including its quirks on misaligned sheets,
+  so swapping in the shared parser cannot change untimed rendering.
+- `test/worker/sharing.test.ts — a timed share falls back to the approximate
+reveal when the audio does not match` and
+  `— an untimed share serializes no timeline and reveals approximately` pin the
+  fallback on the shared playback page.
+- The shared playback page previously chose its primary script by
+  `native.length > 0` while the host app used `!isLatinScript && native.length > 0`.
+  Both now use the host's rule through `parseLyricSheet`. The lyricist emits
+  identical native and romanized sheets for Latin-script songs, so this changes
+  no rendered output today; it removes a divergence that could have.
