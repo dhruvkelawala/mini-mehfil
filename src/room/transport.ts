@@ -164,6 +164,9 @@ function clientEvent(
         requestId: message.requestId,
         shareId: message.shareId,
         startedAt: at,
+        ...(message.lyricTiming === undefined
+          ? {}
+          : { lyricTiming: message.lyricTiming }),
       };
     case 'song-shared':
       return {
@@ -172,6 +175,9 @@ function clientEvent(
         shareId: message.shareId,
         lyrics: message.lyrics,
         startedAt: at,
+        ...(message.lyricTiming === undefined
+          ? {}
+          : { lyricTiming: message.lyricTiming }),
       };
     case 'song-selected':
       return {

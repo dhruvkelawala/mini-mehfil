@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
+import type { LyricTiming } from '../../src/lyrics/lyric-sync.ts';
 import type {
   RoomErrorCode,
   RoomEvent,
@@ -63,6 +64,15 @@ const enqueued = () =>
     accepted(),
     host({ type: 'recording-enqueued', requestId: 'q1' }),
   ).state;
+const TIMING = {
+  version: 1,
+  mode: 'minimax-section-asr',
+  durationSeconds: 20,
+  segments: [
+    { start: 0, end: 10, label: 'verse' },
+    { start: 10, end: 20, label: 'chorus' },
+  ],
+} satisfies LyricTiming;
 
 describe('room state', () => {
   test('room creation is versioned', () => {
@@ -326,9 +336,12 @@ describe('room state', () => {
         requestId: 'q1',
         shareId: 'abcdefghijklmnop',
         startedAt: 5000,
+        lyricTiming: TIMING,
       }),
     ).state;
     expect(state.currentSong?.lyrics).not.toHaveProperty('prompt');
+    expect(state.currentSong?.lyricTiming).toEqual(TIMING);
+    expect(state.setlist[0]?.lyricTiming).toEqual(TIMING);
     expect(
       projectRoomState(state, { role: 'listener' }).currentSong?.playback,
     ).toEqual({ status: 'paused', positionMs: 0, changedAt: 5000 });
@@ -348,6 +361,7 @@ describe('room state', () => {
         lyricsRoman: 'Sun came in',
         prompt: 'must not leak',
       },
+      lyricTiming: null,
     };
     expect(errorCode(transitionRoom(base(), listener(event)))).toBe(
       'host-only',
@@ -355,11 +369,41 @@ describe('room state', () => {
     const state = transitionRoom(base(), host(event)).state;
     expect(state.currentSong?.title).toBe('Body on Fire');
     expect(state.currentSong?.lyrics).not.toHaveProperty('prompt');
+    expect(state.currentSong?.lyricTiming).toBeNull();
     expect(state.currentSong?.playback).toEqual({
       status: 'paused',
       positionMs: 0,
       changedAt: 5000,
     });
+  });
+
+  test('rejects invalid room timing while preserving legacy absence', () => {
+    const event = {
+      type: 'song-shared' as const,
+      shareId: 'abcdefghijklmnop',
+      startedAt: 5000,
+      lyrics: {
+        title: 'Body on Fire',
+        language: 'English',
+        nativeScriptName: 'Latin',
+        isLatinScript: true,
+        lyricsNative: 'Sun came in',
+        lyricsRoman: 'Sun came in',
+      },
+    };
+    const legacy = transitionRoom(base(), host(event)).state;
+    expect(legacy.currentSong).not.toHaveProperty('lyricTiming');
+    expect(
+      errorCode(
+        transitionRoom(
+          base(),
+          host({
+            ...event,
+            lyricTiming: { ...TIMING, durationSeconds: -1 },
+          }),
+        ),
+      ),
+    ).toBe('invalid-song');
   });
 
   test('only the host controls current-song playback', () => {

@@ -1,6 +1,14 @@
-import { createMemo, Show, For, untrack } from 'solid-js';
+import { createEffect, createMemo, Show, For, untrack } from 'solid-js';
 
+import { activePacedLine, buildLinePacing } from '../../lyrics/line-pacing.ts';
+import {
+  activeTimelineEntry,
+  buildSectionTimeline,
+  parseLyricSheet,
+} from '../../lyrics/lyric-sync.ts';
+import { emitTimingDiagnostic } from '../../timing/timing-analysis.ts';
 import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
+import { TimedSectionView } from '../lyrics/timed-lyrics.tsx';
 import { RoomActivity } from './components/RoomActivity.tsx';
 import {
   createListenerRoomController,
@@ -29,49 +37,6 @@ const languages = [
   'Korean',
 ];
 
-function lyricLines(controller: ListenerRoomController) {
-  const lines = createMemo(() => {
-    const sheet = controller.snapshot()?.currentSong?.lyrics;
-    if (!sheet) return [];
-    const native = sheet.lyricsNative.split('\n');
-    const roman = sheet.lyricsRoman.split('\n');
-    const primary = sheet.isLatinScript ? roman : native;
-    let cue = '';
-    return primary.flatMap((rawLine, index) => {
-      const line = rawLine.trim();
-      const romanLine = (roman[index] ?? '').trim();
-      const cueMatch = /^\[(.+)\]$/.exec(romanLine || line);
-      if (cueMatch) {
-        cue = cueMatch[1] ?? '';
-        return [];
-      }
-      if (!line) return [];
-      return [
-        {
-          cue,
-          primary: line,
-          secondary:
-            !sheet.isLatinScript && romanLine !== line ? romanLine : '',
-        },
-      ];
-    });
-  });
-  const current = createMemo(() => {
-    const timeline = lines();
-    if (!timeline.length) return { cue: '', primary: '', secondary: '' };
-    const duration = controller.duration();
-    const progress = duration
-      ? Math.min(controller.currentTime() / (duration * 0.9), 1)
-      : 0;
-    return (
-      timeline[
-        Math.min(Math.floor(progress * timeline.length), timeline.length - 1)
-      ] ?? { cue: '', primary: '', secondary: '' }
-    );
-  });
-  return current;
-}
-
 export function App(props: {
   roomId: string;
   controller?: ListenerRoomController;
@@ -81,7 +46,65 @@ export function App(props: {
       props.controller ??
       createListenerRoomController({ roomId: props.roomId }),
   );
-  const lyrics = lyricLines(controller);
+  const lyricSheet = createMemo(() =>
+    parseLyricSheet(controller.snapshot()?.currentSong?.lyrics),
+  );
+  const sectionTimeline = createMemo(() =>
+    buildSectionTimeline(lyricSheet().sections, controller.timing()),
+  );
+  const activeEntry = createMemo(() =>
+    activeTimelineEntry(sectionTimeline(), controller.currentTime()),
+  );
+  const activeSection = createMemo(() => {
+    const index = activeEntry()?.sectionIndex;
+    return typeof index === 'number'
+      ? lyricSheet().sections.find((section) => section.index === index)
+      : undefined;
+  });
+  const linePacing = createMemo(() =>
+    buildLinePacing(lyricSheet().sections, sectionTimeline(), null),
+  );
+  const activeLine = createMemo(() =>
+    activePacedLine(linePacing(), controller.currentTime()),
+  );
+  const untimedLine = createMemo(() => {
+    const spoken = lyricSheet().lines.filter((line) => !line.cue);
+    if (!spoken.length) return null;
+    const duration = controller.duration();
+    const progress = duration
+      ? Math.min(controller.currentTime() / (duration * 0.9), 1)
+      : 0;
+    return (
+      spoken[
+        Math.min(Math.floor(progress * spoken.length), spoken.length - 1)
+      ] ?? null
+    );
+  });
+  const untimedCue = createMemo(() => {
+    const line = untimedLine();
+    if (!line) return '';
+    return (
+      lyricSheet()
+        .sections.find((section) => section.index === line.sectionIndex)
+        ?.lines.find((candidate) => candidate.cue)?.primary ??
+      line.tag ??
+      ''
+    );
+  });
+  createEffect(() => {
+    if (!controller.snapshot()?.currentSong) return;
+    const timing = controller.timing();
+    const timeline = sectionTimeline();
+    emitTimingDiagnostic({
+      event: 'listener-map',
+      surface: 'listener',
+      reason: timeline ? 'mapped' : 'weak-map',
+      segmentCount: timing?.segments.length ?? 0,
+      sectionCount:
+        timeline?.filter((entry) => entry.sectionIndex !== null).length ?? 0,
+      ...(timing ? { analyzedDurationSeconds: timing.durationSeconds } : {}),
+    });
+  });
   const playbackProgress = createMemo(() => {
     const duration = controller.duration();
     if (!duration) return 0;
@@ -147,9 +170,27 @@ export function App(props: {
             {(song) => (
               <section class="lyric-stage">
                 <h2>{song().title}</h2>
-                <p class="lyric-cue">{lyrics().cue}</p>
-                <p class="lyric-primary">{lyrics().primary}</p>
-                <p class="lyric-secondary">{lyrics().secondary}</p>
+                <Show
+                  when={activeSection()}
+                  fallback={
+                    <Show when={untimedLine()}>
+                      {(line) => (
+                        <>
+                          <p class="lyric-cue">{untimedCue()}</p>
+                          <p class="lyric-primary">{line().primary}</p>
+                          <p class="lyric-secondary">{line().secondary}</p>
+                        </>
+                      )}
+                    </Show>
+                  }
+                >
+                  {(section) => (
+                    <TimedSectionView
+                      section={section()}
+                      activeLine={activeLine()}
+                    />
+                  )}
+                </Show>
               </section>
             )}
           </Show>

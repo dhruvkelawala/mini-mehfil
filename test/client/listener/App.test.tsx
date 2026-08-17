@@ -4,6 +4,14 @@ import { createSignal } from 'solid-js';
 import { describe, expect, test, vi } from 'vitest';
 
 import { App } from '../../../src/client/listener/App.tsx';
+import {
+  activePacedLine,
+  buildLinePacing,
+} from '../../../src/lyrics/line-pacing.ts';
+import {
+  buildSectionTimeline,
+  parseLyricSheet,
+} from '../../../src/lyrics/lyric-sync.ts';
 import type {
   ListenerRoomController,
   ListenerSnapshot,
@@ -24,6 +32,7 @@ function listenerController(
     currentTime: () => 0,
     duration: () => 0,
     playing: () => false,
+    timing: () => snapshot?.currentSong?.lyricTiming ?? null,
     bindAudio: vi.fn(),
     enableAudio: () => Promise.resolve(),
     connect,
@@ -59,8 +68,8 @@ describe('listener app', () => {
           language: 'Hindi',
           nativeScriptName: 'Devanagari',
           isLatinScript: false,
-          lyricsNative: '[Verse]\nबारिश की रात',
-          lyricsRoman: '[Verse]\nBaarish ki raat',
+          lyricsNative: '[Pre-Chorus 2]\nबारिश की रात',
+          lyricsRoman: '[Pre-Chorus 2]\nBaarish ki raat',
         },
       },
       setlist: [],
@@ -71,5 +80,85 @@ describe('listener app', () => {
     ).toHaveLength(2);
     expect(screen.getByText('बारिश की रात')).toBeTruthy();
     expect(screen.getByText('Baarish ki raat')).toBeTruthy();
+    expect(screen.getByText('Pre-Chorus 2')).toBeTruthy();
+  });
+
+  test('uses the host timeline and line rules through forward and backward seeks', async () => {
+    const timing = {
+      version: 1 as const,
+      mode: 'minimax-section-asr' as const,
+      durationSeconds: 20,
+      segments: [
+        { start: 0, end: 10, label: 'verse' as const },
+        { start: 10, end: 20, label: 'chorus' as const },
+      ],
+    };
+    const lyrics = {
+      title: 'Monsoon Song',
+      language: 'Hindi',
+      nativeScriptName: 'Devanagari',
+      isLatinScript: false,
+      lyricsNative:
+        '[Verse]\nबारिश की रात\nधीमी हवा\n[Chorus]\nफिर से गा\nदिल जगा',
+      lyricsRoman:
+        '[Verse]\nBaarish ki raat\nDheemi hawa\n[Chorus]\nPhir se gaa\nDil jagaa',
+    };
+    const snapshot: ListenerSnapshot = {
+      hostPresent: true,
+      listenerCount: 1,
+      queue: [],
+      currentRecording: null,
+      currentSong: {
+        shareId: 'song-reference',
+        title: lyrics.title,
+        language: lyrics.language,
+        playback: { status: 'playing', positionMs: 0, changedAt: 1 },
+        lyrics,
+        lyricTiming: timing,
+      },
+      setlist: [],
+    };
+    const [clock, setClock] = createSignal(6);
+    const controller = {
+      ...listenerController(snapshot),
+      currentTime: clock,
+      duration: () => 20,
+    } satisfies ListenerRoomController;
+    const parsed = parseLyricSheet(lyrics);
+    const timeline = buildSectionTimeline(parsed.sections, timing);
+    const expectedAt = (time: number) => {
+      const paced = activePacedLine(
+        buildLinePacing(parsed.sections, timeline, null),
+        time,
+      );
+      return paced
+        ? parsed.sections
+            .find((section) => section.index === paced.sectionIndex)
+            ?.lines.at(paced.lineIndexInSection)?.primary
+        : undefined;
+    };
+
+    render(() => <App roomId="ABCDEFGH" controller={controller} />);
+    expect(document.querySelectorAll('.lyric-section')).toHaveLength(1);
+    expect(document.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
+    expect(
+      document.querySelector('[aria-current="true"] .lyric-primary')
+        ?.textContent,
+    ).toBe(expectedAt(6));
+
+    setClock(16);
+    await Promise.resolve();
+    expect(document.querySelectorAll('.lyric-section')).toHaveLength(1);
+    expect(
+      document.querySelector('[aria-current="true"] .lyric-primary')
+        ?.textContent,
+    ).toBe(expectedAt(16));
+
+    setClock(6);
+    await Promise.resolve();
+    expect(
+      document.querySelector('[aria-current="true"] .lyric-primary')
+        ?.textContent,
+    ).toBe(expectedAt(6));
   });
 });

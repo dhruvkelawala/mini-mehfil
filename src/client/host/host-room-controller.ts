@@ -1,6 +1,7 @@
 import { createMemo, createSignal, getOwner, onCleanup } from 'solid-js';
 
 import { isRoomId } from '../../room/primitives.ts';
+import type { LyricTiming } from '../../lyrics/lyric-sync.ts';
 import {
   isRecord,
   parseHostRoomProjection,
@@ -53,7 +54,11 @@ export interface HostRoomController {
   open(): Promise<void>;
   showPanel(open: boolean): void;
   send(message: ClientMessage): boolean;
-  publishStandalone(shareUrl: string, lyrics: LyricsSheet): boolean;
+  publishStandalone(
+    shareUrl: string,
+    lyrics: LyricsSheet,
+    lyricTiming: LyricTiming | null,
+  ): boolean;
   accept(requestId: string): boolean;
   reorder(requestId: string, toIndex: number): boolean;
   decline(requestId: string): boolean;
@@ -388,7 +393,7 @@ export function createHostRoomController({
     },
     showPanel: setPanelOpen,
     send,
-    publishStandalone(url, lyrics) {
+    publishStandalone(url, lyrics, lyricTiming) {
       if (!authenticated()) return false;
       let shareId: string;
       try {
@@ -398,7 +403,8 @@ export function createHostRoomController({
         return false;
       }
       return (
-        SHARE_ID.test(shareId) && send({ type: 'song-shared', shareId, lyrics })
+        SHARE_ID.test(shareId) &&
+        send({ type: 'song-shared', shareId, lyrics, lyricTiming })
       );
     },
     accept: (requestId) => send({ type: 'request-accepted', requestId }),

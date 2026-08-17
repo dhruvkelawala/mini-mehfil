@@ -267,7 +267,11 @@ export function createPlayerController(
         audio.src = url;
         audio.load();
       }
+      setDuration(0);
+      setCurrentTime(0);
       setSource(url);
+      if (song.lyricTiming !== undefined && song.lyricTiming !== null)
+        applyTiming(url, song.lyricTiming);
       setTitle(song.title || 'Mehfil recording');
       setSubtitle(song.language || 'MiniMax Music 3');
       setShareReference(null);

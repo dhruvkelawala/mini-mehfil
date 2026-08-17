@@ -298,6 +298,34 @@ textarea {
     Georgia,
     serif;
 }
+.lyric-section,
+.lyric-line,
+.lyric-line .lyric-primary,
+.lyric-line .lyric-secondary {
+  display: block;
+}
+.lyric-section {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(230, 166, 83, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(230, 166, 83, 0.16);
+}
+.lyric-line {
+  opacity: 0.55;
+}
+.lyric-line + .lyric-line {
+  margin-top: 5px;
+}
+.lyric-line-current {
+  opacity: 1;
+  text-shadow: 0 0 18px rgba(249, 237, 218, 0.3);
+}
+.lyric-line-upcoming {
+  opacity: 0.36;
+}
+.lyric-line.lyric-cue {
+  opacity: 1;
+}
 .player-shell {
   position: fixed;
   z-index: 5;

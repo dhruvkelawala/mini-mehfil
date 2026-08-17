@@ -15,6 +15,16 @@ interface Socket {
   id: string;
 }
 
+const TIMING = {
+  version: 1,
+  mode: 'minimax-section-asr',
+  durationSeconds: 20,
+  segments: [
+    { start: 0, end: 10, label: 'verse' },
+    { start: 10, end: 20, label: 'chorus' },
+  ],
+};
+
 function record(value: unknown): Record<string, unknown> {
   if (!isRecord(value)) throw new Error('Expected an object');
   return value;
@@ -413,7 +423,12 @@ describe('room transport', () => {
           lyricsRoman: 'baarish',
         },
       },
-      { type: 'song-ready', requestId, shareId: 'abcdefghijklmnop' },
+      {
+        type: 'song-ready',
+        requestId,
+        shareId: 'abcdefghijklmnop',
+        lyricTiming: TIMING,
+      },
     ]) {
       await harness.transport.message(host, JSON.stringify(message));
     }
@@ -432,6 +447,7 @@ describe('room transport', () => {
       positionMs: 750,
       changedAt: harness.now() + 1_500,
     });
+    expect(currentSong.lyricTiming).toEqual(TIMING);
     await harness.transport.message(
       listener,
       JSON.stringify({
@@ -462,12 +478,14 @@ describe('room transport', () => {
           lyricsNative: 'Sun came in',
           lyricsRoman: 'Sun came in',
         },
+        lyricTiming: null,
       }),
     );
     expect(record(snapshot(harness, listener).currentSong)).toMatchObject({
       shareId: 'abcdefghijklmnop',
       title: 'Body on Fire',
       playback: { status: 'paused', positionMs: 0, changedAt: harness.now() },
+      lyricTiming: null,
     });
   });
 });

@@ -13,18 +13,17 @@ import {
   activePacedLine,
   buildLinePacing,
   effectiveFirstVocalRelease,
-  type PacedLine,
 } from '../../lyrics/line-pacing.ts';
 import {
   activeTimelineEntry,
   buildSectionTimeline,
   parseLyricSheet,
-  type LyricLine,
-  type LyricSection,
+  type LyricTiming,
 } from '../../lyrics/lyric-sync.ts';
 import type { LyricsSheet, SongRequest } from '../../room/protocol.ts';
 import { emitTimingDiagnostic } from '../../timing/timing-analysis.ts';
 import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
+import { LyricLineView, TimedSectionView } from '../lyrics/timed-lyrics.tsx';
 import {
   createGenerationController,
   type GeneratedSong,
@@ -64,68 +63,7 @@ const formatTime = (seconds: number) =>
   Number.isFinite(seconds)
     ? `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
     : '0:00';
-/**
- * One rendered lyric line. Shared by the untimed reveal and both timed views so
- * they cannot drift apart in markup.
- */
-const LyricLineView = (props: {
-  line: LyricLine;
-  hidden?: boolean;
-  current?: boolean;
-  upcoming?: boolean;
-}) => (
-  <span
-    classList={{
-      'lyric-line': true,
-      'lyric-cue': props.line.cue,
-      'lyric-line-current': props.current,
-      'lyric-line-upcoming': props.upcoming,
-    }}
-    hidden={props.hidden}
-    aria-current={props.current ? 'true' : undefined}
-  >
-    <Show when={!props.line.cue} fallback={props.line.primary}>
-      <span class="lyric-primary">{props.line.primary}</span>
-      <Show when={props.line.secondary}>
-        <span class="lyric-secondary">{props.line.secondary}</span>
-      </Show>
-    </Show>
-  </span>
-);
-/** Stable timed-section markup; line emphasis updates without replacing it. */
-export const TimedSectionView = (props: {
-  section: LyricSection;
-  activeLine: PacedLine | null;
-  holdLines: boolean;
-}) => (
-  <span class="lyric-section lyric-section-current">
-    <For
-      each={props.section.lines.filter((line) => !props.holdLines || line.cue)}
-    >
-      {(line, index) => {
-        const lineIndex = () => props.section.lines.indexOf(line) ?? index();
-        const current = () =>
-          !line.cue &&
-          props.activeLine?.sectionIndex === props.section.index &&
-          props.activeLine.lineIndexInSection === lineIndex();
-        const upcoming = () =>
-          Boolean(
-            !line.cue &&
-            props.activeLine &&
-            props.activeLine.sectionIndex === props.section.index &&
-            lineIndex() > props.activeLine.lineIndexInSection,
-          );
-        return (
-          <LyricLineView
-            line={line}
-            current={current()}
-            upcoming={upcoming()}
-          />
-        );
-      }}
-    </For>
-  </span>
-);
+export { TimedSectionView } from '../lyrics/timed-lyrics.tsx';
 const publicLyrics = (sheet: LyricsSheet): LyricsSheet => ({
   title: sheet.title,
   language: sheet.language,
@@ -342,16 +280,51 @@ export function App() {
       field.remove();
     }
   };
+  const settleRoomTiming = async (
+    song: GeneratedSong,
+  ): Promise<LyricTiming | null> => {
+    const current = timingAnalysis.state();
+    if (current.status === 'pending')
+      emitTimingDiagnostic({
+        event: 'room-waiting',
+        surface: 'room',
+        reason: 'pending',
+        attempt: current.attempt,
+      });
+    const settled = await song.timingSettled;
+    if (settled.status === 'ready') {
+      emitTimingDiagnostic({
+        event: 'room-ready',
+        surface: 'room',
+        reason: 'ready',
+        segmentCount: settled.timing.segments.length,
+        analyzedDurationSeconds: settled.timing.durationSeconds,
+      });
+      return settled.timing;
+    }
+    emitTimingDiagnostic({
+      event: 'room-terminal-untimed',
+      surface: 'room',
+      reason: settled.reason,
+    });
+    return null;
+  };
   const publishStandalone = async (song: GeneratedSong) => {
     if (!room.details()) return;
     if (!room.authenticated())
       throw new Error(
         'Your recording is ready, but the live room is reconnecting. Try sharing it again once connected.',
       );
+    const roomTiming = settleRoomTiming(song);
     const result = await generation.share(false, song);
+    const lyricTiming = await roomTiming;
     if (
       !result ||
-      !room.publishStandalone(result.url, publicLyrics(song.lyricSheet))
+      !room.publishStandalone(
+        result.url,
+        publicLyrics(song.lyricSheet),
+        lyricTiming,
+      )
     )
       throw new Error(
         'Your recording is ready, but the live room lost its connection.',
@@ -418,13 +391,22 @@ export function App() {
           lyrics: publicLyrics(sheet),
         }),
       onReady: async (song: GeneratedSong) => {
+        const roomTiming = settleRoomTiming(song);
         const result = await generation.share(false, song);
+        const lyricTiming = await roomTiming;
         const match = result
           ? /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(result.url).pathname)
           : null;
         if (!match?.[1])
           throw new Error('The share service returned an invalid link.');
-        if (!room.send({ type: 'song-ready', requestId, shareId: match[1] }))
+        if (
+          !room.send({
+            type: 'song-ready',
+            requestId,
+            shareId: match[1],
+            lyricTiming,
+          })
+        )
           throw new Error('The live room lost its connection.');
       },
       onFailed: () => {

@@ -22,6 +22,7 @@ import {
   activeTimelineEntry,
   buildSectionTimeline,
   parseLyricSheet,
+  type LyricTiming,
 } from '../../../src/lyrics/lyric-sync.ts';
 
 class MemoryStorage implements Storage {
@@ -212,7 +213,7 @@ const SECTION_TIMING = {
     { start: 40, end: 52, label: 'inst' },
     { start: 52, end: 90, label: 'chorus' },
   ],
-};
+} satisfies LyricTiming;
 
 async function loadedPlayer(timing: unknown, mediaDuration: number) {
   const audio = new FakeAudio();
@@ -386,5 +387,28 @@ describe('host section timing', () => {
     audio.duration = 90;
     audio.emit('loadedmetadata');
     expect(player.timing()).toBeNull();
+  });
+
+  test('retains normalized timing when the host loads a room song', () => {
+    const audio = new FakeAudio();
+    const player = createPlayerController(createMediaDiagnostics(), vi.fn());
+    player.bindAudio(audio as unknown as HTMLAudioElement);
+    player.loadRoomSong(
+      {
+        requestId: null,
+        shareId: 'AbCdEfGhIjKlMnOp',
+        title: 'Rain',
+        language: 'Hindi',
+        startedAt: 1,
+        lyrics,
+        lyricTiming: SECTION_TIMING,
+        playback: { status: 'paused', positionMs: 0, changedAt: 1 },
+      },
+      'https://rooms.example',
+    );
+    audio.duration = 90;
+    audio.emit('loadedmetadata');
+    expect(player.timing()).toEqual(SECTION_TIMING);
+    expect(player.analysisBytes()).toBeNull();
   });
 });
