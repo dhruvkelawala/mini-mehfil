@@ -26,6 +26,16 @@ test('room page keeps a disabled player visible and makes synced lyrics prominen
   assert.match(html, /\.lyric-primary \{[^}]*clamp\(27px,3\.3vw,44px\)/);
 });
 
+test('joined room distills requests and activity behind one compact disclosure', () => {
+  const html = roomPage('ABCDEFGH', 'n');
+  assert.match(html, /<details id="room-menu" class="room-menu">/);
+  assert.match(html, /room-menu-label">Request a song/);
+  assert.match(html, /<form id="request" class="request-form">/);
+  assert.match(html, /<details class="activity">[\s\S]*Request queue[\s\S]*Setlist/);
+  assert.doesNotMatch(html, /class="composer request-composer"/);
+  assert.match(html, /body:has\(#room:not\(\[hidden\]\)\) \.room-layout/);
+});
+
 test('listener requests use the homepage language choices', () => {
   const html = roomPage('ABCDEFGH', 'n');
   assert.match(html, /<select id="language">[\s\S]*<option value="auto" selected>Auto-detect<\/option>/);
@@ -245,6 +255,28 @@ test('listener follows host playback and sees synchronized native and romanized 
   assert.equal(playCalls, 3);
   assert.equal(element('enable-audio').hidden, false);
   assert.match(element('play-error').textContent, /Enable sound once/);
+
+  await socket.emit('message', { data: JSON.stringify({
+    type: 'snapshot',
+    state: {
+      ...snapshot('bbbbbbbbbbbbbbbb', {
+        status: 'paused', positionMs: 0, changedAt: Date.now()
+      }),
+      currentSong: {
+        ...snapshot('bbbbbbbbbbbbbbbb', {}).currentSong,
+        title: 'Sun',
+        language: 'English',
+        lyrics: {
+          language: 'English', isLatinScript: true,
+          lyricsNative: 'New light\nNew words', lyricsRoman: 'New light\nNew words'
+        },
+        playback: { status: 'paused', positionMs: 0, changedAt: Date.now() }
+      }
+    }
+  }) });
+  assert.equal(element('song-title').textContent, 'Sun');
+  assert.equal(element('lyric-title').textContent, 'Sun');
+  assert.equal(element('lyric-primary').textContent, 'New light');
 });
 
 test('terminal room failures clear unusable credentials and suppress reconnect', () => {

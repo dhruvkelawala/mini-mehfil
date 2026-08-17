@@ -211,6 +211,42 @@ test('a stale share request cannot mutate a later generation', () => {
   assert.match(shareHandler, /requestRun\s*===\s*generationRun\s*&&\s*requestReference\s*===\s*shareReference/);
 });
 
+test('a room upload keeps the finished audio paired with its own lyric sheet', async () => {
+  const uploadCurrentSong = Function(
+    'shareReference', 'lyricSheet', 'generationRun', 'shareButton',
+    'setShareLabel', 'shareUrl', 'post', 'copyShareLink', 'notice',
+    `return (${functionSource('uploadCurrentSong')})`
+  )(
+    'audio-reference-b',
+    { title: 'Old song', language: 'English' },
+    2,
+    { disabled: false },
+    () => {},
+    null,
+    async (_url, payload) => {
+      assert.equal(payload.title, 'New song');
+      assert.equal(payload.lyricsNative, 'new words');
+      return { url: 'https://share.example/s/AbCdEfGhIjKlMnOp' };
+    },
+    async () => {},
+    { className: '', textContent: '' }
+  );
+
+  await uploadCurrentSong({
+    copy: false,
+    requestRun: 2,
+    requestReference: 'audio-reference-b',
+    requestSheet: {
+      title: 'New song',
+      language: 'Hindi',
+      nativeScriptName: 'Devanagari',
+      isLatinScript: false,
+      lyricsNative: 'new words',
+      lyricsRoman: 'naye bol'
+    }
+  });
+});
+
 test('a new generation clears the previous recording before changing lyric state', () => {
   const clearLoadedSong = functionBody('clearLoadedSong');
   assert.match(clearLoadedSong, /audio\.removeAttribute\(['"]src['"]\)/);

@@ -11,6 +11,7 @@ export function installRoomClient({ roomId }) {
   const joinButton = document.querySelector('#join');
   const joinLabel = document.querySelector('#join-label');
   const room = document.querySelector('#room');
+  const roomMenu = document.querySelector('#room-menu');
   const queue = document.querySelector('#queue');
   const player = document.querySelector('#player');
   const audio = document.querySelector('#audio');
@@ -31,6 +32,7 @@ export function installRoomClient({ roomId }) {
   let retryCount = 0;
   let terminal = false;
   let lastShareId = null;
+  let lastSongMetadataRevision = null;
   let songLines = [];
   let currentSong = null;
   let playbackTimer = null;
@@ -335,6 +337,15 @@ export function installRoomClient({ roomId }) {
     player.hidden = false;
     document.querySelector('#song-title').textContent = song.title;
     currentSong = song;
+    const metadataRevision = JSON.stringify({
+      title: song.title,
+      language: song.language,
+      lyrics: song.lyrics
+    });
+    if (metadataRevision !== lastSongMetadataRevision) {
+      lastSongMetadataRevision = metadataRevision;
+      prepareSongLyrics(song);
+    }
     if (song.shareId === lastShareId) {
       applyRoomPlayback(song);
       return;
@@ -342,7 +353,6 @@ export function installRoomClient({ roomId }) {
 
     lastShareId = song.shareId;
     playError.textContent = '';
-    prepareSongLyrics(song);
     if (silentAudioUrl) {
       URL.revokeObjectURL(silentAudioUrl);
       silentAudioUrl = null;
@@ -378,6 +388,13 @@ export function installRoomClient({ roomId }) {
     renderQueue(state);
     renderSong(state.currentSong);
     renderSetlist(state.setlist);
+    const activeRequests = state.queue.filter(
+      item => !['declined', 'ready'].includes(item.status)
+    ).length;
+    document.querySelector('#room-activity-count').textContent = [
+      activeRequests ? `${activeRequests} waiting` : '',
+      state.setlist.length ? `${state.setlist.length} played` : ''
+    ].filter(Boolean).join(' · ') || 'Queue & setlist';
   }
 
   joinForm.addEventListener('submit', async event => {
@@ -409,6 +426,7 @@ export function installRoomClient({ roomId }) {
       language: document.querySelector('#language').value
     });
     event.target.reset();
+    roomMenu.removeAttribute('open');
   });
 
   document.querySelector('#peek').addEventListener('click', () => {

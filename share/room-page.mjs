@@ -142,17 +142,51 @@ export function roomPage(roomId, nonce) {
     .join-note { display: block; margin-top: 12px; color: #b39a7f; font-size: 10px; text-align: center; }
 
     #room { display: contents; }
-    .room-shelves {
-      grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 40px;
-      padding-top: 8px; animation: rise .65s .12s both;
+    body:has(#room:not([hidden])) .room-layout {
+      width: min(960px, calc(100% - 44px)); grid-template-columns: minmax(0,1fr); margin-top: 0;
     }
-    .shelf { min-width: 0; padding: 22px 4px 0; border-top: 1px solid rgba(249,237,218,.24); }
-    .shelf h2 { font-size: 24px; }
-    .shelf ol { min-height: 34px; margin: 15px 0 0; padding-left: 22px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    body:has(#room:not([hidden])) .identity { transform: none; }
+    .identity.has-song .tagline { display: none; }
+    .room-menu {
+      position: fixed; z-index: 7; top: 84px; right: max(22px, env(safe-area-inset-right));
+      width: min(390px, calc(100vw - 32px)); color: var(--ink);
+    }
+    .room-menu:not([open]) { width: auto; }
+    .room-menu > summary {
+      min-height: 44px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      border: 1px solid rgba(249,237,218,.28); border-radius: 12px; background: rgba(16,42,40,.94);
+      box-shadow: 0 10px 30px rgba(7,22,20,.28); cursor: pointer; list-style: none;
+    }
+    .room-menu > summary::-webkit-details-marker, .activity > summary::-webkit-details-marker { display: none; }
+    .room-menu > summary::after { content: "+"; color: var(--amber); font: 600 22px/1 Georgia, serif; }
+    .room-menu[open] > summary { border-radius: 12px 12px 0 0; border-bottom-color: transparent; box-shadow: none; }
+    .room-menu[open] > summary::after { content: "−"; }
+    .room-menu-label { font-weight: 750; }
+    .room-menu-meta { color: var(--muted); font-size: 10px; white-space: nowrap; }
+    .room-menu-body {
+      max-height: calc(100svh - 150px); overflow-y: auto; padding: 4px 18px 18px;
+      border: 1px solid rgba(249,237,218,.28); border-top: 0; border-radius: 0 0 12px 12px;
+      background: rgba(16,42,40,.97); box-shadow: var(--shadow); scrollbar-color: var(--amber) rgba(249,237,218,.08);
+    }
+    .request-form textarea { height: 82px; }
+    .request-form .field { margin-top: 14px; }
+    .request-form .generate { margin-top: 16px; }
+    .activity { margin-top: 20px; padding-top: 14px; border-top: 1px solid rgba(249,237,218,.16); }
+    .activity > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none; }
+    .activity > summary::after { content: "+"; color: var(--amber); }
+    .activity[open] > summary::after { content: "−"; }
+    .activity > summary span { font-weight: 700; }
+    .activity > summary small { margin-left: auto; color: var(--muted); font-size: 10px; }
+    .room-shelves {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 18px; padding-top: 6px;
+    }
+    .shelf { min-width: 0; padding: 16px 0 0; }
+    .shelf h2 { font: 700 11px/1.2 "Avenir Next", "Gill Sans", sans-serif; letter-spacing: .1em; text-transform: uppercase; }
+    .shelf ol { min-height: 24px; margin: 9px 0 0; padding-left: 18px; color: var(--muted); font-size: 11px; line-height: 1.6; }
     .shelf a { color: var(--amber); text-underline-offset: 3px; }
     .recording { min-height: 1.5em; color: #9ed2b8; font-size: 11px; }
     .secondary { width: auto; min-height: 40px; padding: 8px 12px; border: 1px solid rgba(249,237,218,.3); border-radius: 5px; color: var(--ink); background: rgba(122,54,45,.75); cursor: pointer; }
-    .lyrics { margin-top: 16px; white-space: pre-wrap; color: var(--muted); font: italic 16px/1.6 "Iowan Old Style", Georgia, serif; }
+    .lyrics { margin-top: 12px; white-space: pre-wrap; color: var(--muted); font: italic 14px/1.55 "Iowan Old Style", Georgia, serif; }
 
     .player-shell {
       position: fixed; z-index: 5; bottom: 25px; left: 50%; width: min(720px, calc(100% - 32px)); min-height: 104px;
@@ -202,7 +236,6 @@ export function roomPage(roomId, nonce) {
       .identity.has-song { transform: none; }
       .identity.has-song h1 { font-size: clamp(64px,13vw,92px); }
       .composer { width: min(520px,100%); margin: 0 auto; }
-      .room-shelves { width: min(720px,100%); margin: 28px auto 0; gap: 28px; }
     }
     @media (max-width: 560px) {
       .topbar { height: 58px; padding: 0 16px; grid-template-columns: 1fr 1fr; }
@@ -218,7 +251,10 @@ export function roomPage(roomId, nonce) {
       .room-chip { display: none; }
       .field-row, .room-shelves { grid-template-columns: 1fr; }
       input, select, textarea { font-size: 16px; }
-      .room-shelves { gap: 20px; }
+      .room-menu { top: auto; right: 12px; bottom: 108px; left: 12px; width: auto; }
+      .room-menu:not([open]) { left: auto; }
+      .room-menu-body { max-height: calc(100svh - 190px); }
+      .room-shelves { gap: 2px; }
       .lyric-stage { min-height: 150px; margin-top: 18px; padding-inline: 8px; }
       .lyric-primary { font-size: clamp(25px,7.5vw,36px); }
       .lyric-secondary { font-size: 14px; }
@@ -266,45 +302,55 @@ export function roomPage(roomId, nonce) {
     </form>
 
     <section id="room" hidden>
-      <form id="request" class="composer request-composer">
-        <div class="composer-head"><h2>Request a song</h2><span class="room-chip"><strong id="listeners">0 listeners</strong> · <span id="host">Host away</span></span></div>
-        <label class="field" for="idea"><span>What's the song about?</span></label>
-        <textarea id="idea" maxlength="200" required placeholder="A late-night drive home, monsoon chai…"></textarea>
-        <div class="field-row">
-          <label class="field" for="vibe"><span>Vibe <em>optional</em></span><input id="vibe" maxlength="120" placeholder="warm, acoustic"></label>
-          <label class="field" for="language"><span>Language</span><select id="language">
-            <option value="auto" selected>Auto-detect</option>
-            <option value="Gujarati">Gujarati</option>
-            <option value="Hindi">Hindi</option>
-            <option value="Punjabi">Punjabi</option>
-            <option value="Tamil">Tamil</option>
-            <option value="Bengali">Bengali</option>
-            <option value="Marathi">Marathi</option>
-            <option value="Urdu">Urdu</option>
-            <option value="English">English</option>
-            <option value="Spanish">Spanish</option>
-            <option value="French">French</option>
-            <option value="Arabic">Arabic</option>
-            <option value="Japanese">Japanese</option>
-            <option value="Korean">Korean</option>
-          </select></label>
-        </div>
-        <button class="generate"><span>Request a song</span><span aria-hidden="true">→</span></button>
-      </form>
+      <details id="room-menu" class="room-menu">
+        <summary>
+          <span class="room-menu-label">Request a song</span>
+          <small class="room-menu-meta"><strong id="listeners">0 listeners</strong> · <span id="host">Host away</span></small>
+        </summary>
+        <div class="room-menu-body">
+          <form id="request" class="request-form">
+            <label class="field" for="idea"><span>What's the song about?</span></label>
+            <textarea id="idea" maxlength="200" required placeholder="A late-night drive home, monsoon chai…"></textarea>
+            <div class="field-row">
+              <label class="field" for="vibe"><span>Vibe <em>optional</em></span><input id="vibe" maxlength="120" placeholder="warm, acoustic"></label>
+              <label class="field" for="language"><span>Language</span><select id="language">
+                <option value="auto" selected>Auto-detect</option>
+                <option value="Gujarati">Gujarati</option>
+                <option value="Hindi">Hindi</option>
+                <option value="Punjabi">Punjabi</option>
+                <option value="Tamil">Tamil</option>
+                <option value="Bengali">Bengali</option>
+                <option value="Marathi">Marathi</option>
+                <option value="Urdu">Urdu</option>
+                <option value="English">English</option>
+                <option value="Spanish">Spanish</option>
+                <option value="French">French</option>
+                <option value="Arabic">Arabic</option>
+                <option value="Japanese">Japanese</option>
+                <option value="Korean">Korean</option>
+              </select></label>
+            </div>
+            <button class="generate"><span>Send request</span><span aria-hidden="true">→</span></button>
+          </form>
 
-      <section class="room-shelves" aria-label="Room activity">
-        <section class="shelf">
-          <h2>Request queue</h2>
-          <ol id="queue" class="queue"></ol>
-          <p id="recording" class="recording"></p>
-          <button id="peek" class="secondary" type="button" hidden>Reveal lyrics</button>
-          <div id="lyrics" class="lyrics" hidden></div>
-        </section>
-        <section class="shelf">
-          <h2>Setlist</h2>
-          <ol id="setlist" class="setlist"></ol>
-        </section>
-      </section>
+          <details class="activity">
+            <summary><span>Room activity</span><small id="room-activity-count">Queue &amp; setlist</small></summary>
+            <div class="room-shelves">
+              <section class="shelf">
+                <h2>Request queue</h2>
+                <ol id="queue" class="queue"></ol>
+                <p id="recording" class="recording"></p>
+                <button id="peek" class="secondary" type="button" hidden>Reveal lyrics</button>
+                <div id="lyrics" class="lyrics" hidden></div>
+              </section>
+              <section class="shelf">
+                <h2>Setlist</h2>
+                <ol id="setlist" class="setlist"></ol>
+              </section>
+            </div>
+          </details>
+        </div>
+      </details>
 
       <section id="player" class="player-shell" aria-label="Host-controlled song player">
         <div class="record" aria-hidden="true"></div>

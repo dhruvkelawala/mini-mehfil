@@ -814,8 +814,13 @@ async function copyShareLink(url) {
   if (!copied) throw new Error('Copy the link from the message below.');
 }
 
-async function uploadCurrentSong({ copy = false, requestRun = generationRun, requestReference = shareReference } = {}) {
-  if (!shareReference || !lyricSheet) return;
+async function uploadCurrentSong({
+  copy = false,
+  requestRun = generationRun,
+  requestReference = shareReference,
+  requestSheet = lyricSheet
+} = {}) {
+  if (!requestReference || !requestSheet) return;
   const requestIsCurrent = () => requestRun === generationRun && requestReference === shareReference;
   shareButton.disabled = true;
   setShareLabel('Sharing');
@@ -823,13 +828,13 @@ async function uploadCurrentSong({ copy = false, requestRun = generationRun, req
     let requestedUrl = shareUrl;
     if (!shareUrl) {
       const result = await post('/api/share', {
-        shareRef: shareReference,
-        title: lyricSheet.title,
-        language: lyricSheet.language,
-        nativeScriptName: lyricSheet.nativeScriptName,
-        isLatinScript: lyricSheet.isLatinScript,
-        lyricsNative: lyricSheet.lyricsNative,
-        lyricsRoman: lyricSheet.lyricsRoman
+        shareRef: requestReference,
+        title: requestSheet.title,
+        language: requestSheet.language,
+        nativeScriptName: requestSheet.nativeScriptName,
+        isLatinScript: requestSheet.isLatinScript,
+        lyricsNative: requestSheet.lyricsNative,
+        lyricsRoman: requestSheet.lyricsRoman
       });
       if (!requestIsCurrent()) return;
       requestedUrl = result.url;
@@ -867,7 +872,8 @@ async function publishGeneratedSongToRoom({ lyricSheet: sheet, shareReference: r
   const url = await uploadCurrentSong({
     copy: false,
     requestRun,
-    requestReference: reference
+    requestReference: reference,
+    requestSheet: sheet
   });
   const match = /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(url).pathname);
   if (!match) throw new Error('The share service returned an invalid link.');
@@ -890,9 +896,10 @@ async function publishGeneratedSongToRoom({ lyricSheet: sheet, shareReference: r
 shareButton.addEventListener('click', async () => {
   const requestRun = generationRun;
   const requestReference = shareReference;
+  const requestSheet = lyricSheet;
   const requestIsCurrent = () => requestRun === generationRun && requestReference === shareReference;
   if (!requestIsCurrent()) return;
-  await uploadCurrentSong({ copy: true, requestRun, requestReference });
+  await uploadCurrentSong({ copy: true, requestRun, requestReference, requestSheet });
 });
 
 function roomSend(message) {
@@ -1260,7 +1267,7 @@ async function runRoomRecordingLifecycle({
 }) {
   if (!send({ type: 'recording-started', requestId })) return 'disconnected';
   try {
-    await generate({
+    const generated = await generate({
       onLyrics: sheet => {
         if (!isCurrent(run)) return;
         send({
@@ -1278,7 +1285,7 @@ async function runRoomRecordingLifecycle({
       }
     });
     if (!isCurrent(run)) return 'stale';
-    const url = await upload();
+    const url = await upload(generated);
     if (!isCurrent(run)) return 'stale';
     const match = /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(url).pathname);
     if (!match) throw new Error('The share service returned an invalid link.');
@@ -1312,10 +1319,11 @@ async function recordRoomRequest(requestId) {
       vibe: item.vibe,
       language: item.language || 'auto'
     }, hooks),
-    upload: () => uploadCurrentSong({
+    upload: generated => uploadCurrentSong({
       copy: false,
-      requestRun: run,
-      requestReference: shareReference
+      requestRun: generated.requestRun,
+      requestReference: generated.shareReference,
+      requestSheet: generated.lyricSheet
     }),
     send: roomSend
   });
