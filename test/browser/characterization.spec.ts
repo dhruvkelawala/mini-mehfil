@@ -25,6 +25,7 @@ test('a lost paid response is recovered without a second paid POST', async ({
   page,
 }) => {
   let generatePosts = 0;
+  const timingBodies: Array<Record<string, unknown>> = [];
   await page.route('**/api/generate', async (route) => {
     generatePosts += 1;
     await route.fulfill({
@@ -40,16 +41,40 @@ test('a lost paid response is recovered without a second paid POST', async ({
       body: JSON.stringify({
         jobId,
         status: 'complete',
-        data: { audio: '49443304000000000000' },
+        data: { audio: 'https://audio.example.test/recovered-song.mp3' },
         share_ref: jobId,
       }),
     });
   });
+  await page.route('**/api/analyze-timing', async (route) => {
+    timingBodies.push(
+      route.request().postDataJSON() as Record<string, unknown>,
+    );
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'unavailable',
+        reason: 'invalid-timing',
+        retryable: false,
+      }),
+    });
+  });
+  await page.route('https://audio.example.test/**', (route) =>
+    route.fulfill({ contentType: 'audio/mpeg', body: 'ID3' }),
+  );
   await page.goto('/');
   await fillSong(page);
   await page.getByRole('button', { name: 'Start the mehfil' }).click();
   await expect(page.getByText('Your recording is ready.')).toBeVisible();
   expect(generatePosts).toBe(1);
+  await expect.poll(() => timingBodies.length).toBe(1);
+  expect(timingBodies[0]).toEqual(
+    expect.objectContaining({
+      source: 'https://audio.example.test/recovered-song.mp3',
+      token: 'sk-fixture-secret-token',
+      attempt: 1,
+    }),
+  );
 });
 
 test('playback rejection exposes diagnostics and a recovery action', async ({

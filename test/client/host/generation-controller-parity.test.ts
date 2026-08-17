@@ -472,6 +472,70 @@ describe('typed generation lifecycle parity', () => {
     ]);
   });
 
+  test('same-page recovery keeps the token only in memory and starts timing analysis', async () => {
+    const storage = new MemoryStorage();
+    const applyTiming = vi.fn(() => true);
+    const target = player(
+      vi.fn(() => Promise.resolve()),
+      applyTiming,
+    );
+    const analyze = vi.fn(() =>
+      Promise.resolve<TimingAnalysisOutcome>({
+        status: 'ready',
+        timing: TIMING,
+      }),
+    );
+    const analysis = createTimingAnalysisController({
+      port: { analyze },
+      diagnostic: vi.fn(),
+    });
+    let paidCalls = 0;
+    let statusCalls = 0;
+    let persistedDuringRecovery = '';
+    const controller = createGenerationController({
+      player: target,
+      storage,
+      timingAnalysis: analysis,
+      timingDiagnostic: vi.fn(),
+      fetcher: async (input) => {
+        if (input === '/api/write-lyrics') return Response.json(SHEET);
+        if (input === '/api/generate') {
+          paidCalls += 1;
+          return Response.json({ status: 'pending' });
+        }
+        statusCalls += 1;
+        persistedDuringRecovery = storage.getItem(GENERATION_STORAGE_KEY) ?? '';
+        const jobId = new URL(input, 'https://fixture.test').searchParams.get(
+          'id',
+        );
+        return Response.json({
+          jobId,
+          status: 'complete',
+          data: { audio: 'https://cdn.example/song.mp3' },
+          share_ref: 'reference',
+        });
+      },
+    });
+
+    await controller.generate(INPUT);
+    await vi.waitFor(() => expect(analyze).toHaveBeenCalledOnce());
+    expect(analyze).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'https://cdn.example/song.mp3',
+        token: INPUT.token,
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(applyTiming).toHaveBeenCalledWith(
+        'https://cdn.example/song.mp3',
+        TIMING,
+      ),
+    );
+    expect(paidCalls).toBe(1);
+    expect(statusCalls).toBe(1);
+    expect(persistedDuringRecovery).not.toContain(INPUT.token);
+  });
+
   test('background, foreground, and pageshow preserve the ordinary recording UI without another paid request', async () => {
     const storage = new MemoryStorage();
     storage.setItem(

@@ -167,6 +167,7 @@ export function createGenerationController({
   let latestSong: GeneratedSong | null = null;
   let waitingTimer: ReturnType<typeof setInterval> | null = null;
   const foregroundWaiters: Array<() => void> = [];
+  const analysisTokens = new Map<string, string>();
 
   const setBusy = (lines: readonly string[]) => {
     if (waitingTimer) clearInterval(waitingTimer);
@@ -184,6 +185,7 @@ export function createGenerationController({
       if (waitingTimer) clearInterval(waitingTimer);
       recovery.cancel();
       analysis.cancel();
+      analysisTokens.clear();
     });
 
   const requestJson = async (
@@ -218,13 +220,16 @@ export function createGenerationController({
   const finalize = async (
     result: Record<string, unknown>,
     pending: PendingGeneration & { run: number },
-    analysisToken?: string,
   ): Promise<GeneratedSong | null> => {
     if (
       pending.run !== run ||
       (result.jobId !== undefined && result.jobId !== pending.jobId)
-    )
+    ) {
+      analysisTokens.delete(pending.jobId);
       return null;
+    }
+    const analysisToken = analysisTokens.get(pending.jobId);
+    analysisTokens.delete(pending.jobId);
     const background = pending.context?.kind === 'room-recording';
     const source = audioSource(result);
     if (!source) {
@@ -318,6 +323,7 @@ export function createGenerationController({
     },
     onFailed: (value, pending) => {
       if (pending.run !== run) return;
+      analysisTokens.delete(pending.jobId);
       const error = new Error(
         typeof value.error === 'string' ? value.error : 'Generation failed.',
       );
@@ -327,6 +333,7 @@ export function createGenerationController({
     },
     onExpired: (value, pending) => {
       if (pending.run !== run) return;
+      analysisTokens.delete(pending.jobId);
       const error = new Error(
         typeof value.error === 'string'
           ? value.error
@@ -451,6 +458,7 @@ export function createGenerationController({
       recovery.cancel();
       recovery.clear();
       analysis.cancel();
+      analysisTokens.clear();
       if (!background) player.clear();
       run += 1;
       const requestRun = run;
@@ -483,6 +491,7 @@ export function createGenerationController({
           ...recovery.save({ jobId, lyricSheet: sheet, context }),
           run: requestRun,
         };
+        analysisTokens.set(jobId, input.token);
         generationRequestInFlight = true;
         let result: Record<string, unknown>;
         try {
@@ -508,7 +517,6 @@ export function createGenerationController({
               jobId: typeof result.jobId === 'string' ? result.jobId : jobId,
             },
             pending,
-            input.token,
           )) ?? undefined
         );
       } catch (value) {
@@ -522,7 +530,10 @@ export function createGenerationController({
           resumePending('generate-request-rejected', hooks, pending);
           return undefined;
         }
-        if (pending && !background) recovery.clear();
+        if (pending) {
+          analysisTokens.delete(pending.jobId);
+          if (!background) recovery.clear();
+        }
         setStatusWorking(false);
         setStatus(error.message);
         if (!background) setPerformanceAvailable(false);
