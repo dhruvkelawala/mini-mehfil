@@ -41,11 +41,25 @@ The Vercel deployment gives the paid request a five-minute function window and s
 
 Sharing remains opt-in for each finished song. The proxy resolves a completed private job, downloads its audio, and uploads the MP3 plus the explicitly supplied lyric sheet through an authenticated, idempotent request. The browser never contacts the Worker directly, and neither the MiniMax token nor the Worker secret is exposed to it. In the tab, `sessionStorage` retains one versioned pending job ID and lyric sheet for recovery; it does not retain the token, idea, vibe, request payload, audio URL, or diagnostics.
 
+## Optional live rooms
+
+The same sharing configuration enables live mehfils. Press **Open this mehfil to friends** locally and copy the public listener link. Listeners join without an account, API key, or installation, submit song requests, and hear finished recordings together. The host accepts and orders requests, then explicitly presses **Record** before any paid generation begins; all generation costs remain on the host's MiniMax key.
+
+Rooms are transient and host-controlled. The host's player is authoritative: play,
+pause, and seeking are synchronized to listeners, whose room page shows the
+current native-script lyric and romanization as the song advances. The public
+join URL contains only an eight-character room code. The separate host
+credential stays in that browser tab's `sessionStorage`, while the MiniMax key
+continues to travel only between the host browser and local proxy.
+
 ## How it works
 
-- `server.js` — zero-dependency Node proxy. `POST /api/write-lyrics` asks MiniMax M3 (via their Anthropic-compatible endpoint) to turn your keywords into structured, singable lyrics in the detected language — native script for the singer, romanized for you to read. `POST /api/generate` sends the native-script lyrics plus an expanded production prompt to MiniMax Music 3.
+- `server.js` — zero-dependency Node proxy. `POST /api/write-lyrics` asks MiniMax M3 (via their Anthropic-compatible endpoint) to turn your keywords into structured, singable lyrics in the detected language — native script for the singer, romanized for you to read. `POST /api/generate` sends the native-script lyrics plus an expanded production prompt to MiniMax Music 3; `POST /api/rooms` opens an optional live room through the configured Worker.
 - `lyricist.mjs` — everything provider-specific, quarantined in one file.
 - `public/` — one page, plain HTML/CSS/JS. The courtyard scene is a single hand-built SVG.
+- `share/mehfil-room.mjs` — the `MehfilRoom` Durable Object exported by the
+  Worker; room routing and the `ROOMS` namespace adapter live beside it in
+  `share/rooms.mjs`.
 
 ## Test
 

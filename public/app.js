@@ -38,6 +38,21 @@ const diagnostics = window.MehfilMediaDiagnostics || {
   snapshot() { return null; }, redactUrl() { return '[diagnostics unavailable]'; }
 };
 const recoveryApi = window.MehfilGenerationRecovery;
+const openRoomButton = document.querySelector('#open-room');
+const openRoomLabel = document.querySelector('#room-open-label');
+const openRoomWideLabel = openRoomLabel.querySelector('.room-open-wide');
+const openRoomCompactLabel = openRoomLabel.querySelector('.room-open-compact');
+const roomPanel = document.querySelector('#room-panel');
+const roomStateLabel = document.querySelector('#room-state');
+const roomCode = document.querySelector('#room-code');
+const roomLink = document.querySelector('#room-link');
+const roomPresence = document.querySelector('#room-presence');
+const roomMessage = document.querySelector('#room-message');
+const roomPlayback = document.querySelector('#room-playback');
+const roomPlaybackState = document.querySelector('#room-playback-state');
+const hostQueue = document.querySelector('#host-queue');
+const hostParticipants = document.querySelector('#host-participants');
+const hostSetlist = document.querySelector('#host-setlist');
 
 const writingLines = [
   'Listening to your idea…',
@@ -67,6 +82,17 @@ let performanceOpener = null;
 let generationRequestInFlight = false;
 let lifecycleBackgroundVersion = 0;
 const foregroundWaiters = [];
+let roomSocket = null;
+let roomSnapshot = null;
+let roomRetry = 0;
+let roomClosing = false;
+let roomTerminal = false;
+let roomAuthenticated = false;
+let roomConnectTimer = null;
+let roomPlaybackTimer = null;
+let roomPlaybackRevision = null;
+let activeRoomDetails = null;
+const ROOM_SESSION_KEY = 'mini-mehfil-host-room';
 
 function updateClock() {
   document.querySelector('#clock').textContent = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(new Date()).toLowerCase();
@@ -423,7 +449,12 @@ function loadSong(source, title, reference) {
   performanceButton.hidden = !performanceView.hidden;
   performanceReplay.hidden = true;
   renderPlaybackLyrics();
-  void attemptPlayback('generation-complete');
+  if (activeRoomDetails) {
+    audio.pause();
+    audio.currentTime = 0;
+  } else {
+    void attemptPlayback('generation-complete');
+  }
 }
 
 function generationError(message, { clear = true } = {}) {
@@ -527,16 +558,8 @@ function resumePendingGeneration(reason, pendingRecord = recovery.read()) {
   return true;
 }
 
-form.addEventListener('submit', async event => {
-  event.preventDefault();
-  notice.textContent = '';
-  if (!form.reportValidity()) return;
-  const previousPending = recovery.read();
-  if (previousPending && !window.confirm('A recording is still being followed in this tab. Start a new song and stop checking it?')) return;
-  recovery.cancel();
-  recovery.clear();
-  clearLoadedSong();
-  resetPeek();
+async function generateSong({ idea, vibe, language }, hooks = {}) {
+  const requestRun = generationRun;
   performanceAvailable = true;
   performanceButton.hidden = false;
   openPerformance(generateButton);
@@ -553,10 +576,12 @@ form.addEventListener('submit', async event => {
     setBusy(true, writingLines);
     lyricSheet = await writeLyricsAcrossLifecycle({
       token: tokenInput.value,
-      idea: ideaInput.value,
-      vibe: vibeInput.value,
-      language: languageSelect.value
+      idea,
+      vibe,
+      language
     });
+    if (requestRun !== generationRun) throw new Error('This recording was replaced by a newer request.');
+    hooks.onLyrics?.(lyricSheet, requestRun);
 
     // The words exist now. Offer the peek, then record whether or not it is taken.
     peek.hidden = false;
@@ -574,7 +599,7 @@ form.addEventListener('submit', async event => {
       result = await post('/api/generate', {
         jobId,
         token: tokenInput.value,
-        prompt: lyricSheet.prompt || vibeInput.value,
+        prompt: lyricSheet.prompt || vibe,
         lyrics: lyricSheet.lyricsNative || lyricSheet.lyricsRoman
       });
     } finally {
@@ -591,7 +616,11 @@ form.addEventListener('submit', async event => {
       resumePendingGeneration('pending-response', pending);
     } else {
       generationStage = 'load-song';
-      finalizeGeneration({ ...result, jobId: result.jobId || jobId }, pending);
+      const completed = finalizeGeneration({ ...result, jobId: result.jobId || jobId }, pending);
+      if (completed) {
+        await hooks.onReady?.({ lyricSheet, shareReference: result.share_ref, requestRun });
+        return { lyricSheet, shareReference: result.share_ref, requestRun };
+      }
     }
   } catch (error) {
     if (generationStage === 'generate-music' && pending && !Number.isInteger(error.httpStatus)) {
@@ -608,6 +637,8 @@ form.addEventListener('submit', async event => {
     trackSubtitle.textContent = 'Try the mehfil again';
     performanceAvailable = false;
     generationFailed = true;
+    hooks.onFailed?.(error, requestRun);
+    throw error;
   } finally {
     if (awaitingRecovery) return;
     generating = false;
@@ -615,6 +646,24 @@ form.addEventListener('submit', async event => {
     setBusy(false, []);
     if (generationFailed) closePerformance('generation-failed');
   }
+}
+
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  notice.textContent = '';
+  if (!form.reportValidity()) return;
+  const previousPending = recovery.read();
+  if (previousPending && !window.confirm('A recording is still being followed in this tab. Start a new song and stop checking it?')) return;
+  recovery.cancel();
+  recovery.clear();
+  clearLoadedSong();
+  resetPeek();
+  try {
+    await generateSong(
+      { idea: ideaInput.value, vibe: vibeInput.value, language: languageSelect.value },
+      activeRoomDetails ? { onReady: publishGeneratedSongToRoom } : {}
+    );
+  } catch { /* generateSong owns the visible standalone error state. */ }
 });
 
 window.addEventListener('pagehide', () => { lifecycleBackgroundVersion += 1; });
@@ -664,6 +713,16 @@ document.addEventListener('keydown', event => {
   }
 });
 performanceReplay.addEventListener('click', () => {
+  const roomSong = controlledRoomSong();
+  if (roomSong) {
+    roomSend({
+      type: 'playback-updated',
+      shareId: roomSong.shareId,
+      status: 'playing',
+      positionMs: 0
+    });
+    return;
+  }
   performanceReplay.hidden = true;
   hasRevealed = false;
   lyricReveal.hidden = false;
@@ -675,6 +734,17 @@ performanceReplay.addEventListener('click', () => {
 });
 
 playButton.addEventListener('click', () => {
+  const roomSong = controlledRoomSong();
+  if (roomSong) {
+    const sent = roomSend({
+      type: 'playback-updated',
+      shareId: roomSong.shareId,
+      status: audio.paused ? 'playing' : 'paused',
+      positionMs: audio.ended ? 0 : audio.currentTime * 1000
+    });
+    if (!sent) notice.textContent = 'The room is reconnecting. Playback did not change.';
+    return;
+  }
   if (audio.paused) void attemptPlayback('play-button'); else audio.pause();
 });
 audio.addEventListener('play', () => {
@@ -682,12 +752,12 @@ audio.addEventListener('play', () => {
   performanceReplay.hidden = true;
   updateScenePerformance();
   renderPlaybackLyrics();
-  playButton.setAttribute('aria-label', 'Pause');
+  playButton.setAttribute('aria-label', controlledRoomSong() ? 'Pause for everyone' : 'Pause');
 });
 audio.addEventListener('pause', () => {
   player.classList.remove('playing');
   updateScenePerformance();
-  playButton.setAttribute('aria-label', 'Play');
+  playButton.setAttribute('aria-label', controlledRoomSong() ? 'Play for everyone' : 'Play');
 });
 audio.addEventListener('timeupdate', () => {
   seek.value = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
@@ -704,7 +774,26 @@ seek.addEventListener('input', () => {
     renderPlaybackLyrics();
   }
 });
+seek.addEventListener('change', () => {
+  const roomSong = controlledRoomSong();
+  if (!roomSong) return;
+  roomSend({
+    type: 'playback-updated',
+    shareId: roomSong.shareId,
+    status: audio.paused ? 'paused' : 'playing',
+    positionMs: audio.currentTime * 1000
+  });
+});
 audio.addEventListener('ended', () => {
+  const roomSong = controlledRoomSong();
+  if (roomSong) {
+    roomSend({
+      type: 'playback-updated',
+      shareId: roomSong.shareId,
+      status: 'paused',
+      positionMs: audio.duration * 1000
+    });
+  }
   if (!performanceView.hidden) performanceReplay.hidden = false;
 });
 
@@ -725,10 +814,13 @@ async function copyShareLink(url) {
   if (!copied) throw new Error('Copy the link from the message below.');
 }
 
-shareButton.addEventListener('click', async () => {
-  if (!shareReference || !lyricSheet) return;
-  const requestRun = generationRun;
-  const requestReference = shareReference;
+async function uploadCurrentSong({
+  copy = false,
+  requestRun = generationRun,
+  requestReference = shareReference,
+  requestSheet = lyricSheet
+} = {}) {
+  if (!requestReference || !requestSheet) return;
   const requestIsCurrent = () => requestRun === generationRun && requestReference === shareReference;
   shareButton.disabled = true;
   setShareLabel('Sharing');
@@ -736,19 +828,20 @@ shareButton.addEventListener('click', async () => {
     let requestedUrl = shareUrl;
     if (!shareUrl) {
       const result = await post('/api/share', {
-        shareRef: shareReference,
-        title: lyricSheet.title,
-        language: lyricSheet.language,
-        nativeScriptName: lyricSheet.nativeScriptName,
-        isLatinScript: lyricSheet.isLatinScript,
-        lyricsNative: lyricSheet.lyricsNative,
-        lyricsRoman: lyricSheet.lyricsRoman
+        shareRef: requestReference,
+        title: requestSheet.title,
+        language: requestSheet.language,
+        nativeScriptName: requestSheet.nativeScriptName,
+        isLatinScript: requestSheet.isLatinScript,
+        lyricsNative: requestSheet.lyricsNative,
+        lyricsRoman: requestSheet.lyricsRoman
       });
       if (!requestIsCurrent()) return;
       requestedUrl = result.url;
       shareUrl = requestedUrl;
     }
     try {
+      if (!copy) return requestedUrl;
       await copyShareLink(requestedUrl);
       if (!requestIsCurrent()) return;
       setShareLabel('Copied');
@@ -765,7 +858,532 @@ shareButton.addEventListener('click', async () => {
     setShareLabel('Retry');
     notice.className = 'notice';
     notice.textContent = error.message;
+    if (!copy) throw error;
   } finally {
     if (requestIsCurrent()) shareButton.disabled = false;
   }
+}
+
+async function publishGeneratedSongToRoom({ lyricSheet: sheet, shareReference: reference, requestRun }) {
+  if (!activeRoomDetails) return;
+  if (!roomAuthenticated) {
+    throw new Error('Your recording is ready, but the live room is reconnecting. Try sharing it again once connected.');
+  }
+  const url = await uploadCurrentSong({
+    copy: false,
+    requestRun,
+    requestReference: reference,
+    requestSheet: sheet
+  });
+  const match = /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(url).pathname);
+  if (!match) throw new Error('The share service returned an invalid link.');
+  const sent = roomSend({
+    type: 'song-shared',
+    shareId: match[1],
+    lyrics: {
+      title: sheet.title,
+      language: sheet.language,
+      nativeScriptName: sheet.nativeScriptName,
+      isLatinScript: sheet.isLatinScript,
+      lyricsNative: sheet.lyricsNative,
+      lyricsRoman: sheet.lyricsRoman
+    }
+  });
+  if (!sent) throw new Error('Your recording is ready, but the live room lost its connection.');
+  notice.textContent = 'Your recording is ready for the room. Press play when everyone is seated.';
+}
+
+shareButton.addEventListener('click', async () => {
+  const requestRun = generationRun;
+  const requestReference = shareReference;
+  const requestSheet = lyricSheet;
+  const requestIsCurrent = () => requestRun === generationRun && requestReference === shareReference;
+  if (!requestIsCurrent()) return;
+  await uploadCurrentSong({ copy: true, requestRun, requestReference, requestSheet });
 });
+
+function roomSend(message) {
+  if (roomSocket?.readyState !== WebSocket.OPEN || !roomAuthenticated) {
+    return false;
+  }
+  roomSocket.send(JSON.stringify(message));
+  return true;
+}
+
+function currentHostShareId() {
+  if (!shareUrl) return null;
+  return /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(shareUrl).pathname)?.[1] || null;
+}
+
+function controlledRoomSong() {
+  const song = roomSnapshot?.currentSong;
+  return song && currentHostShareId() === song.shareId ? song : null;
+}
+
+function roomPlaybackPositionMs(playback) {
+  const elapsed = playback.status === 'playing'
+    ? Math.max(0, Date.now() - playback.changedAt)
+    : 0;
+  return Math.max(0, playback.positionMs + elapsed);
+}
+
+function ensureHostRoomSong(song) {
+  if (currentHostShareId() === song.shareId) return;
+  const origin = new URL(activeRoomDetails.joinUrl).origin;
+  shareUrl = `${origin}/s/${song.shareId}`;
+  shareReference = null;
+  lyricSheet = song.lyrics;
+  audio.src = `${shareUrl}/audio`;
+  trackTitle.textContent = song.title || 'Mehfil recording';
+  trackSubtitle.textContent = song.language || 'MiniMax Music 3';
+  playButton.disabled = false;
+  shareButton.disabled = true;
+  download.href = audio.src;
+  download.setAttribute('aria-disabled', 'false');
+  performanceAvailable = true;
+  performanceButton.hidden = !performanceView.hidden;
+  renderPlaybackLyrics();
+  audio.load();
+}
+
+function applyHostRoomPlayback(song) {
+  if (!song) {
+    clearTimeout(roomPlaybackTimer);
+    roomPlaybackTimer = null;
+    roomPlayback.hidden = true;
+    roomPlaybackRevision = null;
+    return;
+  }
+
+  ensureHostRoomSong(song);
+  const playback = song.playback || {
+    status: 'paused',
+    positionMs: 0,
+    changedAt: song.startedAt
+  };
+  roomPlayback.hidden = false;
+  roomPlaybackState.textContent = playback.status === 'playing' ? 'Playing' : 'Paused';
+  const revision = `${song.shareId}:${playback.status}:${playback.positionMs}:${playback.changedAt}`;
+  if (revision === roomPlaybackRevision) return;
+  clearTimeout(roomPlaybackTimer);
+  roomPlaybackTimer = null;
+  roomPlaybackRevision = revision;
+
+  const apply = () => {
+    const desired = roomPlaybackPositionMs(playback) / 1000;
+    if (Number.isFinite(audio.duration)) {
+      audio.currentTime = Math.min(desired, audio.duration);
+    } else {
+      audio.currentTime = desired;
+    }
+    if (playback.status === 'playing') void attemptPlayback('room-sync');
+    else audio.pause();
+  };
+
+  if (audio.readyState < 1) {
+    audio.addEventListener('loadedmetadata', () => applyHostRoomPlayback(song), { once: true });
+    roomPlaybackRevision = null;
+    return;
+  }
+  if (playback.status === 'playing' && playback.changedAt > Date.now()) {
+    audio.pause();
+    audio.currentTime = playback.positionMs / 1000;
+    roomPlaybackTimer = setTimeout(apply, playback.changedAt - Date.now());
+  } else {
+    apply();
+  }
+}
+
+function roomSession() {
+  try {
+    return JSON.parse(sessionStorage.getItem(ROOM_SESSION_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function setRoomButtonLabel(wide, compact = wide) {
+  openRoomWideLabel.textContent = wide;
+  openRoomCompactLabel.textContent = compact;
+}
+
+function clearRoomSession() {
+  clearTimeout(roomConnectTimer);
+  roomConnectTimer = null;
+  clearTimeout(roomPlaybackTimer);
+  roomPlaybackTimer = null;
+  roomPlaybackRevision = null;
+  roomClosing = false;
+  roomTerminal = true;
+  sessionStorage.removeItem(ROOM_SESSION_KEY);
+  roomSocket?.close();
+  roomSocket = null;
+  roomSnapshot = null;
+  roomAuthenticated = false;
+  activeRoomDetails = null;
+  roomMessage.textContent = '';
+  roomPlayback.hidden = true;
+  roomPanel.hidden = true;
+  openRoomButton.classList.remove('is-live');
+  openRoomButton.setAttribute('aria-expanded', 'false');
+  openRoomButton.setAttribute('aria-label', 'Open this mehfil to friends');
+  setRoomButtonLabel('Invite friends', 'Invite');
+}
+
+function setRoomPanelOpen(open, { focus = false } = {}) {
+  roomPanel.hidden = !open;
+  openRoomButton.setAttribute('aria-expanded', String(open));
+  if (open && focus) document.querySelector('#room-heading').focus();
+}
+
+function roomButton(label, action, value) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  button.addEventListener('click', () => action(value));
+  return button;
+}
+
+function roomReorderTargets(queue, itemId) {
+  const movable = queue.filter(item => !['declined', 'ready'].includes(item.status));
+  const position = movable.findIndex(item => item.id === itemId);
+  const fullIndex = queue.findIndex(item => item.id === itemId);
+  return {
+    up: position > 0
+      ? queue.findIndex(item => item.id === movable[position - 1].id)
+      : fullIndex,
+    down: position >= 0 && position < movable.length - 1
+      ? queue.findIndex(item => item.id === movable[position + 1].id)
+      : fullIndex
+  };
+}
+
+function hostRoomView(state, joinUrl) {
+  const origin = new URL(joinUrl).origin;
+  const names = new Map(state.participants.map(participant => [
+    participant.id,
+    participant.name || 'Listener'
+  ]));
+  return {
+    participants: state.participants.map(participant => ({
+      id: participant.id,
+      name: participant.name || 'Listener'
+    })),
+    queue: state.queue.map(item => ({
+      ...item,
+      requesterName: names.get(item.participantId) || 'Listener'
+    })),
+    setlist: state.setlist.map(item => ({
+      ...item,
+      url: `${origin}/s/${item.shareId}`
+    }))
+  };
+}
+
+function participantRow(participant) {
+  const row = document.createElement('li');
+  row.append(
+    participant.name,
+    roomButton(
+      'Kick',
+      participantId => roomSend({ type: 'kicked', participantId }),
+      participant.id
+    )
+  );
+  return row;
+}
+
+function setlistRow(song) {
+  const row = document.createElement('li');
+  const link = document.createElement('a');
+  link.href = song.url;
+  link.target = '_blank';
+  link.rel = 'noreferrer';
+  link.textContent = song.title;
+  row.append(link);
+  return row;
+}
+
+function queueRow(item, queue) {
+  const targets = roomReorderTargets(queue, item.id);
+  const row = document.createElement('li');
+  row.append(
+    `${item.requesterName}: ${item.idea} · ${item.status}`,
+    document.createElement('br')
+  );
+
+  if (item.status === 'pending') {
+    row.append(roomButton(
+      'Accept',
+      requestId => roomSend({ type: 'request-accepted', requestId }),
+      item.id
+    ));
+  }
+
+  if (['pending', 'accepted'].includes(item.status)) {
+    row.append(roomButton(
+      '↑',
+      requestId => roomSend({
+        type: 'request-reordered',
+        requestId,
+        toIndex: targets.up
+      }),
+      item.id
+    ));
+    row.append(roomButton(
+      '↓',
+      requestId => roomSend({
+        type: 'request-reordered',
+        requestId,
+        toIndex: targets.down
+      }),
+      item.id
+    ));
+    row.append(roomButton(
+      'Decline',
+      requestId => roomSend({ type: 'request-declined', requestId }),
+      item.id
+    ));
+  }
+
+  if (item.status === 'accepted') {
+    row.append(roomButton('Record', recordRoomRequest, item.id));
+  }
+  return row;
+}
+
+function renderHostRoom(state) {
+  roomSnapshot = state;
+  const view = hostRoomView(state, activeRoomDetails.joinUrl);
+  roomStateLabel.textContent = state.expiredAt ? 'expired' : 'connected';
+  roomPresence.textContent = `${state.listenerCount} listener${state.listenerCount === 1 ? '' : 's'}`;
+  setRoomButtonLabel(`Live · ${state.listenerCount}`);
+  openRoomButton.setAttribute('aria-label', `Manage live mehfil, ${state.listenerCount} listener${state.listenerCount === 1 ? '' : 's'}`);
+  hostParticipants.replaceChildren(...view.participants.map(participantRow));
+  hostSetlist.replaceChildren(...view.setlist.map(setlistRow));
+
+  const activeQueue = view.queue.filter(
+    item => !['declined', 'ready'].includes(item.status)
+  );
+  hostQueue.replaceChildren(...activeQueue.map(item => queueRow(item, state.queue)));
+  applyHostRoomPlayback(state.currentSong);
+  if (state.expiredAt) clearRoomSession();
+}
+
+function connectHostRoom(details) {
+  clearTimeout(roomConnectTimer);
+  roomTerminal = false;
+  roomAuthenticated = false;
+  activeRoomDetails = details;
+  setRoomPanelOpen(true, { focus: true });
+  openRoomButton.classList.add('is-live');
+  setRoomButtonLabel(roomRetry ? 'Reconnecting…' : 'Opening…', roomRetry ? 'Retrying…' : 'Opening…');
+  roomCode.textContent = details.roomId;
+  roomLink.value = details.joinUrl;
+  roomStateLabel.textContent = roomRetry ? 'reconnecting' : 'connecting';
+  roomMessage.textContent = roomRetry
+    ? 'Trying to bring the room back…'
+    : 'Preparing a place for your listeners…';
+  const socket = new WebSocket(details.socketUrl);
+  roomSocket = socket;
+  roomConnectTimer = setTimeout(() => {
+    if (socket !== roomSocket || roomAuthenticated) return;
+    roomStateLabel.textContent = 'offline';
+    roomMessage.textContent = 'The live room did not answer. Retrying…';
+    setRoomButtonLabel('Room offline', 'Offline');
+    socket.close();
+  }, 8_000);
+
+  socket.addEventListener('open', () => {
+    clearTimeout(roomConnectTimer);
+    roomConnectTimer = null;
+    roomRetry = 0;
+    socket.send(JSON.stringify({
+      type: 'auth-host',
+      secret: details.hostSecret
+    }));
+  });
+
+  socket.addEventListener('message', event => {
+    let message;
+    try {
+      message = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+
+    if (message.type === 'snapshot') {
+      roomAuthenticated = true;
+      roomMessage.textContent = '';
+      renderHostRoom(message.state);
+    }
+    if (message.type === 'error') {
+      notice.textContent = message.code;
+      if (message.code === 'auth-failed' || message.code === 'room-expired') {
+        clearRoomSession();
+      }
+    }
+  });
+
+  socket.addEventListener('error', () => {
+    if (socket !== roomSocket || roomTerminal) return;
+    roomStateLabel.textContent = 'offline';
+    roomMessage.textContent = 'The live room lost its connection. Retrying…';
+    setRoomButtonLabel('Room offline', 'Offline');
+  });
+
+  socket.addEventListener('close', event => {
+    clearTimeout(roomConnectTimer);
+    roomConnectTimer = null;
+    if (socket !== roomSocket) return;
+    roomAuthenticated = false;
+    if (roomTerminal) return;
+    const roomUnavailable = event.code === 4001
+      || event.code === 4004
+      || Date.now() >= details.expiresAt;
+    if (roomUnavailable) {
+      clearRoomSession();
+      return;
+    }
+    if (roomClosing) return;
+
+    roomStateLabel.textContent = 'reconnecting';
+    setRoomButtonLabel('Reconnecting…', 'Retrying…');
+    const delay = Math.min(1_000 * 2 ** roomRetry, 30_000);
+    roomRetry = Math.min(roomRetry + 1, 6);
+    setTimeout(() => {
+      if (!roomTerminal) connectHostRoom(details);
+    }, delay);
+  });
+}
+
+async function runRoomRecordingLifecycle({
+  requestId,
+  run,
+  isCurrent,
+  generate,
+  upload,
+  send
+}) {
+  if (!send({ type: 'recording-started', requestId })) return 'disconnected';
+  try {
+    const generated = await generate({
+      onLyrics: sheet => {
+        if (!isCurrent(run)) return;
+        send({
+          type: 'lyrics-ready',
+          requestId,
+          lyrics: {
+            title: sheet.title,
+            language: sheet.language,
+            nativeScriptName: sheet.nativeScriptName,
+            isLatinScript: sheet.isLatinScript,
+            lyricsNative: sheet.lyricsNative,
+            lyricsRoman: sheet.lyricsRoman
+          }
+        });
+      }
+    });
+    if (!isCurrent(run)) return 'stale';
+    const url = await upload(generated);
+    if (!isCurrent(run)) return 'stale';
+    const match = /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(url).pathname);
+    if (!match) throw new Error('The share service returned an invalid link.');
+    send({ type: 'song-ready', requestId, shareId: match[1] });
+    return 'ready';
+  } catch {
+    if (isCurrent(run)) send({ type: 'recording-failed', requestId });
+    return 'failed';
+  }
+}
+
+async function recordRoomRequest(requestId) {
+  const item = roomSnapshot?.queue.find(value => value.id === requestId);
+  if (!item || item.status !== 'accepted' || generating) return;
+
+  ideaInput.value = item.idea;
+  vibeInput.value = item.vibe;
+  languageSelect.value = [...languageSelect.options]
+    .some(option => option.value === item.language)
+    ? item.language
+    : 'auto';
+  clearLoadedSong();
+  resetPeek();
+  const run = generationRun;
+  const outcome = await runRoomRecordingLifecycle({
+    requestId,
+    run,
+    isCurrent: value => value === generationRun,
+    generate: hooks => generateSong({
+      idea: item.idea,
+      vibe: item.vibe,
+      language: item.language || 'auto'
+    }, hooks),
+    upload: generated => uploadCurrentSong({
+      copy: false,
+      requestRun: generated.requestRun,
+      requestReference: generated.shareReference,
+      requestSheet: generated.lyricSheet
+    }),
+    send: roomSend
+  });
+  if (outcome === 'disconnected') {
+    notice.className = 'notice';
+    notice.textContent = 'The room is reconnecting. Wait for it to reconnect, then press Record again.';
+  }
+}
+
+openRoomButton.addEventListener('click', async () => {
+  if (activeRoomDetails) {
+    setRoomPanelOpen(roomPanel.hidden, { focus: roomPanel.hidden });
+    return;
+  }
+  openRoomButton.disabled = true;
+  setRoomButtonLabel('Opening…');
+  try {
+    const details = await post('/api/rooms', {});
+    sessionStorage.setItem(ROOM_SESSION_KEY, JSON.stringify({
+      roomId: details.roomId,
+      socketUrl: details.socketUrl,
+      joinUrl: details.joinUrl,
+      hostSecret: details.hostSecret,
+      expiresAt: details.expiresAt
+    }));
+    connectHostRoom(details);
+  } catch (error) {
+    notice.textContent = error.message;
+  } finally {
+    openRoomButton.disabled = false;
+    if (!activeRoomDetails) setRoomButtonLabel('Invite friends', 'Invite');
+  }
+});
+
+document.querySelector('#dismiss-room').addEventListener('click', () => {
+  setRoomPanelOpen(false);
+  openRoomButton.focus();
+});
+
+document.querySelector('#copy-room').addEventListener('click', () => {
+  copyShareLink(roomLink.value);
+});
+
+document.querySelector('#close-room').addEventListener('click', () => {
+  if (roomClosing) return;
+  if (!roomSend({ type: 'room-expired' })) {
+    notice.className = 'notice';
+    notice.textContent = 'The room was removed from this device. Its public link will expire automatically.';
+    clearRoomSession();
+    return;
+  }
+
+  roomClosing = true;
+  roomStateLabel.textContent = 'closing';
+  setRoomButtonLabel('Closing…');
+  setTimeout(() => {
+    if (roomClosing) clearRoomSession();
+  }, 1_500);
+});
+
+const savedRoom = roomSession();
+if (savedRoom && savedRoom.expiresAt > Date.now()) connectHostRoom(savedRoom);
+else if (savedRoom) clearRoomSession();

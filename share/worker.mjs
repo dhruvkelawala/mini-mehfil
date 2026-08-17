@@ -1,4 +1,7 @@
 import { playbackPage } from './playback-page.mjs';
+import { createDurableRoomDirectory, createRoomRouter } from './rooms.mjs';
+
+export { MehfilRoom } from './mehfil-room.mjs';
 
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 const MAX_REQUEST_BYTES = MAX_AUDIO_BYTES + 128 * 1024;
@@ -426,15 +429,21 @@ export function createShareHandler({ storage, rateLimit = async () => true, idGe
 }
 
 export default {
-  fetch(request, env) {
+  async fetch(request, env) {
     const storage = createR2Storage(env.SHARES);
     const rateLimit = async ip => (await env.UPLOAD_RATE_LIMIT.limit({ key: ip })).success;
-    return createShareHandler({
+    const shareHandler = createShareHandler({
       storage,
       rateLimit,
       uploadSecret: env.MEHFIL_SHARE_SECRET,
       publicBaseUrl: env.MEHFIL_PUBLIC_URL,
       previewImageUrl: env.SHARE_PREVIEW_IMAGE_URL
-    })(request);
+    });
+    const routeRoomRequest = createRoomRouter({
+      directory: createDurableRoomDirectory(env.ROOMS),
+      rateLimit,
+      secret: env.MEHFIL_SHARE_SECRET
+    });
+    return await routeRoomRequest(request) || shareHandler(request);
   }
 };

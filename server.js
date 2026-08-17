@@ -125,7 +125,7 @@ function publicFailure(message, code = 'GENERATION_FAILED') {
   return { code, message: safe };
 }
 
-function staticFile(req, res) {
+function staticFile(req, res, shareBaseUrl = '') {
   const pathname = new URL(req.url, 'http://localhost').pathname;
   const requestPath = pathname === '/' ? '/index.html' : pathname;
   const filePath = path.resolve(PUBLIC_DIR, `.${requestPath}`);
@@ -138,12 +138,15 @@ function staticFile(req, res) {
       res.writeHead(error.code === 'ENOENT' ? 404 : 500).end('Not found');
       return;
     }
+    const roomSources = shareBaseUrl
+      ? `${shareBaseUrl} ${shareBaseUrl.replace(/^https:/, 'wss:')}`
+      : '';
     res.writeHead(200, {
       'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream',
       'Cache-Control': 'no-cache',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
-      'Content-Security-Policy': "default-src 'self'; connect-src 'self' https://*.minimax.io; media-src 'self' https: blob:; img-src 'self' data: https:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'"
+      'Content-Security-Policy': `default-src 'self'; connect-src 'self' https://*.minimax.io${roomSources ? ` ${roomSources}` : ''}; media-src 'self' https: blob:; img-src 'self' data: https:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'`
     });
     res.end(data);
   });
@@ -217,6 +220,8 @@ function createServer(options = {}) {
     }
     return null;
   }
+  const roomTimeoutMs = options.roomTimeoutMs || 2 * 60 * 1000;
+  const generatedAudio = new Map();
 
   return http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/write-lyrics') {
@@ -433,7 +438,41 @@ function createServer(options = {}) {
       }
     }
 
-    if (req.method === 'GET' || req.method === 'HEAD') return staticFile(req, res);
+    if (req.method === 'POST' && req.url === '/api/rooms') {
+      try {
+        if (!sharingConfigured) return sendJson(res, 503, { error: 'Live rooms are not configured on this mehfil.' });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), roomTimeoutMs);
+        let response;
+        try {
+          response = await fetchImpl(`${shareBaseUrl}/rooms`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${shareSecret}`, 'Content-Type': 'application/json' },
+            body: '{}',
+            signal: controller.signal
+          });
+        } finally { clearTimeout(timeout); }
+        const text = await response.text();
+        let result; try { result = JSON.parse(text); } catch { result = { error: 'The room service returned an unreadable response.' }; }
+        if (!response.ok) return sendJson(res, response.status, { error: result.error || 'The room could not be opened.' });
+        const roomId = typeof result.roomId === 'string' ? result.roomId : '';
+        if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/.test(roomId)) throw Object.assign(new Error('The room service returned invalid room details.'), { status: 502 });
+        let joinUrl; let socketUrl;
+        try { joinUrl = new URL(result.joinUrl); socketUrl = new URL(result.socketUrl); } catch { throw Object.assign(new Error('The room service returned invalid room details.'), { status: 502 }); }
+        const configured = new URL(shareBaseUrl);
+        const validJoin = joinUrl.protocol === 'https:' && joinUrl.origin === configured.origin && joinUrl.pathname === `/r/${roomId}` && !joinUrl.search && !joinUrl.hash && !joinUrl.username && !joinUrl.password;
+        const validSocket = socketUrl.protocol === 'wss:' && socketUrl.host === configured.host && socketUrl.pathname === `/rooms/${roomId}/ws` && !socketUrl.search && !socketUrl.hash && !socketUrl.username && !socketUrl.password;
+        const validSecret = typeof result.hostSecret === 'string' && /^[A-Za-z0-9_-]{43}$/.test(result.hostSecret);
+        const expiresAt = Number(result.expiresAt);
+        if (!validJoin || !validSocket || !validSecret || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw Object.assign(new Error('The room service returned invalid room details.'), { status: 502 });
+        return sendJson(res, 201, { roomId, joinUrl: joinUrl.href, socketUrl: socketUrl.href, hostSecret: result.hostSecret, expiresAt });
+      } catch (error) {
+        if (error.name === 'AbortError') return sendJson(res, 504, { error: 'Opening the room took too long. Please retry.' });
+        return sendJson(res, error.status || 502, { error: error.message || 'The room could not be opened.' });
+      }
+    }
+
+    if (req.method === 'GET' || req.method === 'HEAD') return staticFile(req, res, shareBaseUrl);
     res.writeHead(405, { Allow: 'GET, HEAD, POST' }).end('Method not allowed');
   });
 }

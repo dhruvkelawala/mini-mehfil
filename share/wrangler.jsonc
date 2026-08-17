@@ -12,6 +12,14 @@
       "bucket_name": "mini-mehfil-shares"
     }
   ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOMS", "class_name": "MehfilRoom" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["MehfilRoom"] }
+  ],
   "ratelimits": [
     {
       "name": "UPLOAD_RATE_LIMIT",

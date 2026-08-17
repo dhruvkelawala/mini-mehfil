@@ -1,8 +1,9 @@
 # Share Worker
 
-The service stores immutable shared MP3 recordings and lyric sheets, plus private
-24-hour generation checkpoints used to recover paid results after browser
-suspension. It has no database and uses only the Cloudflare runtime.
+The Worker stores immutable MP3 recordings and sibling JSON lyric sheets in R2,
+plus private 24-hour generation checkpoints used to recover paid results after
+browser suspension. It runs optional live rooms in the `MehfilRoom` Durable Object,
+never generates music, and never sees the host's MiniMax key.
 
 ## Deploy
 
@@ -16,6 +17,31 @@ npx wrangler r2 bucket lifecycle add mini-mehfil-shares expire-generation-jobs -
 npx wrangler r2 bucket lifecycle list mini-mehfil-shares
 npx wrangler deploy
 ```
+
+`wrangler.jsonc` binds `ROOMS` to `MehfilRoom`; the `v1` migration adds it as a
+SQLite-backed Durable Object class. Deploy this migration to the same Worker as
+R2 sharing. It does not replace the `SHARES` or `UPLOAD_RATE_LIMIT` bindings.
+
+## Room architecture
+
+The Durable Object path is deliberately explicit:
+
+```text
+wrangler.jsonc: ROOMS binding -> MehfilRoom
+worker.mjs: compose sharing and room routers
+rooms.mjs: room HTTP routes and Durable Object namespace adapter
+mehfil-room.mjs: exported Durable Object lifecycle class
+room-transport.mjs: authentication, sockets, persistence, and expiry
+room-state.mjs: pure room state transitions and participant projections
+room-client.mjs: listener browser behavior
+room-page.mjs: listener HTML and CSS shell
+```
+
+`createDurableRoomDirectory()` is the only implementation that knows how to
+turn a room code into `env.ROOMS.idFromName(roomId)`. Cloudflare therefore sends
+every request for a code to the same `MehfilRoom` object. The router and its
+tests use the smaller directory interface and do not know about Durable Object
+stubs.
 
 Use the same long, random value for the Worker secret and the local proxy's
 `MEHFIL_SHARE_SECRET`. The secret is server-only: never add it to browser code,
@@ -43,6 +69,22 @@ Deploy backward-compatibly: deploy the additive Worker routes and verify the R2
 binding, secret, and both lifecycle rules before deploying the Vercel app. To
 roll back the app, leave the Worker routes deployed. To roll back the Worker,
 roll back the Vercel app first so it does not advertise unavailable recovery.
+
+## Live room security and limits
+
+Room creation uses the existing server-only `MEHFIL_SHARE_SECRET`. The Worker
+returns an eight-character public room code and a separate 32-byte host secret.
+Only the room code appears in `/r/ROOMCODE` and `/rooms/ROOMCODE/ws`; the host
+secret is sent in the first WebSocket message and kept in host `sessionStorage`.
+Listeners receive a separate resume credential, also stored only in
+`sessionStorage` and represented by a digest in Durable Object storage.
+
+Defaults are 20 connected listeners, 50 queued requests, 40 characters for a
+name, 200 for an idea, 120 for a vibe, and 40 for a language. Messages are
+limited to 16 KiB and setlists to 100 songs. Every room has a six-hour absolute
+cap and expires after a 15-minute period with neither host nor listeners
+connected. Finished recordings use the existing R2 share pipeline; best-effort
+playback synchronization schedules a common start 1.5 seconds ahead.
 
 After deployment, configure both local environment variables and start the app:
 
@@ -84,3 +126,15 @@ npm start
    its checkpoint, offer **Check generation**, and never POST generation again.
    Inspect the R2 job and logs to confirm no token, prompt, lyrics, request body,
    or signed URL query appears outside the private completed `source` field.
+
+### Live room smoke test
+
+1. Deploy the Worker and verify the `MehfilRoom` Durable Object migration succeeds.
+2. Open a room locally and confirm the copied listener URL contains no secret.
+3. Join from private desktop and iOS Safari sessions without an account or key.
+4. Submit, accept, reorder, decline, record, peek, and kick requests.
+5. Confirm the host key is absent from room frames, Worker logs, URLs, and R2 metadata.
+6. Confirm clients start a finished song near the same offset and a mid-song join seeks forward.
+7. Refresh the host and disconnect/reconnect a listener; confirm continuity.
+8. Confirm setlist links work and an expired room closes gracefully.
+9. In a non-production deployment only, temporarily lower the empty and absolute expiry constants to exercise both alarms, then restore the six-hour and 15-minute production values.

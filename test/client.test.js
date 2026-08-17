@@ -13,7 +13,7 @@ const playbackPage = fs.readFileSync(path.join(__dirname, '..', 'share', 'playba
 function functionBody(name) {
   const start = app.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `${name} should exist`);
-  const open = app.indexOf('{', start);
+  const open = app.indexOf('{', app.indexOf(')', start));
   let depth = 0;
   for (let index = open; index < app.length; index += 1) {
     if (app[index] === '{') depth += 1;
@@ -154,6 +154,21 @@ function browserHarness({ deferFirstLyrics = false } = {}) {
   };
 }
 
+function functionSource(name) {
+  const plain = app.indexOf(`function ${name}(`);
+  const asyncStart = app.indexOf(`async function ${name}(`);
+  const start = asyncStart >= 0 && (plain < 0 || asyncStart < plain) ? asyncStart : plain;
+  assert.notEqual(start, -1, `${name} should exist`);
+  const open = app.indexOf('{', app.indexOf(')', start));
+  let depth = 0;
+  for (let index = open; index < app.length; index += 1) {
+    if (app[index] === '{') depth += 1;
+    if (app[index] === '}') depth -= 1;
+    if (depth === 0) return app.slice(start, index + 1);
+  }
+  assert.fail(`${name} should have a complete source`);
+}
+
 test('player controls use SVG icons instead of platform-dependent glyphs', () => {
   const start = html.indexOf('<section class="player-shell"');
   const player = html.slice(start, html.indexOf('</section>', start));
@@ -194,6 +209,42 @@ test('a stale share request cannot mutate a later generation', () => {
   assert.match(shareHandler, /const requestRun\s*=\s*generationRun/);
   assert.match(shareHandler, /const requestReference\s*=\s*shareReference/);
   assert.match(shareHandler, /requestRun\s*===\s*generationRun\s*&&\s*requestReference\s*===\s*shareReference/);
+});
+
+test('a room upload keeps the finished audio paired with its own lyric sheet', async () => {
+  const uploadCurrentSong = Function(
+    'shareReference', 'lyricSheet', 'generationRun', 'shareButton',
+    'setShareLabel', 'shareUrl', 'post', 'copyShareLink', 'notice',
+    `return (${functionSource('uploadCurrentSong')})`
+  )(
+    'audio-reference-b',
+    { title: 'Old song', language: 'English' },
+    2,
+    { disabled: false },
+    () => {},
+    null,
+    async (_url, payload) => {
+      assert.equal(payload.title, 'New song');
+      assert.equal(payload.lyricsNative, 'new words');
+      return { url: 'https://share.example/s/AbCdEfGhIjKlMnOp' };
+    },
+    async () => {},
+    { className: '', textContent: '' }
+  );
+
+  await uploadCurrentSong({
+    copy: false,
+    requestRun: 2,
+    requestReference: 'audio-reference-b',
+    requestSheet: {
+      title: 'New song',
+      language: 'Hindi',
+      nativeScriptName: 'Devanagari',
+      isLatinScript: false,
+      lyricsNative: 'new words',
+      lyricsRoman: 'naye bol'
+    }
+  });
 });
 
 test('a new generation clears the previous recording before changing lyric state', () => {
@@ -332,4 +383,57 @@ test('only a genuine status outage reveals a neutral Check generation action', (
   assert.equal(browser.element('#notice').textContent, 'We’re having trouble checking your recording. It may still be finishing.');
   assert.doesNotMatch(browser.element('#notice').textContent, /checkpoint|recovery|aborted|retrying/i);
   assert.equal(browser.state.generatePosts, 0);
+});
+test('standalone generation is extracted behind a thin form caller',()=>{assert.match(app,/async function generateSong\(\{ idea, vibe, language \}, hooks = \{\}\)/);const handler=app.slice(app.indexOf("form.addEventListener('submit'"),app.indexOf("performanceClose.addEventListener"));assert.match(handler,/clearLoadedSong\(\)[\s\S]*resetPeek\(\)[\s\S]*await generateSong/);});
+test('main generation publishes its finished song into an active room', () => {
+  const handler = app.slice(
+    app.indexOf("form.addEventListener('submit'"),
+    app.indexOf("performanceClose.addEventListener")
+  );
+  assert.match(handler, /publishGeneratedSongToRoom/);
+  const publish = functionSource('publishGeneratedSongToRoom');
+  assert.match(publish, /uploadCurrentSong/);
+  assert.match(publish, /type: 'song-shared'/);
+  assert.match(publish, /shareId/);
+  assert.match(publish, /lyrics/);
+});
+test('host room credentials remain session-only and authenticate first',()=>{assert.match(app,/sessionStorage\.setItem\(ROOM_SESSION_KEY/);assert.doesNotMatch(app,/localStorage/);assert.match(app,/new WebSocket\(details\.socketUrl\)/);assert.match(app,/socket\.send\(JSON\.stringify\(\{[\s\S]*type: 'auth-host',[\s\S]*secret: details\.hostSecret[\s\S]*\}\)\)/);assert.doesNotMatch(app,/details\.socketUrl\s*\+.*hostSecret|URLSearchParams.*hostSecret/);});
+test('host player publishes authoritative room playback', () => {
+  const playback = functionSource('applyHostRoomPlayback');
+  const controlled = functionSource('controlledRoomSong');
+  assert.match(controlled, /roomSnapshot\?\.currentSong/);
+  assert.match(controlled, /currentHostShareId\(\) === song\.shareId/);
+  assert.match(playback, /playback\.changedAt/);
+  assert.match(playback, /roomPlaybackPositionMs/);
+  assert.match(playback, /attemptPlayback\('room-sync'\)/);
+  assert.match(playback, /audio\.pause\(\)/);
+  assert.match(app, /type: 'playback-updated'/);
+  assert.match(app, /status: audio\.paused \? 'paused' : 'playing'/);
+  assert.match(html, /id="room-playback"[\s\S]*Your player controls the music for everyone/);
+});
+test('room recording lifecycle executes paid work and events in runtime order',async()=>{const lifecycle=Function(`return (${functionSource('runRoomRecordingLifecycle')})`)();const sequence=[];const sheet={title:'Rain',language:'Hindi',nativeScriptName:'Devanagari',isLatinScript:false,lyricsNative:'बारिश',lyricsRoman:'baarish'};const result=await lifecycle({requestId:'q1',run:1,isCurrent:()=>true,send:event=>{sequence.push(event.type);return true},generate:async hooks=>{sequence.push('generate');hooks.onLyrics(sheet);sequence.push('generated')},upload:async()=>{sequence.push('upload');return'https://share.example/s/AbCdEfGhIjKlMnOp'}});assert.equal(result,'ready');assert.deepEqual(sequence,['recording-started','generate','lyrics-ready','generated','upload','song-ready']);const failed=[];await lifecycle({requestId:'q2',run:1,isCurrent:()=>true,send:event=>{failed.push(event.type);return true},generate:async hooks=>hooks.onLyrics(sheet),upload:async()=>{throw new Error('bucket')}});assert.deepEqual(failed,['recording-started','lyrics-ready','recording-failed']);let generated=false,uploaded=false;const disconnected=await lifecycle({requestId:'q3',run:1,isCurrent:()=>true,send:()=>false,generate:async()=>{generated=true},upload:async()=>{uploaded=true}});assert.equal(disconnected,'disconnected');assert.equal(generated,false);assert.equal(uploaded,false);const body=functionBody('recordRoomRequest');assert.match(body,/item\.status !== 'accepted'/);assert.match(body,/runRoomRecordingLifecycle/);assert.match(body,/room is reconnecting/);});
+test('host room treats auth close as terminal and waits for expiry acknowledgement',()=>{const connect=functionBody('connectHostRoom');assert.match(connect,/event\.code === 4001[\s\S]*clearRoomSession/);assert.match(connect,/if \(roomTerminal\) return/);const clear=functionBody('clearRoomSession');assert.match(clear,/roomTerminal = true/);const closeHandler=app.slice(app.indexOf("document.querySelector('#close-room')"));assert.match(closeHandler,/roomSend\(\{ type: 'room-expired' \}\)[\s\S]*setTimeout/);assert.doesNotMatch(closeHandler,/roomSend\(\{ type: 'room-expired' \}\);\s*clearRoomSession/);});
+test('host reorder targets use full queue indices when terminal rows are hidden',()=>{const targets=Function(`return (${functionSource('roomReorderTargets')})`)();const queue=[{id:'done',status:'ready'},{id:'a',status:'pending'},{id:'declined',status:'declined'},{id:'b',status:'accepted'}];assert.deepEqual(targets(queue,'a'),{up:1,down:3});assert.deepEqual(targets(queue,'b'),{up:1,down:3});});
+test('host view covers every participant, requester names, and Worker-origin setlist links',()=>{const view=Function(`return (${functionSource('hostRoomView')})`)();const state={participants:[{id:'p1',name:'Ada'},{id:'p2',name:''}],queue:[{id:'q1',participantId:'p1',idea:'Rain',status:'ready'},{id:'q2',participantId:'p2',idea:'Sun',status:'declined'}],setlist:[{shareId:'AbCdEfGhIjKlMnOp',title:'Rain'}]};assert.deepEqual(view(state,'https://worker.example/r/ABCDEFGH'),{participants:[{id:'p1',name:'Ada'},{id:'p2',name:'Listener'}],queue:[{...state.queue[0],requesterName:'Ada'},{...state.queue[1],requesterName:'Listener'}],setlist:[{...state.setlist[0],url:'https://worker.example/s/AbCdEfGhIjKlMnOp'}]});const render=functionBody('renderHostRoom');const participant=functionBody('participantRow');const queue=functionBody('queueRow');assert.match(render,/hostParticipants\.replaceChildren/);assert.match(participant,/participant\.name/);assert.match(queue,/requesterName/);assert.match(render,/hostSetlist\.replaceChildren/);});
+test('host can abandon a room that cannot reconnect',()=>{const closeHandler=app.slice(app.indexOf("document.querySelector('#close-room')"));assert.match(closeHandler,/if \(!roomSend\(\{ type: 'room-expired' \}\)\)[\s\S]*removed from this device[\s\S]*clearRoomSession\(\)[\s\S]*return/);const send=functionBody('roomSend');assert.match(send,/return false/);assert.match(send,/roomAuthenticated/);assert.match(send,/return true/);});
+test('host panel follows the song composer in the primary task column', () => {
+  for (const id of [
+    'open-room', 'room-panel', 'room-link', 'host-participants',
+    'host-queue', 'host-setlist', 'dismiss-room', 'close-room'
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+
+  const topbar = html.slice(html.indexOf('<header class="topbar">'), html.indexOf('</header>'));
+  const identityStart = html.indexOf('<section class="identity"');
+  const identity = html.slice(identityStart, html.indexOf('</section>', identityStart));
+  assert.match(topbar, /id="open-room"/);
+  assert.doesNotMatch(identity, /id="open-room"|id="room-panel"/);
+  const main = html.slice(html.indexOf('<main>'), html.indexOf('</main>'));
+  assert.match(main, /id="song-form"[\s\S]*id="room-panel"/);
+  assert.match(app, /setRoomPanelOpen\(roomPanel\.hidden/);
+  assert.match(app, /document\.querySelector\('#dismiss-room'\)/);
+  for (const label of ['Accept', 'Decline', 'Record', 'Kick']) {
+    assert.ok(app.includes(`'${label}'`));
+  }
 });
