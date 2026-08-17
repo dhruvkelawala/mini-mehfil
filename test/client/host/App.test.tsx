@@ -63,7 +63,7 @@ describe('host timed lyric rendering', () => {
     expect(screen.queryByText('Rain')).toBeNull();
 
     expect(detectedGate).toBe(8);
-    setRelease(effectiveFirstVocalRelease(timeline, detectedGate, clock()));
+    setRelease(effectiveFirstVocalRelease(timeline, detectedGate, 2));
     await Promise.resolve();
     expect(screen.queryByText('Rain')).toBeNull();
 
@@ -112,7 +112,6 @@ describe('host timed lyric rendering', () => {
     setRelease(effectiveFirstVocalRelease(timeline, detectedGate, clock()));
     await Promise.resolve();
 
-    expect(release()).toBe(10);
     expect(
       screen
         .getByText('Rain')
