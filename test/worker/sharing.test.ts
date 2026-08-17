@@ -1,5 +1,6 @@
 // @ts-nocheck -- This compatibility suite preserves heterogeneous Worker and R2 fixture shapes from the pre-migration contract.
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import { test } from 'vitest';
 import { COURTYARD_SCENE } from '../../src/worker/courtyard.ts';
 import { playbackPage } from '../../src/worker/playback-page.ts';
@@ -107,6 +108,114 @@ test('shared playback uses the exact courtyard artwork from the app', () => {
     'https://share.example/preview.png',
   );
   assert.equal(html.includes(COURTYARD_SCENE), true);
+});
+
+test('shared playback advances progress and lyrics without relying on timeupdate', async () => {
+  class Element {
+    constructor() {
+      this.children = [];
+      this.listeners = new Map();
+      this.classList = { toggle() {} };
+      this.hidden = false;
+      this.textContent = '';
+      this.value = 0;
+    }
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+    append(child) {
+      this.children.push(child);
+    }
+    querySelector() {
+      return new Element();
+    }
+    setAttribute() {}
+    async emit(type) {
+      return this.listeners.get(type)?.();
+    }
+  }
+
+  const elements = new Map([
+    ['#audio', new Element()],
+    ['#play', new Element()],
+    ['#seek', new Element()],
+    ['#timecode', new Element()],
+    ['#reveal-lines', new Element()],
+    ['#replay', new Element()],
+    ['#player-shell', new Element()],
+    ['.scene', new Element()],
+    ['#share', new Element()],
+    ['#clock', new Element()],
+  ]);
+  const audio = elements.get('#audio');
+  audio.currentTime = 0;
+  audio.duration = 100;
+  audio.paused = true;
+  audio.ended = false;
+  audio.play = async () => {
+    audio.paused = false;
+    await audio.emit('play');
+  };
+  audio.pause = async () => {
+    audio.paused = true;
+    await audio.emit('pause');
+  };
+
+  const document = {
+    querySelector(selector) {
+      if (selector === '#song-data') {
+        return {
+          textContent: JSON.stringify({
+            native: ['First line', 'Second line'],
+            roman: ['First line', 'Second line'],
+          }),
+        };
+      }
+      return elements.get(selector);
+    },
+    createElement() {
+      return new Element();
+    },
+  };
+  const frames = [];
+  const html = await (
+    await createShareHandler({
+      storage: {
+        ...memoryStorage(),
+        async getMetadata() {
+          return SONG;
+        },
+      },
+      uploadSecret: SECRET,
+    })(new Request(`https://share.example/s/${ID}`))
+  ).text();
+  const script = [
+    ...html.matchAll(/<script(?: nonce="[^"]+")?>([\s\S]*?)<\/script>/g),
+  ].at(-1)[1];
+  vm.runInNewContext(script, {
+    document,
+    navigator: { clipboard: { async writeText() {} } },
+    location: { href: `https://share.example/s/${ID}` },
+    Intl,
+    requestAnimationFrame(callback) {
+      frames.push(callback);
+      return frames.length;
+    },
+    cancelAnimationFrame() {},
+  });
+
+  await elements.get('#play').emit('click');
+  audio.currentTime = 50;
+  assert.equal(
+    frames.length,
+    1,
+    'playing schedules a visual refresh independent of media events',
+  );
+  frames.shift()(16);
+  assert.equal(Number(elements.get('#seek').value), 50);
+  assert.ok(
+    elements.get('#reveal-lines').children.some((line) => !line.hidden),
+  );
 });
 
 test('upload to playback round trip preserves title, language, and both lyric scripts', async () => {

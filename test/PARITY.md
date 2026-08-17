@@ -140,3 +140,10 @@ This table maps every test name present at PR #15 commit `3aa1978` to a runtime 
 | 134 | test/vercel.test.js — Vercel leaves the share route disabled without a valid Worker origin                                           | test/server/vercel.test.ts — Vercel leaves the share route disabled without a valid Worker origin                                                            |
 
 Mapped baseline assertions: **134**.
+
+## Post-baseline PR #15 behavior
+
+PR #15 added one playback-refresh regression after the migration baseline at
+`3aa1978`. It is preserved as
+`test/worker/sharing.test.ts — shared playback advances progress and lyrics
+without relying on timeupdate`, alongside the 134 mapped baseline assertions.
