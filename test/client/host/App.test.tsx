@@ -44,20 +44,17 @@ describe('host timed lyric rendering', () => {
       undefined,
     );
     const [clock, setClock] = createSignal(2);
-    const activeLine = () =>
-      activePacedLine(
-        buildLinePacing(sheet.sections, timeline, release()),
-        clock(),
-      );
-    const held = () =>
-      release() === undefined ||
-      (release() !== null && clock() < (release() ?? 0));
-
     render(() => (
       <TimedSectionView
         section={section}
-        activeLine={activeLine()}
-        holdLines={held()}
+        activeLine={activePacedLine(
+          buildLinePacing(sheet.sections, timeline, release()),
+          clock(),
+        )}
+        holdLines={
+          release() === undefined ||
+          (release() !== null && clock() < (release() ?? 0))
+        }
       />
     ));
 
@@ -100,18 +97,14 @@ describe('host timed lyric rendering', () => {
       undefined,
     );
     const clock = () => 10;
-    const activeLine = () =>
-      activePacedLine(
-        buildLinePacing(sheet.sections, timeline, release()),
-        clock(),
-      );
-    const held = () => release() === undefined;
-
     render(() => (
       <TimedSectionView
         section={section}
-        activeLine={activeLine()}
-        holdLines={held()}
+        activeLine={activePacedLine(
+          buildLinePacing(sheet.sections, timeline, release()),
+          clock(),
+        )}
+        holdLines={release() === undefined}
       />
     ));
     expect(screen.queryByText('Rain')).toBeNull();
@@ -141,13 +134,13 @@ describe('host timed lyric rendering', () => {
     const [release, setRelease] = createSignal<number | null | undefined>(
       undefined,
     );
-    const activeLine = () =>
-      activePacedLine(buildLinePacing(sheet.sections, timeline, release()), 8);
-
     render(() => (
       <TimedSectionView
         section={section}
-        activeLine={activeLine()}
+        activeLine={activePacedLine(
+          buildLinePacing(sheet.sections, timeline, release()),
+          8,
+        )}
         holdLines={release() === undefined}
       />
     ));
