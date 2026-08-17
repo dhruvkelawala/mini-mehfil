@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'vitest';
 import serverModule, {
+  ANALYSIS_TIMEOUT_MS,
   createServer,
   resolveDirectEntryPort,
 } from '../../src/server/index.ts';
@@ -252,6 +253,32 @@ test('analyzes a finished recording into normalized section timing', async () =>
   assert.doesNotMatch(serialized, /formatted_lyrics|raw ASR transcript/);
   assert.doesNotMatch(serialized, /cover_feature_id|feature-1234/);
   assert.doesNotMatch(serialized, /trace-5678/);
+});
+
+test('allows enough time for live section analysis and normalizes real provider aliases', async () => {
+  assert.equal(ANALYSIS_TIMEOUT_MS, 60_000);
+  const song = await generateWith(async (url) => {
+    if (url === 'https://mock.minimax.test/v1/music_generation')
+      return generatedSong();
+    if (url === 'https://mock.minimax.test/v1/music_cover_preprocess')
+      return preprocessed({
+        audio_duration: 90,
+        structure_result: JSON.stringify({
+          segments: [
+            { start: 0, end: 30, label: 'verse' },
+            { start: 30, end: 45, label: 'pre-chorus' },
+            { start: 45, end: 90, label: 'chorus' },
+          ],
+        }),
+      });
+    throw new Error(`Unexpected URL: ${url}`);
+  });
+
+  assert.deepEqual(song.lyric_timing?.segments, [
+    { start: 0, end: 30, label: 'verse' },
+    { start: 30, end: 45, label: 'verse' },
+    { start: 45, end: 90, label: 'chorus' },
+  ]);
 });
 
 test('delivers audio without timing when section analysis cannot be trusted', async () => {

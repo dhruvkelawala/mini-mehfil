@@ -18,7 +18,8 @@ const MAX_SHARE_AUDIO_BYTES = 10 * 1024 * 1024;
 const JOB_ID_PATTERN = /^[A-Za-z0-9_-]{24}$/;
 const RECOVERY_TIMEOUT_MS = 15 * 1000;
 const GENERATION_TIMEOUT_MS = 4 * 60 * 1000;
-const ANALYSIS_TIMEOUT_MS = 10 * 1000;
+/** Live Music 3 preprocessing took 31.8 s in the operator's real repro. */
+export const ANALYSIS_TIMEOUT_MS = 60 * 1000;
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',

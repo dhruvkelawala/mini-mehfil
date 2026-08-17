@@ -100,6 +100,21 @@ export interface TimelineEntry {
   sectionIndex: number | null;
 }
 
+/**
+ * MiniMax Music 3 may return finer section names such as `pre-chorus` even
+ * though the public timing contract stores only the stable display families.
+ */
+function normalizedTimingLabel(value: unknown): TimingLabel | null {
+  if (typeof value !== 'string') return null;
+  const tag = value
+    .trim()
+    .toLowerCase()
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ');
+  if (tag === 'pre chorus') return 'verse';
+  return TIMING_LABELS.has(tag) ? (tag as TimingLabel) : null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -217,8 +232,9 @@ export function normalizeLyricTiming(value: unknown): LyricTiming | null {
     let previousEnd = 0;
     for (const candidate of value.segments as unknown[]) {
       if (!isRecord(candidate)) return null;
-      const { start, end, label } = candidate;
-      if (typeof label !== 'string' || !TIMING_LABELS.has(label)) return null;
+      const { start, end } = candidate;
+      const label = normalizedTimingLabel(candidate.label);
+      if (!label) return null;
       if (
         typeof start !== 'number' ||
         typeof end !== 'number' ||
@@ -228,7 +244,7 @@ export function normalizeLyricTiming(value: unknown): LyricTiming | null {
         return null;
       if (start < 0 || start >= end || end > durationSeconds) return null;
       if (start < previousEnd) return null;
-      segments.push({ start, end, label: label as TimingLabel });
+      segments.push({ start, end, label });
       previousEnd = end;
     }
 
