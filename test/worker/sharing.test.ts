@@ -126,37 +126,55 @@ test('shared playback safely embeds titles containing slashes and newlines', () 
   assert.equal(html.includes("'Play Rain \\ refrain\nsecond line'"), false);
 });
 
-test('shared playback advances progress and lyrics without relying on timeupdate', async () => {
-  class Element {
-    constructor() {
-      this.children = [];
-      this.listeners = new Map();
-      this.classList = { toggle() {} };
-      this.hidden = false;
-      this.textContent = '';
-      this.value = 0;
-    }
-    addEventListener(type, listener) {
-      this.listeners.set(type, listener);
-    }
-    append(child) {
-      this.children.push(child);
-    }
-    querySelector() {
-      return new Element();
-    }
-    setAttribute() {}
-    async emit(type) {
-      return this.listeners.get(type)?.();
-    }
+class Element {
+  constructor() {
+    this.children = [];
+    this.listeners = new Map();
+    this.classList = { toggle() {} };
+    this.attributes = new Map();
+    this.hidden = false;
+    this.textContent = '';
+    this.className = '';
+    this.value = 0;
   }
+  addEventListener(type, listener) {
+    this.listeners.set(type, listener);
+  }
+  append(child) {
+    this.children.push(child);
+  }
+  replaceChildren(...children) {
+    this.children = children;
+  }
+  querySelector() {
+    return new Element();
+  }
+  setAttribute(name, value) {
+    this.attributes.set(name, value);
+  }
+  async emit(type) {
+    return this.listeners.get(type)?.();
+  }
+  get text() {
+    return (
+      this.textContent || this.children.map((child) => child.text).join(' ')
+    );
+  }
+}
 
+/**
+ * Renders a real shared playback page and runs its inline script against a
+ * minimal DOM, so these assertions exercise the page as shipped rather than a
+ * paraphrase of it.
+ */
+async function playbackHarness(metadata, mediaDuration) {
   const elements = new Map([
     ['#audio', new Element()],
     ['#play', new Element()],
     ['#seek', new Element()],
     ['#timecode', new Element()],
     ['#reveal-lines', new Element()],
+    ['.performance-timing', new Element()],
     ['#replay', new Element()],
     ['#player-shell', new Element()],
     ['.scene', new Element()],
@@ -165,7 +183,7 @@ test('shared playback advances progress and lyrics without relying on timeupdate
   ]);
   const audio = elements.get('#audio');
   audio.currentTime = 0;
-  audio.duration = 100;
+  audio.duration = mediaDuration;
   audio.paused = true;
   audio.ended = false;
   audio.play = async () => {
@@ -177,16 +195,23 @@ test('shared playback advances progress and lyrics without relying on timeupdate
     await audio.emit('pause');
   };
 
+  const html = await (
+    await createShareHandler({
+      storage: {
+        ...memoryStorage(),
+        async getMetadata() {
+          return metadata;
+        },
+      },
+      uploadSecret: SECRET,
+    })(new Request(`https://share.example/s/${ID}`))
+  ).text();
+  const songData = /<script id="song-data"[^>]*>([\s\S]*?)<\/script>/.exec(
+    html,
+  )[1];
   const document = {
     querySelector(selector) {
-      if (selector === '#song-data') {
-        return {
-          textContent: JSON.stringify({
-            native: ['First line', 'Second line'],
-            roman: ['First line', 'Second line'],
-          }),
-        };
-      }
+      if (selector === '#song-data') return { textContent: songData };
       return elements.get(selector);
     },
     createElement() {
@@ -194,17 +219,6 @@ test('shared playback advances progress and lyrics without relying on timeupdate
     },
   };
   const frames = [];
-  const html = await (
-    await createShareHandler({
-      storage: {
-        ...memoryStorage(),
-        async getMetadata() {
-          return SONG;
-        },
-      },
-      uploadSecret: SECRET,
-    })(new Request(`https://share.example/s/${ID}`))
-  ).text();
   const script = [
     ...html.matchAll(/<script(?: nonce="[^"]+")?>([\s\S]*?)<\/script>/g),
   ].at(-1)[1];
@@ -219,19 +233,115 @@ test('shared playback advances progress and lyrics without relying on timeupdate
     },
     cancelAnimationFrame() {},
   });
+  return {
+    html,
+    audio,
+    elements,
+    frames,
+    songData: JSON.parse(songData),
+    lines: () => elements.get('#reveal-lines').children,
+    timingNote: () => elements.get('.performance-timing').textContent,
+    async seekTo(seconds) {
+      audio.currentTime = seconds;
+      await audio.emit('timeupdate');
+    },
+  };
+}
 
-  await elements.get('#play').emit('click');
-  audio.currentTime = 50;
+test('shared playback advances progress and lyrics without relying on timeupdate', async () => {
+  const page = await playbackHarness(SONG, 100);
+  await page.elements.get('#play').emit('click');
+  page.audio.currentTime = 50;
   assert.equal(
-    frames.length,
+    page.frames.length,
     1,
     'playing schedules a visual refresh independent of media events',
   );
-  frames.shift()(16);
-  assert.equal(Number(elements.get('#seek').value), 50);
-  assert.ok(
-    elements.get('#reveal-lines').children.some((line) => !line.hidden),
+  page.frames.shift()(16);
+  assert.equal(Number(page.elements.get('#seek').value), 50);
+  assert.ok(page.lines().some((line) => !line.hidden));
+});
+
+const TIMED_LYRICS = {
+  ...SONG,
+  isLatinScript: true,
+  lyricsNative:
+    '[Intro]\nOoh\n[Verse]\nRain on the window\n[Inst]\n—\n[Chorus]\nSing it back',
+  lyricsRoman:
+    '[Intro]\nOoh\n[Verse]\nRain on the window\n[Inst]\n—\n[Chorus]\nSing it back',
+  lyricTiming: {
+    version: 1,
+    mode: 'minimax-section-asr',
+    durationSeconds: 90,
+    segments: [
+      { start: 0, end: 12, label: 'intro' },
+      { start: 12, end: 40, label: 'verse' },
+      { start: 40, end: 52, label: 'silence' },
+      { start: 52, end: 90, label: 'chorus' },
+    ],
+  },
+};
+
+test('a timed share follows its sections and never shows stale sung lines', async () => {
+  const page = await playbackHarness(TIMED_LYRICS, 90);
+  assert.equal(page.songData.timeline.length, 4);
+  assert.equal(page.songData.expectedDurationSeconds, 90);
+
+  // Before loadedmetadata the page is honest about being approximate.
+  assert.match(page.html, /Atmospheric reveal · timing is approximate/);
+  await page.audio.emit('loadedmetadata');
+  assert.equal(page.timingNote(), 'Section timing from MiniMax analysis');
+
+  await page.seekTo(1);
+  assert.equal(page.lines().length, 1);
+  assert.equal(
+    page.lines()[0].className,
+    'lyric-section lyric-section-current',
   );
+  assert.equal(page.lines()[0].attributes.get('aria-current'), 'true');
+  assert.match(page.lines()[0].text, /Intro/);
+  assert.match(page.lines()[0].text, /Ooh/);
+  assert.doesNotMatch(page.lines()[0].text, /Rain on the window/);
+
+  await page.seekTo(20);
+  assert.match(page.lines()[0].text, /Rain on the window/);
+  assert.doesNotMatch(page.lines()[0].text, /Ooh/);
+
+  // An unmapped silence shows a rest, not the verse that just ended.
+  await page.seekTo(45);
+  assert.equal(page.lines().length, 1);
+  assert.equal(page.lines()[0].className, 'lyric-line lyric-cue');
+  assert.equal(page.lines()[0].textContent, 'Pause');
+
+  await page.seekTo(60);
+  assert.match(page.lines()[0].text, /Sing it back/);
+
+  // A backward seek is a fresh lookup, and past the analyzed end nothing shows.
+  await page.seekTo(5);
+  assert.match(page.lines()[0].text, /Ooh/);
+  await page.seekTo(95);
+  assert.equal(page.lines().length, 0);
+});
+
+test('a timed share falls back to the approximate reveal when the audio does not match', async () => {
+  const page = await playbackHarness(TIMED_LYRICS, 140);
+  await page.audio.emit('loadedmetadata');
+  assert.equal(page.timingNote(), 'Atmospheric reveal · timing is approximate');
+  await page.seekTo(139);
+  assert.equal(page.lines().length, page.songData.lines.length);
+  assert.ok(page.lines().some((line) => !line.hidden));
+});
+
+test('an untimed share serializes no timeline and reveals approximately', async () => {
+  const page = await playbackHarness(SONG, 100);
+  assert.equal(page.songData.timeline, null);
+  assert.deepEqual(page.songData.sections, []);
+  assert.equal(page.songData.expectedDurationSeconds, 0);
+  await page.audio.emit('loadedmetadata');
+  assert.equal(page.timingNote(), 'Atmospheric reveal · timing is approximate');
+  await page.seekTo(99);
+  assert.equal(page.lines().length, page.songData.lines.length);
+  assert.ok(page.lines().every((line) => !line.className.includes('section')));
 });
 
 test('upload to playback round trip preserves title, language, and both lyric scripts', async () => {
