@@ -114,11 +114,35 @@ and Wrangler provide build and verification tooling.
 ```bash
 npm test
 npm run test:browser
+npm run test:sync-replay
 npm run check
 ```
 
 `npm test` runs the typed Vitest and Cloudflare Worker suites. The browser
-command runs the intercepted Chromium flows. `npm run check` is the same
+command runs the deterministic Chromium flows. `npm run check` is the same
 secret-free verification used by CI: formatting, linting, strict types,
 generated binding freshness, unit and Worker tests, both Vite builds, gzip
 budgets, and a Wrangler dry-run.
+
+`npm run test:sync-replay` is the fast, no-cost real-media loop. It discovers
+the fixture named in `test/fixtures/sync-replay-song.json` in `~/Downloads`, or
+accepts an explicit MP3:
+
+```bash
+npm run test:sync-replay -- /absolute/path/to/song.mp3
+```
+
+The browser never intercepts generation or timing responses in this mode. The
+normal Node proxy talks to an in-process MiniMax stub, which serves the local
+MP3 with byte-range support and holds timing until the test explicitly releases
+it. The test then samples the same media clock on the host, live-listener, and
+standalone shared surfaces—including a backward seek—and requires exactly one
+generation, timing, and share request. It clears `MINIMAX_API_TOKEN`, so it
+cannot make a paid call. A combined proof video is written to
+`.claude/artifacts/sync-replay/sync-replay-proof.webm`.
+
+The checked-in sidecar currently verifies transport, late upgrade, seeking,
+diagnostics, and three-surface parity; `audiblyVerified` is deliberately false
+because the downloaded MP3 contains no embedded lyric sheet. Replace its lyric
+text and section timestamps with a human-checked transcription before treating
+the replay as evidence of audible lyric alignment.

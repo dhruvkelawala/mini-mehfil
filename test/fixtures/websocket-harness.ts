@@ -39,7 +39,10 @@ export function projectHostFixture(state: RoomState): unknown {
   return projectRoomState(state, { role: 'host', participantId: 'host' });
 }
 
-export async function installWebSocketHarness(page: Page): Promise<void> {
+export async function installWebSocketHarness(
+  page: Page,
+  snapshots: { host?: unknown; listener?: unknown } = {},
+): Promise<void> {
   await page.addInitScript(
     ({ hostSnapshot, listenerSnapshot }) => {
       type Handler = (event: Event & { data?: string; code?: number }) => void;
@@ -118,14 +121,18 @@ export async function installWebSocketHarness(page: Page): Promise<void> {
       });
     },
     {
-      hostSnapshot: projectRoomState(hostState, {
-        role: 'host',
-        participantId: 'host',
-      }),
-      listenerSnapshot: projectRoomState(listenerState, {
-        role: 'listener',
-        participantId: 'listener-fixture',
-      }),
+      hostSnapshot:
+        snapshots.host ??
+        projectRoomState(hostState, {
+          role: 'host',
+          participantId: 'host',
+        }),
+      listenerSnapshot:
+        snapshots.listener ??
+        projectRoomState(listenerState, {
+          role: 'listener',
+          participantId: 'listener-fixture',
+        }),
     },
   );
 }

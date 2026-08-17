@@ -418,6 +418,49 @@ test('rejects inline analysis and never trusts generation timing fields', async 
   assert.equal(preprocessCalls, 0);
 });
 
+test('loopback replay sources require the explicit server test seam', async () => {
+  const source = 'http://127.0.0.1:4387/__fixture/song.mp3';
+  let generationCalls = 0;
+  let timingCalls = 0;
+  const replayFetch = async (url) => {
+    if (url === 'https://mock.minimax.test/v1/music_generation') {
+      generationCalls += 1;
+      return new Response(
+        JSON.stringify({
+          data: { audio: source },
+          base_resp: { status_code: 0, status_msg: 'success' },
+        }),
+      );
+    }
+    if (url === 'https://mock.minimax.test/v1/music_cover_preprocess') {
+      timingCalls += 1;
+      return preprocessed();
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  assert.equal((await generateWith(replayFetch)).error.includes('audio'), true);
+  assert.deepEqual(await analyzeWith(replayFetch, { source }), {
+    status: 'unavailable',
+    reason: 'unsupported-source',
+    retryable: false,
+  });
+  assert.equal(timingCalls, 0);
+
+  const generated = await generateWith(replayFetch, {
+    allowLocalHttpAudioSource: true,
+  });
+  assert.equal(generated.data.audio, source);
+  const analyzed = await analyzeWith(
+    replayFetch,
+    { source },
+    { allowLocalHttpAudioSource: true },
+  );
+  assert.equal(analyzed.status, 'ready');
+  assert.equal(generationCalls, 2);
+  assert.equal(timingCalls, 1);
+});
+
 test('generation recovery checkpoints audio without waiting for timing', async () => {
   let uploaded;
   let job;

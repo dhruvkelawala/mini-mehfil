@@ -49,6 +49,8 @@ export interface ServerOptions {
   timingDiagnostic?: TimingDiagnosticSink;
   roomTimeoutMs?: number;
   staticRoot?: string;
+  /** Test-only seam for a loopback replay provider. Never enabled from env. */
+  allowLocalHttpAudioSource?: boolean;
 }
 
 export type ServerFetch = (
@@ -112,7 +114,10 @@ function readJson(
   });
 }
 
-function audioSource(result: JsonRecord): string | null {
+function audioSource(
+  result: JsonRecord,
+  allowLocalHttpAudioSource = false,
+): string | null {
   const data = isRecord(result.data) ? result.data : {};
   const audio = isRecord(result.audio) ? result.audio : {};
   const source = data.audio || audio.url || result.audio;
@@ -125,7 +130,13 @@ function audioSource(result: JsonRecord): string | null {
     return source;
   try {
     const url = new URL(source);
-    return url.protocol === 'https:' && !url.username && !url.password
+    const loopbackHttp =
+      allowLocalHttpAudioSource &&
+      url.protocol === 'http:' &&
+      (url.hostname === '127.0.0.1' || url.hostname === 'localhost');
+    return (url.protocol === 'https:' || loopbackHttp) &&
+      !url.username &&
+      !url.password
       ? source
       : null;
   } catch {
@@ -165,8 +176,22 @@ async function readLimitedBody(
   return Buffer.concat(chunks, size);
 }
 
-function decodeAudioSource(source: string): Buffer | null {
-  if (/^https:\/\//i.test(source)) return null;
+function decodeAudioSource(
+  source: string,
+  allowLocalHttpAudioSource = false,
+): Buffer | null {
+  try {
+    const url = new URL(source);
+    if (
+      url.protocol === 'https:' ||
+      (allowLocalHttpAudioSource &&
+        url.protocol === 'http:' &&
+        (url.hostname === '127.0.0.1' || url.hostname === 'localhost'))
+    )
+      return null;
+  } catch {
+    // Inline-hex decoding follows.
+  }
   const hex = source.replace(/^0x/i, '');
   if (!hex || hex.length % 2 || !/^[0-9a-f]+$/i.test(hex))
     throw Object.assign(new Error('The finished recording is unavailable.'), {
@@ -302,6 +327,7 @@ export function createServer(options: ServerOptions = {}): http.Server {
   const analysisTimeoutMs = options.analysisTimeoutMs ?? ANALYSIS_TIMEOUT_MS;
   const timingDiagnostic = options.timingDiagnostic ?? emitTimingDiagnostic;
   const staticRoot = options.staticRoot ?? DEFAULT_STATIC_ROOT;
+  const allowLocalHttpAudioSource = options.allowLocalHttpAudioSource === true;
   const sharedUrls = new Map<string, string>();
 
   async function recoveryRequest(
@@ -454,6 +480,7 @@ export function createServer(options: ServerOptions = {}): http.Server {
               fetchImpl,
               timeoutMs: analysisTimeoutMs,
               diagnostic: timingDiagnostic,
+              allowLocalHttpSource: allowLocalHttpAudioSource,
             },
           );
         }
@@ -583,7 +610,7 @@ export function createServer(options: ServerOptions = {}): http.Server {
             error: failure.message,
           });
         }
-        const source = audioSource(result);
+        const source = audioSource(result, allowLocalHttpAudioSource);
         if (!source) {
           const failure = publicFailure(
             'MiniMax succeeded but did not return an audio file.',
@@ -750,7 +777,7 @@ export function createServer(options: ServerOptions = {}): http.Server {
           lyricTiming,
         };
 
-        let audio = decodeAudioSource(entry.source);
+        let audio = decodeAudioSource(entry.source, allowLocalHttpAudioSource);
         if (!audio) {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 2 * 60 * 1000);

@@ -135,7 +135,13 @@ export function App() {
     emitTimingDiagnostic({
       event: 'host-map',
       surface: 'host',
-      reason: timeline ? 'mapped' : 'weak-map',
+      reason: timeline
+        ? 'mapped'
+        : timing
+          ? 'weak-map'
+          : timingPending()
+            ? 'pending'
+            : 'untimed',
       segmentCount: timing?.segments.length ?? 0,
       sectionCount:
         timeline?.filter((entry) => entry.sectionIndex !== null).length ?? 0,

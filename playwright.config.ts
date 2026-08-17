@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const port = 4387;
+const replayVideo = Boolean(process.env.MEHFIL_REPLAY_VIDEO_DIR);
 
 export default defineConfig({
   testDir: './test/browser',
@@ -10,6 +11,7 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${port}`,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    video: replayVideo ? 'on' : 'off',
   },
   projects: [
     { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'] } },

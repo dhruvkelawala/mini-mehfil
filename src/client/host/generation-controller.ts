@@ -20,6 +20,7 @@ import {
   type SettledTimingState,
   type TimingAnalysisController,
 } from './timing-analysis-controller.ts';
+import { trustedRemoteAudioSource } from './replay-source.ts';
 
 const WRITING_LINES = [
   'Listening to your idea…',
@@ -252,7 +253,7 @@ export function createGenerationController({
       recovery.clear();
     }
     let timingSettled: Promise<SettledTimingState>;
-    if (analysisToken && /^https:\/\//i.test(source)) {
+    if (analysisToken && trustedRemoteAudioSource(source)) {
       void analysis.analyze({ source, token: analysisToken });
       timingSettled = analysis.settled();
       if (!background) {

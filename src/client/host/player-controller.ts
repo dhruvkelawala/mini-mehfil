@@ -11,6 +11,7 @@ import {
 } from '../../timing/timing-analysis.ts';
 import type { HostLyrics } from './generation-recovery.ts';
 import type { MediaDiagnostics } from './media-diagnostics.ts';
+import { trustedRemoteAudioSource } from './replay-source.ts';
 
 export interface PlayerController {
   ready: () => boolean;
@@ -56,7 +57,7 @@ function sourceUrl(source: string): {
   disposable: boolean;
   bytes: ArrayBuffer | null;
 } {
-  if (/^https:\/\//i.test(source))
+  if (trustedRemoteAudioSource(source))
     return { url: source, disposable: false, bytes: null };
   const hex = source.replace(/^0x/i, '');
   if (!hex || hex.length % 2 || !/^[0-9a-f]+$/i.test(hex))

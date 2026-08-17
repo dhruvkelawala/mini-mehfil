@@ -10,6 +10,11 @@ export default defineConfig(({ mode }) => {
   const surface = mode === 'listener' ? 'listener' : 'host';
   return {
     plugins: [solid()],
+    define: {
+      __MEHFIL_REPLAY__: JSON.stringify(
+        Boolean(process.env.MEHFIL_REPLAY_AUDIO),
+      ),
+    },
     root: resolve(`src/client/${surface}`),
     publicDir: false,
     build: {

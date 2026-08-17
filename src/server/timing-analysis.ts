@@ -22,6 +22,8 @@ export interface AnalyzeMiniMaxTimingOptions {
   timeoutMs: number;
   diagnostic?: TimingDiagnosticSink;
   now?: () => number;
+  /** Test-only seam for a loopback replay provider. */
+  allowLocalHttpSource?: boolean;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -37,11 +39,18 @@ function unavailable(
   return { status: 'unavailable', reason, retryable };
 }
 
-function safeHttpsSource(value: string): boolean {
+function safeAnalysisSource(
+  value: string,
+  allowLocalHttpSource = false,
+): boolean {
   try {
     const url = new URL(value);
+    const loopbackHttp =
+      allowLocalHttpSource &&
+      url.protocol === 'http:' &&
+      (url.hostname === '127.0.0.1' || url.hostname === 'localhost');
     return (
-      url.protocol === 'https:' &&
+      (url.protocol === 'https:' || loopbackHttp) &&
       !url.username &&
       !url.password &&
       value.length <= 32 * 1024
@@ -115,7 +124,7 @@ export async function analyzeMiniMaxTiming(
     return outcome;
   };
 
-  if (!safeHttpsSource(input.source)) {
+  if (!safeAnalysisSource(input.source, options.allowLocalHttpSource)) {
     return terminal(unavailable('unsupported-source', false));
   }
 

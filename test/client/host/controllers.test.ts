@@ -18,6 +18,7 @@ import {
   createPlayerController,
   type PlayerController,
 } from '../../../src/client/host/player-controller.ts';
+import { trustedRemoteAudioSource } from '../../../src/client/host/replay-source.ts';
 import {
   activeTimelineEntry,
   buildSectionTimeline,
@@ -226,6 +227,26 @@ async function loadedPlayer(timing: unknown, mediaDuration: number) {
 }
 
 describe('host section timing', () => {
+  test('admits loopback HTTP only in an explicit replay build', () => {
+    expect(
+      trustedRemoteAudioSource('http://127.0.0.1:4387/__fixture/song.mp3'),
+    ).toBe(false);
+    vi.stubGlobal('__MEHFIL_REPLAY__', true);
+    try {
+      expect(
+        trustedRemoteAudioSource('http://127.0.0.1:4387/__fixture/song.mp3'),
+      ).toBe(true);
+      expect(trustedRemoteAudioSource('http://example.com/song.mp3')).toBe(
+        false,
+      );
+      expect(trustedRemoteAudioSource('https://cdn.example/song.mp3')).toBe(
+        true,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   test('applies matching late timing without restarting, seeking, or mutating it', async () => {
     const audio = new FakeAudio();
     const diagnostics = vi.fn();
@@ -351,7 +372,7 @@ describe('host section timing', () => {
     expect(buildLinePacing(sheet.sections, null)).toEqual([]);
   });
 
-  test('exposes analysis bytes only for inline-hex audio and skips remote URLs', async () => {
+  test('exposes analysis bytes only for inline-hex audio and skips URL sources', async () => {
     const audio = new FakeAudio();
     const player = createPlayerController(createMediaDiagnostics());
     player.bindAudio(audio as unknown as HTMLAudioElement);
@@ -370,8 +391,19 @@ describe('host section timing', () => {
         SECTION_TIMING,
       );
       expect(player.analysisBytes()).toBeNull();
+
+      vi.stubGlobal('__MEHFIL_REPLAY__', true);
+      await player.load(
+        'http://127.0.0.1:4387/__fixture/song.mp3',
+        lyrics,
+        null,
+        SECTION_TIMING,
+      );
+      expect(audio.src).toBe('http://127.0.0.1:4387/__fixture/song.mp3');
+      expect(player.analysisBytes()).toBeNull();
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
+      vi.unstubAllGlobals();
       fetchSpy.mockRestore();
     }
   });
