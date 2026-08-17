@@ -8,6 +8,13 @@
 > host/listener/shared-page parity is still unproven. No further paid request is
 > authorized.
 >
+> **Merge (2026-08-17)**: PR #33 was merged into `main` at `b5f4fa4` from the
+> reviewed head `0aa1fc0` with no additional commits. The retained
+> `[TIMING-DIAGNOSTIC]` instrumentation shipped with the merge and stays until
+> the operator approves removal. The merge does not satisfy the completion
+> gate below; live parity evidence and the operator's decision on a further
+> paid run remain outstanding, so this plan stays BLOCKED rather than DONE.
+>
 > **Execution**: `advisor/005-approximate-line-refinement` was rebased from
 > `7c8b596` onto fetched `origin/main` `0d6bd5a` with a recoverable safety
 > branch. Implementation is complete through `945e88d`; retained diagnostics
