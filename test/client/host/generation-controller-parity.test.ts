@@ -88,8 +88,7 @@ describe('typed generation lifecycle parity', () => {
     });
     const pending = controller.generate(INPUT);
     await Promise.resolve();
-    expect(controller.busyLines().length).toBeGreaterThan(1);
-    expect(controller.busyLines().join(' ')).not.toContain('—');
+    expect(controller.status()).not.toContain('—');
     release?.();
     await pending;
   });
@@ -290,7 +289,7 @@ describe('typed generation lifecycle parity', () => {
     });
     await controller.generate(INPUT);
     const stale = controller.share(false);
-    controller.cancelForReplacement();
+    await controller.generate({ ...INPUT, idea: 'next song' });
     release?.();
     expect(await stale).toBeUndefined();
   });

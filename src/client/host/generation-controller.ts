@@ -46,7 +46,6 @@ export interface GenerationHooks {
 export interface GenerationController {
   status: () => string;
   statusWorking: () => boolean;
-  busyLines: () => readonly string[];
   generating: () => boolean;
   lyrics: () => HostLyrics | null;
   shareReference: () => string | null;
@@ -61,7 +60,6 @@ export interface GenerationController {
   checkGeneration(): void;
   lifecycleBackgrounded(): void;
   lifecycleForegrounded(): void;
-  cancelForReplacement(): boolean;
 }
 
 export type GenerationFetch = (
@@ -118,7 +116,6 @@ export function createGenerationController({
 }): GenerationController {
   const [status, setStatus] = createSignal('');
   const [statusWorking, setStatusWorking] = createSignal(false);
-  const [busyLines, setBusyLines] = createSignal<readonly string[]>([]);
   const [generating, setGenerating] = createSignal(false);
   const [lyrics, setLyrics] = createSignal<HostLyrics | null>(null);
   const [shareReference, setShareReference] = createSignal<string | null>(null);
@@ -129,7 +126,6 @@ export function createGenerationController({
   let run = 0;
   let generationRequestInFlight = false;
   let lifecycleBackgroundVersion = 0;
-  let observedInput: GenerateInput | null = null;
   let activeHooks: GenerationHooks = {};
   let waitingTimer: ReturnType<typeof setInterval> | null = null;
   const foregroundWaiters: Array<() => void> = [];
@@ -137,7 +133,6 @@ export function createGenerationController({
   const setBusy = (lines: readonly string[]) => {
     if (waitingTimer) clearInterval(waitingTimer);
     waitingTimer = null;
-    setBusyLines(lines);
     if (!lines.length) return;
     let index = 0;
     setStatus(lines[index] ?? 'Working…');
@@ -318,7 +313,6 @@ export function createGenerationController({
   return {
     status,
     statusWorking,
-    busyLines,
     generating,
     lyrics,
     shareReference,
@@ -340,7 +334,6 @@ export function createGenerationController({
       player.clear();
       run += 1;
       const requestRun = run;
-      observedInput = input;
       activeHooks = hooks;
       setLyrics(null);
       setShareReference(null);
@@ -470,14 +463,6 @@ export function createGenerationController({
     },
     lifecycleForegrounded() {
       foregroundWaiters.splice(0).forEach((resolve) => resolve());
-    },
-    cancelForReplacement() {
-      if (!observedInput && !recovery.read()) return false;
-      recovery.cancel();
-      recovery.clear();
-      run += 1;
-      player.clear();
-      return true;
     },
   };
 }
