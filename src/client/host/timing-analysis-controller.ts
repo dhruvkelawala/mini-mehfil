@@ -2,10 +2,8 @@ import { createSignal, getOwner, onCleanup } from 'solid-js';
 
 import { normalizeLyricTiming } from '../../lyrics/lyric-sync.ts';
 import {
-  emitTimingDiagnostic,
   TIMING_FAILURE_REASONS,
   type TimingAnalysisOutcome,
-  type TimingDiagnosticSink,
   type TimingFailureReason,
 } from '../../timing/timing-analysis.ts';
 
@@ -29,7 +27,6 @@ export type SettledTimingState = Extract<
 export interface TimingAnalysisRequest {
   source: string;
   token: string;
-  attempt: number;
   signal: AbortSignal;
 }
 
@@ -124,7 +121,6 @@ export function createHttpTimingAnalysisPort(
         body: JSON.stringify({
           source: input.source,
           token: input.token,
-          attempt: input.attempt,
         }),
         signal: input.signal,
       });
@@ -143,12 +139,10 @@ export function createTimingAnalysisController({
   port = createHttpTimingAnalysisPort(),
   deadlineMs = TIMING_ANALYSIS_DEADLINE_MS,
   maxAttempts = TIMING_ANALYSIS_MAX_ATTEMPTS,
-  diagnostic = emitTimingDiagnostic,
 }: {
   port?: TimingAnalysisPort;
   deadlineMs?: number;
   maxAttempts?: number;
-  diagnostic?: TimingDiagnosticSink;
 } = {}): TimingAnalysisController {
   const [state, setState] = createSignal<TimingState>({ status: 'idle' });
   let revision = 0;
@@ -206,7 +200,6 @@ export function createTimingAnalysisController({
             port.analyze({
               source: input.source,
               token: input.token,
-              attempt,
               signal: controller.signal,
             }),
             deadline,
@@ -232,16 +225,7 @@ export function createTimingAnalysisController({
           finish(normalized);
           return;
         }
-        if (mayRetry(normalized) && attempt < maxAttempts) {
-          diagnostic({
-            event: 'provider-retry',
-            surface: 'provider',
-            reason: normalized.reason,
-            attempt: attempt + 1,
-            deadlineMs,
-          });
-          continue;
-        }
+        if (mayRetry(normalized) && attempt < maxAttempts) continue;
         finish({ status: 'unavailable', reason: normalized.reason });
         return;
       }

@@ -36,15 +36,7 @@ const replaySong = JSON.parse(
 async function installProofCapture(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const proof = window as typeof window & {
-      __timingDiagnostics?: unknown[];
       __copiedText?: string;
-    };
-    proof.__timingDiagnostics = [];
-    const originalInfo = console.info.bind(console);
-    console.info = (...values: unknown[]) => {
-      if (values[0] === '[TIMING-DIAGNOSTIC]')
-        proof.__timingDiagnostics?.push(values[1]);
-      originalInfo(...values);
     };
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -78,17 +70,6 @@ async function seekActive(
     .first()
     .textContent();
   return { section: section?.trim() ?? '', line: line?.trim() ?? '' };
-}
-
-async function diagnostics(page: Page): Promise<unknown[]> {
-  return page.evaluate(
-    () =>
-      (
-        window as typeof window & {
-          __timingDiagnostics?: unknown[];
-        }
-      ).__timingDiagnostics ?? [],
-  );
 }
 
 test('local MiniMax replay keeps host, listener, and share on one real-audio clock', async ({
@@ -220,18 +201,6 @@ test('local MiniMax replay keeps host, listener, and share on one real-audio clo
       timingReleased: true,
     }),
   );
-  const diagnosticText = JSON.stringify([
-    ...(await diagnostics(page)),
-    ...(await diagnostics(listener)),
-    ...(await diagnostics(standalone)),
-  ]);
-  expect(diagnosticText).toContain('host-map');
-  expect(diagnosticText).toContain('listener-map');
-  expect(diagnosticText).toContain('shared-page-validation');
-  expect(diagnosticText).not.toContain('"reason":"weak-map"');
-  expect(diagnosticText).not.toContain('sk-local-replay');
-  expect(diagnosticText).not.toContain(process.env.MEHFIL_REPLAY_AUDIO);
-
   const videoDirectory = process.env.MEHFIL_REPLAY_VIDEO_DIR;
   if (videoDirectory) {
     mkdirSync(videoDirectory, { recursive: true });

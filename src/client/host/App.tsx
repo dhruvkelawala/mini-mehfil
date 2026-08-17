@@ -21,7 +21,6 @@ import {
   type LyricTiming,
 } from '../../lyrics/lyric-sync.ts';
 import type { LyricsSheet, SongRequest } from '../../room/protocol.ts';
-import { emitTimingDiagnostic } from '../../timing/timing-analysis.ts';
 import { LyricLineView, TimedSectionView } from '../lyrics/timed-lyrics.tsx';
 import {
   createGenerationController,
@@ -136,26 +135,6 @@ export function App() {
   const timingPending = createMemo(
     () => timingAnalysis.state().status === 'pending',
   );
-  createEffect(() => {
-    if (!player.ready() || !activeLyrics()) return;
-    const timing = player.timing();
-    const timeline = sectionTimeline();
-    emitTimingDiagnostic({
-      event: 'host-map',
-      surface: 'host',
-      reason: timeline
-        ? 'mapped'
-        : timing
-          ? 'weak-map'
-          : timingPending()
-            ? 'pending'
-            : 'untimed',
-      segmentCount: timing?.segments.length ?? 0,
-      sectionCount:
-        timeline?.filter((entry) => entry.sectionIndex !== null).length ?? 0,
-      ...(timing ? { analyzedDurationSeconds: timing.durationSeconds } : {}),
-    });
-  });
   const activeEntry = createMemo(() =>
     activeTimelineEntry(sectionTimeline(), player.currentTime()),
   );
@@ -321,31 +300,8 @@ export function App() {
   const settleRoomTiming = async (
     song: GeneratedSong,
   ): Promise<LyricTiming | null> => {
-    const current = timingAnalysis.state();
-    if (current.status === 'pending')
-      emitTimingDiagnostic({
-        event: 'room-waiting',
-        surface: 'room',
-        reason: 'pending',
-        attempt: current.attempt,
-      });
     const settled = await song.timingSettled;
-    if (settled.status === 'ready') {
-      emitTimingDiagnostic({
-        event: 'room-ready',
-        surface: 'room',
-        reason: 'ready',
-        segmentCount: settled.timing.segments.length,
-        analyzedDurationSeconds: settled.timing.durationSeconds,
-      });
-      return settled.timing;
-    }
-    emitTimingDiagnostic({
-      event: 'room-terminal-untimed',
-      surface: 'room',
-      reason: settled.reason,
-    });
-    return null;
+    return settled.status === 'ready' ? settled.timing : null;
   };
   const publishStandalone = async (song: GeneratedSong) => {
     if (!room.details()) return;

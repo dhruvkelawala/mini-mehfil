@@ -33,14 +33,11 @@ abandoned)
   guarded to one generate POST, but the forwarding route never returned a
   response to the product: privacy-safe inspection found no retained source and
   zero analysis/share requests, while the unconfigured recovery GET returned
-  HTTP 503. No retry POST was issued during this retest. Retained diagnostics
-  stay in source; an operator decision on whether to authorize another paid
-  live parity run is the exact remaining gate.
+  HTTP 503. No retry POST was issued during this retest.
 - PR #33 was merged into `main` at `b5f4fa4` on 2026-08-17 from the reviewed
-  head `0aa1fc0` with no additional commits. The retained
-  `[TIMING-DIAGNOSTIC]` instrumentation shipped with it and stays until the
-  operator approves removal. The merge does not by itself satisfy the Plan 006
-  completion gate: live parity evidence is still missing.
+  head `0aa1fc0` with no additional commits. Its retained
+  `[TIMING-DIAGNOSTIC]` instrumentation identified both live failure causes and
+  was removed with operator approval in PR #38 on 2026-08-18.
 - Plan 007 must not begin until PR #33 is merged and Plan 006 is marked DONE.
   It keeps the production MiniMax adapter as the default and fallback while a
   native Mac/MLX service is benchmarked, secured, queued, and proven across

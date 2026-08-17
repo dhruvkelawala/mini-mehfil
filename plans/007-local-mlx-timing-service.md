@@ -85,9 +85,10 @@ host/listener/shared parity gate prove the local service safe to prefer.
   recording or a materially different media duration and applies valid timing
   without reload, seek, pause, or play. Do not move provider-specific behavior
   into this controller.
-- `src/timing/timing-analysis.ts:25-110` defines the fixed diagnostic vocabulary
-  and copies only allowed fields to console. The operator explicitly requires
-  these diagnostics to remain until separate approval to remove them.
+- `src/timing/timing-analysis.ts` defined a fixed diagnostic vocabulary that
+  copied only allowed fields to console. The operator approved its removal on
+  2026-08-18 (PR #38). Any diagnostics this plan adds must follow the same
+  fixed privacy-safe vocabulary.
 - `test/browser/sync-replay.spec.ts:94-248` is the no-cost real-audio parity
   pattern. It proves one late timing upgrade and equal host, listener, and
   standalone shared active lines, including backward seek, without exposing a

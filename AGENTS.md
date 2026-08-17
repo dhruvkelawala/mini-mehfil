@@ -53,9 +53,10 @@ Two independently deployed halves — keep them in step:
 - Dependencies are allowed when they deepen module boundaries, provide a
   platform SDK, or enforce build and test quality. Keep runtime dependencies
   small and audited: `solid-js` is the only browser runtime library.
-- Timing diagnostics (`[TIMING-DIAGNOSTIC]`) use a fixed privacy-safe
-  vocabulary (`src/timing/timing-analysis.ts`); never log tokens, signed
-  URLs, lyrics, transcripts, or raw provider payloads anywhere.
+- Never log tokens, signed URLs, lyrics, transcripts, or raw provider
+  payloads anywhere. The temporary `[TIMING-DIAGNOSTIC]` instrumentation used
+  while Plan 006 was being proven has been removed; reintroduce structured
+  diagnostics only behind that same fixed privacy-safe vocabulary.
 - Only the normalized section-timing artifact persists — never provider
   transcripts (deliberate product decision, PRODUCT.md).
 - Implementation plans and their status live in `plans/README.md`.

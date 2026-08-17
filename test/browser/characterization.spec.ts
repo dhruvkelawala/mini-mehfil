@@ -107,7 +107,6 @@ test('a lost paid response is recovered without a second paid POST', async ({
     expect.objectContaining({
       source: 'https://audio.example.test/recovered-song.mp3',
       token: 'sk-fixture-secret-token',
-      attempt: 1,
     }),
   );
 });

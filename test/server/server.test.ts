@@ -266,7 +266,6 @@ async function analyzeWith(mockFetch, body = {}, options = {}) {
           body: JSON.stringify({
             token: 'sk-cp-analysis',
             source: 'https://cdn.minimax.test/song.mp3',
-            attempt: 1,
             ...body,
           }),
         })
@@ -297,26 +296,21 @@ test('generation returns finished audio without invoking timing analysis', async
 test('analysis uses a 180 second attempt and returns only normalized timing', async () => {
   assert.equal(ANALYSIS_TIMEOUT_MS, 180_000);
   let preprocess;
-  const diagnostics = [];
-  const outcome = await analyzeWith(
-    async (url, init) => {
-      if (url !== 'https://mock.minimax.test/v1/music_cover_preprocess')
-        throw new Error(`Unexpected URL: ${url}`);
-      preprocess = { init, body: JSON.parse(init.body) };
-      return preprocessed({
-        audio_duration: 90,
-        structure_result: JSON.stringify({
-          segments: [
-            { start: 0, end: 30, label: 'verse' },
-            { start: 30, end: 45, label: 'pre-chorus' },
-            { start: 45, end: 90, label: 'chorus' },
-          ],
-        }),
-      });
-    },
-    {},
-    { timingDiagnostic: (diagnostic) => diagnostics.push(diagnostic) },
-  );
+  const outcome = await analyzeWith(async (url, init) => {
+    if (url !== 'https://mock.minimax.test/v1/music_cover_preprocess')
+      throw new Error(`Unexpected URL: ${url}`);
+    preprocess = { init, body: JSON.parse(init.body) };
+    return preprocessed({
+      audio_duration: 90,
+      structure_result: JSON.stringify({
+        segments: [
+          { start: 0, end: 30, label: 'verse' },
+          { start: 30, end: 45, label: 'pre-chorus' },
+          { start: 45, end: 90, label: 'chorus' },
+        ],
+      }),
+    });
+  }, {});
 
   assert.deepEqual(outcome.timing?.segments, [
     { start: 0, end: 30, label: 'verse' },
@@ -326,7 +320,7 @@ test('analysis uses a 180 second attempt and returns only normalized timing', as
   assert.equal(preprocess.init.headers.Authorization, 'Bearer sk-cp-analysis');
   assert.equal(preprocess.body.model, 'music-cover');
   assert.equal(preprocess.body.audio_url, 'https://cdn.minimax.test/song.mp3');
-  const serialized = JSON.stringify({ outcome, diagnostics });
+  const serialized = JSON.stringify(outcome);
   assert.doesNotMatch(serialized, /formatted_lyrics|raw ASR transcript/);
   assert.doesNotMatch(serialized, /cover_feature_id|feature-1234/);
   assert.doesNotMatch(serialized, /trace-5678|sk-cp-analysis|cdn\.minimax/);

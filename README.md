@@ -142,7 +142,7 @@ cannot make a paid call. A combined proof video is written to
 `.claude/artifacts/sync-replay/sync-replay-proof.webm`.
 
 The checked-in sidecar currently verifies transport, late upgrade, seeking,
-diagnostics, and three-surface parity; `audiblyVerified` is deliberately false
+and three-surface parity; `audiblyVerified` is deliberately false
 because the downloaded MP3 contains no embedded lyric sheet. Replace its lyric
 text and section timestamps with a human-checked transcription before treating
 the replay as evidence of audible lyric alignment.

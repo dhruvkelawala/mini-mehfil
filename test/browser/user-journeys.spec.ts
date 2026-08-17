@@ -31,8 +31,6 @@ const timedArtifact = {
   ],
 };
 
-type TimingDiagnostic = Record<string, string | number>;
-
 async function installTimingBrowserHarness(
   page: Page,
   { currentTime = 6, duration = 24 } = {},
@@ -42,27 +40,9 @@ async function installTimingBrowserHarness(
       const fixtureWindow = window as typeof window & {
         __mediaCurrentTime?: number;
         __mediaPaused?: boolean;
-        __timingDiagnostics?: Array<Record<string, string | number>>;
       };
       fixtureWindow.__mediaCurrentTime = initialTime;
       fixtureWindow.__mediaPaused = true;
-      fixtureWindow.__timingDiagnostics = [];
-      const originalInfo = console.info.bind(console);
-      console.info = (...values: unknown[]) => {
-        if (
-          values[0] === '[TIMING-DIAGNOSTIC]' &&
-          values[1] &&
-          typeof values[1] === 'object'
-        ) {
-          fixtureWindow.__timingDiagnostics?.push(
-            JSON.parse(JSON.stringify(values[1])) as Record<
-              string,
-              string | number
-            >,
-          );
-        }
-        originalInfo(...values);
-      };
       Object.defineProperties(HTMLMediaElement.prototype, {
         currentTime: {
           configurable: true,
@@ -96,17 +76,6 @@ async function installTimingBrowserHarness(
       };
     },
     { initialTime: currentTime, mediaDuration: duration },
-  );
-}
-
-async function timingDiagnostics(page: Page): Promise<TimingDiagnostic[]> {
-  return page.evaluate(
-    () =>
-      (
-        window as typeof window & {
-          __timingDiagnostics?: Array<Record<string, string | number>>;
-        }
-      ).__timingDiagnostics ?? [],
   );
 }
 
@@ -631,12 +600,6 @@ test('delayed timing upgrades host, listener, and shared playback at the same me
       .evaluate((audio) => (audio as HTMLAudioElement).currentTime),
   ).toBe(6);
   expect(shareCalls).toBe(0);
-  await expect
-    .poll(async () =>
-      (await timingDiagnostics(page)).map((diagnostic) => diagnostic.event),
-    )
-    .toEqual(expect.arrayContaining(['room-waiting', 'share-waiting']));
-
   releaseAnalysis?.();
   await expect(
     page.getByText('Lines follow MiniMax sections · timing is approximate'),
@@ -745,96 +708,6 @@ test('delayed timing upgrades host, listener, and shared playback at the same me
     .locator('#reveal-lines [aria-current="true"] .lyric-primary')
     .textContent();
   expect(standaloneLine).toBe(hostLine);
-
-  const hostDiagnostics = await timingDiagnostics(page);
-  const listenerDiagnostics = await timingDiagnostics(listener);
-  const standaloneDiagnostics = await timingDiagnostics(standalone);
-  const hostEvents = hostDiagnostics.map((diagnostic) => diagnostic.event);
-  for (const event of [
-    'room-waiting',
-    'share-waiting',
-    'host-artifact-receipt',
-    'host-source-validation',
-    'host-media-validation',
-    'host-map',
-    'room-ready',
-    'share-ready',
-  ])
-    expect(hostEvents).toContain(event);
-  const firstHostIndex = (event: string, after = -1) =>
-    hostEvents.findIndex(
-      (candidate, index) => index > after && candidate === event,
-    );
-  const roomWaitingIndex = firstHostIndex('room-waiting');
-  const shareWaitingIndex = firstHostIndex('share-waiting');
-  const receiptIndex = firstHostIndex(
-    'host-artifact-receipt',
-    Math.max(roomWaitingIndex, shareWaitingIndex),
-  );
-  const sourceIndex = firstHostIndex('host-source-validation', receiptIndex);
-  const mediaIndex = firstHostIndex('host-media-validation', sourceIndex);
-  const mappedIndex = firstHostIndex('host-map', mediaIndex);
-  const roomReadyIndex = firstHostIndex('room-ready', receiptIndex);
-  const shareReadyIndex = firstHostIndex('share-ready', receiptIndex);
-  expect([
-    roomWaitingIndex,
-    shareWaitingIndex,
-    receiptIndex,
-    sourceIndex,
-    mediaIndex,
-    mappedIndex,
-    roomReadyIndex,
-    shareReadyIndex,
-  ]).not.toContain(-1);
-  expect(receiptIndex).toBeGreaterThan(roomWaitingIndex);
-  expect(receiptIndex).toBeGreaterThan(shareWaitingIndex);
-  expect(sourceIndex).toBeGreaterThan(receiptIndex);
-  expect(mediaIndex).toBeGreaterThan(sourceIndex);
-  expect(mappedIndex).toBeGreaterThan(mediaIndex);
-  expect(roomReadyIndex).toBeGreaterThan(receiptIndex);
-  expect(shareReadyIndex).toBeGreaterThan(receiptIndex);
-  for (const event of [
-    'listener-artifact-receipt',
-    'listener-media-validation',
-    'listener-map',
-  ])
-    expect(listenerDiagnostics.map((diagnostic) => diagnostic.event)).toContain(
-      event,
-    );
-  expect(standaloneDiagnostics.map((diagnostic) => diagnostic.event)).toContain(
-    'shared-page-validation',
-  );
-  const safeFields = new Set([
-    'event',
-    'surface',
-    'reason',
-    'attempt',
-    'elapsedMs',
-    'deadlineMs',
-    'httpStatus',
-    'providerStatus',
-    'segmentCount',
-    'sectionCount',
-    'analyzedDurationSeconds',
-    'mediaDurationSeconds',
-  ]);
-  for (const diagnostic of [
-    ...hostDiagnostics,
-    ...listenerDiagnostics,
-    ...standaloneDiagnostics,
-  ])
-    expect(Object.keys(diagnostic).every((key) => safeFields.has(key))).toBe(
-      true,
-    );
-  const serializedDiagnostics = JSON.stringify([
-    hostDiagnostics,
-    listenerDiagnostics,
-    standaloneDiagnostics,
-  ]);
-  expect(serializedDiagnostics).not.toContain(fixtureToken);
-  expect(serializedDiagnostics).not.toContain('audio.example.test');
-  expect(serializedDiagnostics).not.toContain('Rain begins');
-  expect(serializedDiagnostics).not.toContain('AbCdEfGhIjKlMnOp');
 });
 
 test('a listener submits a request and resumes the same seat after reload', async ({

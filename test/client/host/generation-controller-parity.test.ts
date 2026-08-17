@@ -110,7 +110,6 @@ describe('typed generation lifecycle parity', () => {
     };
     const analysis = createTimingAnalysisController({
       port,
-      diagnostic: vi.fn(),
     });
     const load = vi.fn(() => Promise.resolve());
     const applyTiming = vi.fn(() => true);
@@ -119,7 +118,6 @@ describe('typed generation lifecycle parity', () => {
       player: target,
       storage: new MemoryStorage(),
       timingAnalysis: analysis,
-      timingDiagnostic: vi.fn(),
       fetcher: async (input) =>
         input === '/api/write-lyrics'
           ? Response.json(SHEET)
@@ -152,16 +150,13 @@ describe('typed generation lifecycle parity', () => {
             settleAnalysis = resolve;
           }),
       },
-      diagnostic: vi.fn(),
     });
     const requests: Array<{ input: string; body: Record<string, unknown> }> =
       [];
-    const diagnostic = vi.fn();
     const controller = createGenerationController({
       player: player(),
       storage: new MemoryStorage(),
       timingAnalysis: analysis,
-      timingDiagnostic: diagnostic,
       fetcher: async (input, init) => {
         requests.push({ input, body: requestBody(init) });
         if (input === '/api/write-lyrics') return Response.json(SHEET);
@@ -190,12 +185,6 @@ describe('typed generation lifecycle parity', () => {
     const share = requests.find((request) => request.input === '/api/share');
     expect(share?.body.lyricTiming).toEqual(TIMING);
     expect(JSON.stringify(share?.body)).not.toContain(INPUT.token);
-    expect(diagnostic).toHaveBeenCalledWith(
-      expect.objectContaining({ event: 'share-waiting' }),
-    );
-    expect(diagnostic).toHaveBeenCalledWith(
-      expect.objectContaining({ event: 'share-ready' }),
-    );
   });
 
   test('a terminal analysis failure shares explicitly untimed', async () => {
@@ -208,15 +197,12 @@ describe('typed generation lifecycle parity', () => {
             retryable: false,
           }),
       },
-      diagnostic: vi.fn(),
     });
     let sharedBody: Record<string, unknown> | undefined;
-    const diagnostic = vi.fn();
     const controller = createGenerationController({
       player: player(),
       storage: new MemoryStorage(),
       timingAnalysis: analysis,
-      timingDiagnostic: diagnostic,
       fetcher: async (input, init) => {
         if (input === '/api/write-lyrics') return Response.json(SHEET);
         if (input === '/api/generate')
@@ -233,12 +219,6 @@ describe('typed generation lifecycle parity', () => {
     await controller.generate(INPUT);
     await controller.share(false);
     expect(sharedBody?.lyricTiming).toBeNull();
-    expect(diagnostic).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'share-terminal-untimed',
-        reason: 'invalid-timing',
-      }),
-    );
   });
 
   test('loading messages keep looping and user-facing copy contains no em dashes', async () => {
@@ -487,7 +467,6 @@ describe('typed generation lifecycle parity', () => {
     );
     const analysis = createTimingAnalysisController({
       port: { analyze },
-      diagnostic: vi.fn(),
     });
     let paidCalls = 0;
     let statusCalls = 0;
@@ -496,7 +475,6 @@ describe('typed generation lifecycle parity', () => {
       player: target,
       storage,
       timingAnalysis: analysis,
-      timingDiagnostic: vi.fn(),
       fetcher: async (input) => {
         if (input === '/api/write-lyrics') return Response.json(SHEET);
         if (input === '/api/generate') {
