@@ -914,14 +914,48 @@ export function assertHostBuild(staticRoot = DEFAULT_STATIC_ROOT): void {
   }
 }
 
+function parseTcpPort(value: string, source: string): number {
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${source} must be an integer TCP port from 1 to 65535.`);
+  }
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`${source} must be an integer TCP port from 1 to 65535.`);
+  }
+  return port;
+}
+
+export function resolveDirectEntryPort(
+  args: readonly string[],
+  environmentPort?: string,
+): number {
+  const positions = args.flatMap((argument, index) =>
+    argument === '--port' ? [index] : [],
+  );
+  if (positions.length > 1) {
+    throw new Error('The --port option may only be provided once.');
+  }
+  const position = positions[0];
+  if (position !== undefined) {
+    const value = args[position + 1];
+    if (value === undefined || value.startsWith('--')) {
+      throw new Error('--port requires an integer TCP port from 1 to 65535.');
+    }
+    return parseTcpPort(value, '--port');
+  }
+  return environmentPort === undefined || environmentPort === ''
+    ? 4173
+    : parseTcpPort(environmentPort, 'PORT');
+}
+
 const server = createServer();
 
 if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
+  const port = resolveDirectEntryPort(process.argv.slice(2), process.env.PORT);
   assertHostBuild();
-  const port = Number(process.env.PORT) || 4173;
   server.listen(port, '127.0.0.1', () => {
     console.log(`Mehfil is open at http://127.0.0.1:${port}`);
   });

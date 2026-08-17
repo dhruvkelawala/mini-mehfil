@@ -4,8 +4,29 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'vitest';
-import serverModule, { createServer } from '../../src/server/index.ts';
+import serverModule, {
+  createServer,
+  resolveDirectEntryPort,
+} from '../../src/server/index.ts';
 const JOB_ID = 'AbCdEfGhIjKlMnOpQrStUvWx';
+
+test('direct entry port honors CLI precedence, environment, and defaults', () => {
+  assert.equal(resolveDirectEntryPort([], undefined), 4173);
+  assert.equal(resolveDirectEntryPort([], '4199'), 4199);
+  assert.equal(resolveDirectEntryPort(['--port', '4200'], '4199'), 4200);
+});
+
+test('direct entry port rejects missing and invalid explicit values', () => {
+  for (const args of [
+    ['--port'],
+    ['--port', 'nope'],
+    ['--port', '1.5'],
+    ['--port', '0'],
+    ['--port', '65536'],
+  ]) {
+    assert.throws(() => resolveDirectEntryPort(args), /integer TCP port/);
+  }
+});
 
 test('exports an HTTP server for serverless runtimes', () => {
   assert.equal(typeof serverModule.listen, 'function');
