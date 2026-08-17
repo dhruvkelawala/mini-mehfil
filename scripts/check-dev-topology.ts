@@ -213,13 +213,12 @@ async function runAttempt(): Promise<void> {
   const append = (chunk: Buffer) => {
     output = `${output}${chunk.toString()}`.slice(-MAX_OUTPUT_CHARACTERS);
   };
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
   const child = spawn(
-    npm,
+    pnpm,
     [
       'run',
       'dev',
-      '--',
       '--web-port',
       String(webPort),
       '--api-port',

@@ -19,7 +19,7 @@ const audioPath = resolve(
 
 if (!existsSync(audioPath)) {
   process.stderr.write(
-    `Replay audio is missing. Pass an MP3 path: npm run test:sync-replay -- /path/to/song.mp3\n`,
+    `Replay audio is missing. Pass an MP3 path: pnpm run test:sync-replay -- /path/to/song.mp3\n`,
   );
   process.exit(1);
 }

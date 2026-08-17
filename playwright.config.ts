@@ -18,7 +18,7 @@ export default defineConfig({
     { name: 'mobile-chromium', use: { ...devices['Pixel 5'] } },
   ],
   webServer: {
-    command: `npm run build && node test/fixtures/browser-server.ts --port ${port}`,
+    command: `pnpm run build && node test/fixtures/browser-server.ts --port ${port}`,
     port,
     reuseExistingServer: false,
     timeout: 15_000,

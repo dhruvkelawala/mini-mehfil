@@ -4,9 +4,9 @@ A tiny local song room for MiniMax Music 3. Keywords in any language go in; a
 lyricist model writes structured native-script lyrics and a production prompt,
 and MiniMax Music 3 sings them.
 
-Use Node 24 or newer. Install with `npm install`, develop with `npm run dev`,
-build with `npm run build`, serve the production build with `npm start`, and
-test with `npm test`.
+Use Node 24 or newer. Install with `pnpm install`, develop with `pnpm run dev`,
+build with `pnpm run build`, serve the production build with `pnpm start`, and
+test with `pnpm test`.
 
 Dependencies are allowed when they deepen module boundaries, provide a
 platform SDK, or enforce build and test quality. Keep runtime dependencies
