@@ -64,19 +64,27 @@ continues to travel only between the host browser and local proxy.
 
 - `src/client/host/` — the Solid host surface and typed controllers. The courtyard scene remains a single hand-built SVG.
 - `src/server/` — the typed Node proxy and provider boundary.
-- `src/lyrics/` — platform-independent lyric parsing and section timing shared by the host and the Worker.
+- `src/lyrics/` — platform-independent lyric parsing, section timing, and derived line pacing shared by the host and the Worker.
 - `src/room/` — platform-independent room protocol, state transitions, and transport ports.
 - `src/worker/` — the Cloudflare Worker, room router, and thin `MehfilRoom` Durable Object adapter.
 
 Once a recording finishes, the proxy makes one best-effort call to MiniMax's
 free `music_cover_preprocess` endpoint with the same key to learn where the
 song's sections fall. When that analysis comes back and lines up with the
-written sections, the reveal follows the song section by section and says so:
-`Section timing from MiniMax analysis`. This is section-level, not line- or
-word-level — nothing here is karaoke. Analysis is capped at 10 seconds and can
-fail freely; anything less than a confident match keeps the original
-`Atmospheric reveal · timing is approximate` pacing. Nothing from the analysis
-is kept except the section boundaries themselves.
+written sections, the reveal follows those sections while a syllable-weighted
+display heuristic paces the current-line emphasis inside each one. Timed mode
+says exactly `Lines follow MiniMax sections · timing is approximate`: provider
+truth stops at the section boundaries, and nothing here is line, word, or
+karaoke timing.
+
+For inline audio bytes, the host also makes one best-effort, band-limited onset
+check and holds the first section's sung lines until the likely vocal entry.
+Remote audio URLs and shared pages skip that gate; playback never waits for it.
+Both line pacing and the vocal-entry gate are approximate render-time
+heuristics. Analysis is capped at 10 seconds and can fail freely; anything less
+than a confident section match keeps the original
+`Atmospheric reveal · timing is approximate` pacing. Nothing from the provider
+analysis is kept except the section boundaries themselves.
 
 The project intentionally keeps dependencies focused. `solid-js` is the only
 browser runtime library; Vite, TypeScript, Vitest, Playwright, ESLint, Prettier,
