@@ -58,6 +58,11 @@ const accepted = () =>
     submitted(),
     host({ type: 'request-accepted', requestId: 'q1' }),
   ).state;
+const enqueued = () =>
+  transitionRoom(
+    accepted(),
+    host({ type: 'recording-enqueued', requestId: 'q1' }),
+  ).state;
 
 describe('room state', () => {
   test('room creation is versioned', () => {
@@ -71,6 +76,7 @@ describe('room state', () => {
       participants: [],
       kickedParticipantIds: [],
       queue: [],
+      recordingQueue: [],
       currentRecording: null,
       currentSong: null,
       setlist: [],
@@ -206,30 +212,98 @@ describe('room state', () => {
     expect(state.queue[0]?.status).toBe('declined');
   });
 
-  test('only one recording and failure restores accepted', () => {
+  test('record actions queue idempotently and only the queue head starts', () => {
     let state = transitionRoom(
-      accepted(),
-      host({ type: 'recording-started', requestId: 'q1' }),
+      enqueued(),
+      host({
+        type: 'recording-started',
+        requestId: 'q1',
+        coordinatorId: 'tab-a',
+      }),
     ).state;
     expect(
-      errorCode(
-        transitionRoom(
-          state,
-          host({ type: 'recording-started', requestId: 'q1' }),
-        ),
-      ),
-    ).toBe('recording-active');
+      transitionRoom(
+        state,
+        host({
+          type: 'recording-started',
+          requestId: 'q1',
+          coordinatorId: 'tab-b',
+        }),
+      ).error,
+    ).toBeUndefined();
+    expect(state.currentRecording?.coordinatorId).toBe('tab-a');
     state = transitionRoom(
       state,
       host({ type: 'recording-failed', requestId: 'q1' }),
     ).state;
-    expect(state.queue[0]?.status).toBe('accepted');
+    expect(state.queue[0]?.status).toBe('failed');
+    state = transitionRoom(
+      state,
+      host({ type: 'recording-enqueued', requestId: 'q1' }),
+    ).state;
+    const repeated = transitionRoom(
+      state,
+      host({ type: 'recording-enqueued', requestId: 'q1' }),
+    ).state;
+    expect(repeated.recordingQueue).toEqual(['q1']);
+  });
+
+  test('queued recordings can be reordered and removed only before they start', () => {
+    let state = accepted();
+    state = transitionRoom(
+      state,
+      listener({
+        type: 'request-submitted',
+        participantId: 'p1',
+        requestId: 'q2',
+        idea: 'sun',
+      }),
+    ).state;
+    state = transitionRoom(
+      state,
+      host({ type: 'request-accepted', requestId: 'q2' }),
+    ).state;
+    for (const requestId of ['q1', 'q2']) {
+      state = transitionRoom(
+        state,
+        host({ type: 'recording-enqueued', requestId }),
+      ).state;
+    }
+    state = transitionRoom(
+      state,
+      host({ type: 'recording-reordered', requestId: 'q2', toIndex: 0 }),
+    ).state;
+    expect(state.recordingQueue).toEqual(['q2', 'q1']);
+    expect(
+      errorCode(
+        transitionRoom(
+          state,
+          host({
+            type: 'recording-started',
+            requestId: 'q1',
+            coordinatorId: 'tab-a',
+          }),
+        ),
+      ),
+    ).toBe('invalid-transition');
+    state = transitionRoom(
+      state,
+      host({ type: 'recording-removed', requestId: 'q2' }),
+    ).state;
+    expect(state.recordingQueue).toEqual(['q1']);
+    expect(state.queue.find((item) => item.id === 'q2')?.status).toBe(
+      'accepted',
+    );
   });
 
   test('lyrics and ready populate a paused current song', () => {
     let state = transitionRoom(
-      accepted(),
-      host({ type: 'recording-started', requestId: 'q1' }),
+      enqueued(),
+      host({
+        type: 'recording-started',
+        requestId: 'q1',
+        coordinatorId: 'tab-a',
+      }),
     ).state;
     state = transitionRoom(
       state,
@@ -290,8 +364,12 @@ describe('room state', () => {
 
   test('only the host controls current-song playback', () => {
     let state = transitionRoom(
-      accepted(),
-      host({ type: 'recording-started', requestId: 'q1' }),
+      enqueued(),
+      host({
+        type: 'recording-started',
+        requestId: 'q1',
+        coordinatorId: 'tab-a',
+      }),
     ).state;
     state = transitionRoom(
       state,
@@ -338,9 +416,10 @@ describe('room state', () => {
     ).toBe('invalid-playback');
   });
 
-  test('prior songs enter capped setlist', () => {
+  test('a background recording becomes ready without changing current playback', () => {
     const state: RoomState = base();
     state.currentSong = {
+      requestId: null,
       shareId: 'aaaaaaaaaaaaaaaa',
       title: 'A',
       language: 'x',
@@ -371,6 +450,7 @@ describe('room state', () => {
     ];
     state.currentRecording = {
       requestId: 'q1',
+      coordinatorId: 'tab-a',
       startedAt: 1,
       lyrics: {
         title: 'B',
@@ -390,11 +470,24 @@ describe('room state', () => {
         startedAt: 2,
       }),
     ).state;
-    expect(next.setlist[0]).toEqual({
-      shareId: 'aaaaaaaaaaaaaaaa',
-      title: 'A',
-      language: 'x',
-      startedAt: 1,
+    expect(next.currentSong).toEqual(state.currentSong);
+    expect(next.setlist[0]).toMatchObject({
+      requestId: 'q1',
+      shareId: 'bbbbbbbbbbbbbbbb',
+      title: 'B',
+    });
+    expect(next.queue[0]?.status).toBe('ready');
+
+    const selected = transitionRoom(
+      next,
+      host({ type: 'song-selected', shareId: 'bbbbbbbbbbbbbbbb' }),
+    ).state;
+    expect(selected.currentSong).toMatchObject({
+      requestId: 'q1',
+      shareId: 'bbbbbbbbbbbbbbbb',
+      title: 'B',
+      language: 'y',
+      playback: { status: 'paused', positionMs: 0, changedAt: 2000 },
     });
   });
 
@@ -407,6 +500,39 @@ describe('room state', () => {
       projectRoomState(state, { role: 'listener', participantId: 'p1' })
         .participants[0],
     ).not.toHaveProperty('id');
+  });
+
+  test('listener projections expose recording status without lyrics or ready lyrics', () => {
+    let state = transitionRoom(
+      enqueued(),
+      host({
+        type: 'recording-started',
+        requestId: 'q1',
+        coordinatorId: 'tab-a',
+      }),
+    ).state;
+    state = transitionRoom(
+      state,
+      host({
+        type: 'lyrics-ready',
+        requestId: 'q1',
+        lyrics: {
+          title: 'Rain',
+          language: 'Hindi',
+          lyricsNative: 'बारिश',
+          lyricsRoman: 'baarish',
+        },
+      }),
+    ).state;
+    const projected = projectRoomState(state, {
+      role: 'listener',
+      participantId: 'p1',
+    });
+    expect(projected.currentRecording).toEqual({
+      requestId: 'q1',
+      startedAt: 2000,
+    });
+    expect(projected.currentRecording).not.toHaveProperty('lyrics');
   });
 
   test('input state is immutable', () => {
@@ -445,8 +571,12 @@ describe('room state', () => {
 
   test('lyrics-ready enforces share metadata ceilings', () => {
     const state = transitionRoom(
-      accepted(),
-      host({ type: 'recording-started', requestId: 'q1' }),
+      enqueued(),
+      host({
+        type: 'recording-started',
+        requestId: 'q1',
+        coordinatorId: 'tab-a',
+      }),
     ).state;
     const valid = {
       title: 'T',

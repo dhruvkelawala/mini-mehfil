@@ -401,7 +401,8 @@ describe('room transport', () => {
     );
     for (const message of [
       { type: 'request-accepted', requestId },
-      { type: 'recording-started', requestId },
+      { type: 'recording-enqueued', requestId },
+      { type: 'recording-started', requestId, coordinatorId: 'host-tab' },
       {
         type: 'lyrics-ready',
         requestId,

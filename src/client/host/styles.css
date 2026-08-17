@@ -365,7 +365,8 @@ h1 {
   white-space: nowrap;
 }
 .host-queue,
-.host-setlist {
+.host-setlist,
+.recording-up-next ol {
   padding-left: 20px;
   font-size: 12px;
 }
@@ -376,11 +377,14 @@ h1 {
 }
 .host-participants li,
 .host-queue li,
-.host-setlist li {
+.host-setlist li,
+.recording-up-next li {
   margin: 10px 0;
 }
 .host-queue button,
-.host-participants button {
+.host-participants button,
+.host-setlist button,
+.recording-up-next button {
   width: auto;
   min-height: 34px;
   margin: 4px 4px 0 0;
@@ -389,6 +393,22 @@ h1 {
 }
 .host-setlist a {
   color: #e6a653;
+}
+.recording-now,
+.recording-up-next {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(249, 237, 218, 0.14);
+  border-radius: 7px;
+  background: rgba(8, 24, 23, 0.28);
+}
+.room-panel .recording-now h3,
+.room-panel .recording-up-next h3 {
+  margin-top: 0;
+}
+.room-panel .recording-now p {
+  margin-bottom: 0;
+  color: #fff8ec;
 }
 .room-close {
   width: 100%;

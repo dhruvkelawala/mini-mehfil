@@ -19,6 +19,7 @@ listenerState.participants.push({
   joinedAt: openedAt,
 });
 listenerState.currentSong = {
+  requestId: null,
   shareId: 'abcdefghijklmnop',
   title: 'Monsoon Song',
   language: 'Hindi',

@@ -155,6 +155,121 @@ test('a host manages a request through recording and publication', async ({
     .locator('#host-queue li')
     .filter({ hasText: 'Night drive home' });
   await accepted.getByRole('button', { name: 'Record' }).click();
+
+  await expect
+    .poll(async () =>
+      (await sentFrames(page)).some(
+        (frame) => (frame as { type?: string }).type === 'recording-enqueued',
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() => {
+    const fixtureWindow = window as typeof window & {
+      __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
+    };
+    fixtureWindow.__mehfilSockets[0]?.serverMessage({
+      type: 'snapshot',
+      state: {
+        version: 1,
+        roomId: 'ABCDEFGH',
+        openedAt: 1,
+        expiresAt: Date.now() + 60_000,
+        expiredAt: null,
+        hostPresent: true,
+        listenerCount: 0,
+        participants: [],
+        queue: [
+          {
+            id: 'request-1',
+            participantId: 'listener-1',
+            requesterName: 'Asha',
+            idea: 'Rain on the old roof',
+            vibe: 'acoustic',
+            language: 'Hindi',
+            status: 'declined',
+            submittedAt: 1,
+          },
+          {
+            id: 'request-2',
+            participantId: 'listener-1',
+            requesterName: 'Asha',
+            idea: 'Night drive home',
+            vibe: 'warm',
+            language: 'Gujarati',
+            status: 'queued',
+            submittedAt: 2,
+          },
+        ],
+        recordingQueue: ['request-2'],
+        currentRecording: null,
+        currentSong: null,
+        setlist: [],
+      },
+    });
+  });
+
+  await expect
+    .poll(async () =>
+      (await sentFrames(page)).find(
+        (frame) => (frame as { type?: string }).type === 'recording-started',
+      ),
+    )
+    .toBeTruthy();
+  const recordingStarted = (await sentFrames(page)).find(
+    (frame) => (frame as { type?: string }).type === 'recording-started',
+  ) as { coordinatorId?: string } | undefined;
+  if (!recordingStarted?.coordinatorId)
+    throw new Error('Host did not claim the queued recording');
+
+  await page.evaluate((coordinatorId) => {
+    const fixtureWindow = window as typeof window & {
+      __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
+    };
+    fixtureWindow.__mehfilSockets[0]?.serverMessage({
+      type: 'snapshot',
+      state: {
+        version: 1,
+        roomId: 'ABCDEFGH',
+        openedAt: 1,
+        expiresAt: Date.now() + 60_000,
+        expiredAt: null,
+        hostPresent: true,
+        listenerCount: 0,
+        participants: [],
+        queue: [
+          {
+            id: 'request-1',
+            participantId: 'listener-1',
+            requesterName: 'Asha',
+            idea: 'Rain on the old roof',
+            vibe: 'acoustic',
+            language: 'Hindi',
+            status: 'declined',
+            submittedAt: 1,
+          },
+          {
+            id: 'request-2',
+            participantId: 'listener-1',
+            requesterName: 'Asha',
+            idea: 'Night drive home',
+            vibe: 'warm',
+            language: 'Gujarati',
+            status: 'recording',
+            submittedAt: 2,
+          },
+        ],
+        recordingQueue: [],
+        currentRecording: {
+          requestId: 'request-2',
+          coordinatorId,
+          startedAt: Date.now(),
+          lyrics: null,
+        },
+        currentSong: null,
+        setlist: [],
+      },
+    });
+  }, recordingStarted.coordinatorId);
   await expect(page.getByText('Your recording is ready.')).toBeVisible();
 
   const messages = (await sentFrames(page)) as Array<{
@@ -170,7 +285,11 @@ test('a host manages a request through recording and publication', async ({
       { type: 'request-accepted', requestId: 'request-1' },
       { type: 'request-reordered', requestId: 'request-1', toIndex: 1 },
       { type: 'request-declined', requestId: 'request-1' },
-      { type: 'recording-started', requestId: 'request-2' },
+      { type: 'recording-enqueued', requestId: 'request-2' },
+      expect.objectContaining({
+        type: 'recording-started',
+        requestId: 'request-2',
+      }),
       expect.objectContaining({
         type: 'lyrics-ready',
         requestId: 'request-2',

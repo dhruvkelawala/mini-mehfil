@@ -15,6 +15,7 @@ import {
 } from '../../room/protocol.ts';
 
 export const ROOM_SESSION_KEY = 'mini-mehfil-host-room';
+export const ROOM_COORDINATOR_KEY = 'mini-mehfil:room-coordinator';
 const SHARE_ID = /^[A-Za-z0-9_-]{16}$/;
 
 export interface RoomDetails {
@@ -35,19 +36,6 @@ export interface HostRoomView {
   queue: QueueItem[];
   setlist: SetlistItem[];
 }
-export interface RoomRecordingAdapters<T> {
-  requestId: string;
-  run: number;
-  isCurrent: (run: number) => boolean;
-  generate: (hooks: {
-    onLyrics: (sheet: LyricsSheet) => void;
-    onReady: (generated: T) => void;
-    onFailed: () => void;
-  }) => Promise<T | undefined>;
-  upload: (generated: T) => Promise<string | undefined>;
-  send: (message: ClientMessage) => boolean;
-}
-
 export interface HostRoomController {
   status: () => string;
   message: () => string;
@@ -61,6 +49,7 @@ export interface HostRoomController {
   opening: () => boolean;
   closing: () => boolean;
   currentSong: () => RoomSong | null;
+  coordinatorId: () => string;
   open(): Promise<void>;
   showPanel(open: boolean): void;
   send(message: ClientMessage): boolean;
@@ -68,6 +57,10 @@ export interface HostRoomController {
   accept(requestId: string): boolean;
   reorder(requestId: string, toIndex: number): boolean;
   decline(requestId: string): boolean;
+  enqueueRecording(requestId: string): boolean;
+  reorderRecording(requestId: string, toIndex: number): boolean;
+  removeRecording(requestId: string): boolean;
+  selectSong(shareId: string): boolean;
   kick(participantId: string): boolean;
   closeRoom(): void;
   abandon(): void;
@@ -77,6 +70,12 @@ export type RoomFetch = (
   input: string,
   init?: RequestInit,
 ) => Promise<Response>;
+function createCoordinatorId(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
 function parseDetails(value: unknown): RoomDetails | null {
   if (
     !isRecord(value) ||
@@ -157,53 +156,6 @@ export function hostRoomView(
     })),
   };
 }
-export async function runRoomRecordingLifecycle<T>(
-  adapters: RoomRecordingAdapters<T>,
-): Promise<'ready' | 'failed' | 'stale' | 'disconnected'> {
-  const { requestId, run, isCurrent, generate, upload, send } = adapters;
-  if (!send({ type: 'recording-started', requestId })) return 'disconnected';
-  return await new Promise((resolve) => {
-    let completionStarted = false;
-    const fail = () => {
-      if (completionStarted) return;
-      completionStarted = true;
-      if (isCurrent(run)) send({ type: 'recording-failed', requestId });
-      resolve('failed');
-    };
-    const complete = async (generated: T) => {
-      if (completionStarted) return;
-      completionStarted = true;
-      if (!isCurrent(run)) return resolve('stale');
-      try {
-        const url = await upload(generated);
-        if (!isCurrent(run)) return resolve('stale');
-        if (!url)
-          throw new Error('The share service returned an invalid link.');
-        const match = /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(url).pathname);
-        if (!match?.[1])
-          throw new Error('The share service returned an invalid link.');
-        send({ type: 'song-ready', requestId, shareId: match[1] });
-        resolve('ready');
-      } catch {
-        if (isCurrent(run)) send({ type: 'recording-failed', requestId });
-        resolve('failed');
-      }
-    };
-    void generate({
-      onLyrics: (sheet) => {
-        if (isCurrent(run))
-          send({ type: 'lyrics-ready', requestId, lyrics: sheet });
-      },
-      onReady: (generated) => void complete(generated),
-      onFailed: fail,
-    })
-      .then((generated) => {
-        if (generated !== undefined) void complete(generated);
-      })
-      .catch(fail);
-  });
-}
-
 export function createHostRoomController({
   fetcher = (input, init) => fetch(input, init),
   storage = sessionStorage,
@@ -240,6 +192,11 @@ export function createHostRoomController({
         .length ?? 0,
   );
   const currentSong = createMemo(() => snapshot()?.currentSong ?? null);
+  let stableCoordinatorId = storage.getItem(ROOM_COORDINATOR_KEY) ?? '';
+  if (!stableCoordinatorId) {
+    stableCoordinatorId = createCoordinatorId();
+    storage.setItem(ROOM_COORDINATOR_KEY, stableCoordinatorId);
+  }
   let socket: WebSocket | null = null;
   let retry = 0;
   let connectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -396,6 +353,7 @@ export function createHostRoomController({
     opening,
     closing,
     currentSong,
+    coordinatorId: () => stableCoordinatorId,
     async open() {
       if (details()) {
         setPanelOpen(!panelOpen());
@@ -447,6 +405,13 @@ export function createHostRoomController({
     reorder: (requestId, toIndex) =>
       send({ type: 'request-reordered', requestId, toIndex }),
     decline: (requestId) => send({ type: 'request-declined', requestId }),
+    enqueueRecording: (requestId) =>
+      send({ type: 'recording-enqueued', requestId }),
+    reorderRecording: (requestId, toIndex) =>
+      send({ type: 'recording-reordered', requestId, toIndex }),
+    removeRecording: (requestId) =>
+      send({ type: 'recording-removed', requestId }),
+    selectSong: (shareId) => send({ type: 'song-selected', shareId }),
     kick: (participantId) => send({ type: 'kicked', participantId }),
     closeRoom() {
       if (closing()) return;

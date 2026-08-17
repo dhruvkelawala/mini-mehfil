@@ -3,6 +3,7 @@ import { createSignal, getOwner, onCleanup } from 'solid-js';
 import { isRecord, parseLyricsSheet } from '../../room/protocol.ts';
 import {
   createRecoveryCoordinator,
+  type GenerationContext,
   type HostLyrics,
   type PendingGeneration,
   type StatusResponse,
@@ -33,12 +34,14 @@ export interface GeneratedSong {
   lyricSheet: HostLyrics;
   shareReference: string | null;
   requestRun: number;
+  context: GenerationContext;
 }
 export interface ShareResult {
   url: string;
   copied: boolean;
 }
 export interface GenerationHooks {
+  context?: GenerationContext;
   onLyrics?: (sheet: HostLyrics, run: number) => void;
   onReady?: (song: GeneratedSong) => void | Promise<void>;
   onFailed?: (error: Error, run: number) => void;
@@ -51,12 +54,22 @@ export interface GenerationController {
   shareReference: () => string | null;
   checkGenerationVisible: () => boolean;
   performanceAvailable: () => boolean;
+  pendingContext: () => GenerationContext;
+  acknowledgeRoomOutcome(roomId: string, requestId: string): boolean;
   generate(
     input: GenerateInput,
     hooks?: GenerationHooks,
   ): Promise<GeneratedSong | undefined>;
   share(copy?: boolean, song?: GeneratedSong): Promise<ShareResult | undefined>;
-  resumePending(): boolean;
+  resumePending(
+    reason?:
+      | 'page-load'
+      | 'pageshow'
+      | 'visibilitychange'
+      | 'pending-response'
+      | 'generate-request-rejected',
+    hooks?: GenerationHooks,
+  ): boolean;
   checkGeneration(): void;
   lifecycleBackgrounded(): void;
   lifecycleForegrounded(): void;
@@ -167,14 +180,14 @@ export function createGenerationController({
     return value;
   };
 
-  const fail = (message: string, clear = true) => {
+  const fail = (message: string, clear = true, background = false) => {
     setCheckGenerationVisible(false);
     if (clear) recovery.clear();
     setGenerating(false);
     setBusy([]);
     setStatusWorking(false);
     setStatus(message);
-    setPerformanceAvailable(false);
+    if (!background) setPerformanceAvailable(false);
   };
   const finalize = async (
     result: Record<string, unknown>,
@@ -185,28 +198,36 @@ export function createGenerationController({
       (result.jobId !== undefined && result.jobId !== pending.jobId)
     )
       return false;
+    const background = pending.context?.kind === 'room-recording';
     const source = audioSource(result);
     if (!source) {
-      fail('MiniMax succeeded but did not return an audio file.');
+      const error = new Error(
+        'MiniMax succeeded but did not return an audio file.',
+      );
+      fail(error.message, !background, background);
+      activeHooks.onFailed?.(error, pending.run);
       return false;
     }
-    setLyrics(pending.lyricSheet);
+    if (!background) setLyrics(pending.lyricSheet);
     const reference =
       typeof result.share_ref === 'string' ? result.share_ref : null;
-    setShareReference(reference);
-    setShareUrl(null);
+    if (!background) {
+      setShareReference(reference);
+      setShareUrl(null);
+    }
     setCheckGenerationVisible(false);
-    await player.load(source, pending.lyricSheet, reference);
-    recovery.clear();
+    if (!background) await player.load(source, pending.lyricSheet, reference);
+    if (!background) recovery.clear();
     setGenerating(false);
     setBusy([]);
     setStatusWorking(true);
     setStatus('Your recording is ready.');
-    setPerformanceAvailable(true);
+    if (!background) setPerformanceAvailable(true);
     const song = {
       lyricSheet: pending.lyricSheet,
       shareReference: reference,
       requestRun: run,
+      context: pending.context ?? null,
     };
     await activeHooks.onReady?.(song);
     return true;
@@ -232,21 +253,33 @@ export function createGenerationController({
       setGenerating(true);
     },
     onComplete: (value, pending) => {
-      void finalize(value, pending);
+      void finalize(value, pending).catch((value: unknown) => {
+        const error =
+          value instanceof Error ? value : new Error('Generation failed.');
+        const background = pending.context?.kind === 'room-recording';
+        fail(error.message, !background, background);
+        activeHooks.onFailed?.(error, pending.run);
+      });
     },
     onFailed: (value, pending) => {
-      if (pending.run === run)
-        fail(
-          typeof value.error === 'string' ? value.error : 'Generation failed.',
-        );
+      if (pending.run !== run) return;
+      const error = new Error(
+        typeof value.error === 'string' ? value.error : 'Generation failed.',
+      );
+      const background = pending.context?.kind === 'room-recording';
+      fail(error.message, !background, background);
+      activeHooks.onFailed?.(error, pending.run);
     },
     onExpired: (value, pending) => {
-      if (pending.run === run)
-        fail(
-          typeof value.error === 'string'
-            ? value.error
-            : 'That recording can no longer be recovered.',
-        );
+      if (pending.run !== run) return;
+      const error = new Error(
+        typeof value.error === 'string'
+          ? value.error
+          : 'That recording can no longer be recovered.',
+      );
+      const background = pending.context?.kind === 'room-recording';
+      fail(error.message, !background, background);
+      activeHooks.onFailed?.(error, pending.run);
     },
     onRetryable: (error, pending) => {
       if (pending.run !== run) return;
@@ -291,16 +324,31 @@ export function createGenerationController({
     }
   };
 
-  const resumePending = (pending = recovery.read()): boolean => {
+  const resumePending = (
+    _reason?: Parameters<GenerationController['resumePending']>[0],
+    hooks?: GenerationHooks,
+    pending = recovery.read(),
+  ): boolean => {
     if (generationRequestInFlight || !pending) return false;
+    if (
+      pending.context?.kind === 'room-recording' &&
+      (hooks?.context?.kind !== 'room-recording' ||
+        hooks.context.roomId !== pending.context.roomId ||
+        hooks.context.requestId !== pending.context.requestId)
+    ) {
+      return false;
+    }
+    if (hooks) activeHooks = hooks;
     const current = recovery.current();
     if (current?.jobId === pending.jobId) {
       recovery.resume();
       return true;
     }
     run += 1;
-    setLyrics(pending.lyricSheet);
-    setPerformanceAvailable(true);
+    if (pending.context?.kind !== 'room-recording') {
+      setLyrics(pending.lyricSheet);
+      setPerformanceAvailable(true);
+    }
     setGenerating(true);
     setBusy(RECORDING_LINES);
     setStatusWorking(true);
@@ -318,8 +366,24 @@ export function createGenerationController({
     shareReference,
     checkGenerationVisible,
     performanceAvailable,
+    pendingContext: () => recovery.read()?.context ?? null,
+    acknowledgeRoomOutcome(roomId, requestId) {
+      const context = recovery.read()?.context;
+      if (
+        context?.kind !== 'room-recording' ||
+        context.roomId !== roomId ||
+        context.requestId !== requestId
+      ) {
+        return false;
+      }
+      recovery.cancel();
+      recovery.clear();
+      return true;
+    },
     async generate(input, hooks = {}) {
       if (generating()) return undefined;
+      const context = hooks.context ?? null;
+      const background = context?.kind === 'room-recording';
       const previous = recovery.read();
       if (
         previous &&
@@ -331,14 +395,16 @@ export function createGenerationController({
         return undefined;
       recovery.cancel();
       recovery.clear();
-      player.clear();
+      if (!background) player.clear();
       run += 1;
       const requestRun = run;
       activeHooks = hooks;
-      setLyrics(null);
-      setShareReference(null);
-      setShareUrl(null);
-      setPerformanceAvailable(true);
+      if (!background) {
+        setLyrics(null);
+        setShareReference(null);
+        setShareUrl(null);
+        setPerformanceAvailable(true);
+      }
       setGenerating(true);
       setBusy(WRITING_LINES);
       setStatusWorking(true);
@@ -350,14 +416,14 @@ export function createGenerationController({
         const sheet = await writeLyricsAcrossLifecycle(input);
         if (requestRun !== run)
           throw new Error('This recording was replaced by a newer request.');
-        setLyrics(sheet);
+        if (!background) setLyrics(sheet);
         hooks.onLyrics?.(sheet, requestRun);
         setBusy(RECORDING_LINES);
         setStatus(RECORDING_LINES[0] ?? 'The band is recording…');
         stage = 'generate-music';
         const jobId = recovery.createJobId();
         pending = {
-          ...recovery.save({ jobId, lyricSheet: sheet }),
+          ...recovery.save({ jobId, lyricSheet: sheet, context }),
           run: requestRun,
         };
         generationRequestInFlight = true;
@@ -373,7 +439,7 @@ export function createGenerationController({
           generationRequestInFlight = false;
         }
         if (result.status === 'pending') {
-          resumePending(pending);
+          resumePending('pending-response', hooks, pending);
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
           return undefined;
         }
@@ -391,6 +457,7 @@ export function createGenerationController({
               shareReference:
                 typeof result.share_ref === 'string' ? result.share_ref : null,
               requestRun,
+              context,
             }
           : undefined;
       } catch (value) {
@@ -401,13 +468,13 @@ export function createGenerationController({
           pending &&
           !Number.isInteger((error as HttpError).httpStatus)
         ) {
-          resumePending(pending);
+          resumePending('generate-request-rejected', hooks, pending);
           return undefined;
         }
-        if (pending) recovery.clear();
+        if (pending && !background) recovery.clear();
         setStatusWorking(false);
         setStatus(error.message);
-        setPerformanceAvailable(false);
+        if (!background) setPerformanceAvailable(false);
         hooks.onFailed?.(error, requestRun);
         throw error;
       } finally {
@@ -422,7 +489,7 @@ export function createGenerationController({
       const sheet = song?.lyricSheet ?? lyrics();
       const requestRun = song?.requestRun ?? run;
       if (!reference || !sheet) return undefined;
-      let url = shareUrl();
+      let url = song ? null : shareUrl();
       if (!url) {
         const result = await requestJson('/api/share', {
           shareRef: reference,
@@ -433,12 +500,12 @@ export function createGenerationController({
           lyricsNative: sheet.lyricsNative,
           lyricsRoman: sheet.lyricsRoman,
         });
-        if (requestRun !== run || reference !== shareReference())
+        if (requestRun !== run || (!song && reference !== shareReference()))
           return undefined;
         if (typeof result.url !== 'string')
           throw new Error('The share service returned an invalid link.');
         url = result.url;
-        setShareUrl(url);
+        if (!song) setShareUrl(url);
       }
       if (copy) {
         try {

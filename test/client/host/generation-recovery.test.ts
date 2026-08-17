@@ -72,10 +72,31 @@ describe('generation recovery parity', () => {
       jobId: JOB_ID,
       createdAt: '2026-08-15T12:00:00.000Z',
       lyricSheet: SHEET,
+      context: null,
     });
     expect(storage.getItem(GENERATION_STORAGE_KEY)).not.toMatch(
       /secret|private/,
     );
+  });
+
+  test('room recovery context round trips without storing a token or prompt outside the lyric sheet', () => {
+    const storage = new MemoryStorage();
+    const coordinator = createRecoveryCoordinator({ storage });
+    coordinator.save({
+      jobId: JOB_ID,
+      lyricSheet: SHEET,
+      context: {
+        kind: 'room-recording',
+        roomId: 'ABCDEFGH',
+        requestId: 'request-b',
+      },
+    });
+    expect(coordinator.read()?.context).toEqual({
+      kind: 'room-recording',
+      roomId: 'ABCDEFGH',
+      requestId: 'request-b',
+    });
+    expect(storage.getItem(GENERATION_STORAGE_KEY)).not.toContain('token');
   });
 
   test('invalid, corrupt, version-mismatched, and expired records are cleared', () => {

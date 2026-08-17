@@ -4,7 +4,13 @@ export { isRecord } from './primitives.ts';
 
 export type RoomRole = 'host' | 'listener';
 export type RequestStatus =
-  'pending' | 'accepted' | 'recording' | 'declined' | 'ready';
+  | 'pending'
+  | 'accepted'
+  | 'queued'
+  | 'recording'
+  | 'failed'
+  | 'declined'
+  | 'ready';
 export type PlaybackStatus = 'playing' | 'paused';
 
 export interface LyricsSheet {
@@ -70,6 +76,7 @@ export interface RoomPlayback {
 }
 
 export interface RoomSong {
+  requestId: string | null;
   shareId: string;
   title: string;
   language: string;
@@ -79,14 +86,17 @@ export interface RoomSong {
 }
 
 export interface SetlistSong {
+  requestId: string | null;
   shareId: string;
   title: string;
   language: string;
   startedAt: number;
+  lyrics: LyricsSheet | null;
 }
 
 export interface CurrentRecording {
   requestId: string;
+  coordinatorId: string;
   startedAt: number;
   lyrics: LyricsSheet | null;
 }
@@ -101,6 +111,7 @@ export interface RoomState {
   participants: Participant[];
   kickedParticipantIds: string[];
   queue: SongRequest[];
+  recordingQueue: string[];
   currentRecording: CurrentRecording | null;
   currentSong: RoomSong | null;
   setlist: SetlistSong[];
@@ -140,7 +151,18 @@ export type RoomEvent =
       toIndex: number;
     })
   | (EventBase & { type: 'request-declined'; requestId: string })
-  | (EventBase & { type: 'recording-started'; requestId: string })
+  | (EventBase & { type: 'recording-enqueued'; requestId: string })
+  | (EventBase & {
+      type: 'recording-reordered';
+      requestId: string;
+      toIndex: number;
+    })
+  | (EventBase & { type: 'recording-removed'; requestId: string })
+  | (EventBase & {
+      type: 'recording-started';
+      requestId: string;
+      coordinatorId: string;
+    })
   | (EventBase & {
       type: 'lyrics-ready';
       requestId: string;
@@ -162,6 +184,7 @@ export type RoomEvent =
       lyrics: unknown;
       startedAt: number;
     })
+  | (EventBase & { type: 'song-selected'; shareId: string })
   | (EventBase & {
       type: 'playback-updated';
       shareId: string;
@@ -219,11 +242,15 @@ export type ClientMessage =
   | { type: 'request-accepted'; requestId: string }
   | { type: 'request-reordered'; requestId: string; toIndex: number }
   | { type: 'request-declined'; requestId: string }
-  | { type: 'recording-started'; requestId: string }
+  | { type: 'recording-enqueued'; requestId: string }
+  | { type: 'recording-reordered'; requestId: string; toIndex: number }
+  | { type: 'recording-removed'; requestId: string }
+  | { type: 'recording-started'; requestId: string; coordinatorId: string }
   | { type: 'lyrics-ready'; requestId: string; lyrics: unknown }
   | { type: 'recording-failed'; requestId: string }
   | { type: 'song-ready'; requestId: string; shareId: string }
   | { type: 'song-shared'; shareId: string; lyrics: unknown }
+  | { type: 'song-selected'; shareId: string }
   | {
       type: 'playback-updated';
       shareId: string;
@@ -240,11 +267,15 @@ const CLIENT_TYPES = new Set<ClientMessage['type']>([
   'request-accepted',
   'request-reordered',
   'request-declined',
+  'recording-enqueued',
+  'recording-reordered',
+  'recording-removed',
   'recording-started',
   'lyrics-ready',
   'recording-failed',
   'song-ready',
   'song-shared',
+  'song-selected',
   'playback-updated',
   'kicked',
   'room-expired',
@@ -254,7 +285,9 @@ function isRequestStatus(value: string): value is RequestStatus {
   return (
     value === 'pending' ||
     value === 'accepted' ||
+    value === 'queued' ||
     value === 'recording' ||
+    value === 'failed' ||
     value === 'declined' ||
     value === 'ready'
   );
@@ -293,6 +326,7 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
           : {}),
       };
     case 'request-reordered':
+    case 'recording-reordered':
       return typeof value.requestId === 'string' &&
         typeof value.toIndex === 'number'
         ? {
@@ -318,6 +352,10 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
       return typeof value.shareId === 'string'
         ? { type: value.type, shareId: value.shareId, lyrics: value.lyrics }
         : null;
+    case 'song-selected':
+      return typeof value.shareId === 'string'
+        ? { type: value.type, shareId: value.shareId }
+        : null;
     case 'playback-updated':
       return typeof value.shareId === 'string' &&
         (value.status === 'playing' || value.status === 'paused') &&
@@ -335,10 +373,20 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
         : null;
     case 'request-accepted':
     case 'request-declined':
-    case 'recording-started':
+    case 'recording-enqueued':
+    case 'recording-removed':
     case 'recording-failed':
       return typeof value.requestId === 'string'
         ? { type: value.type, requestId: value.requestId }
+        : null;
+    case 'recording-started':
+      return typeof value.requestId === 'string' &&
+        typeof value.coordinatorId === 'string'
+        ? {
+            type: value.type,
+            requestId: value.requestId,
+            coordinatorId: value.coordinatorId,
+          }
         : null;
     case 'room-expired':
       return { type: value.type };
@@ -356,7 +404,10 @@ export function parseRoomState(value: unknown): RoomState | null {
     !Array.isArray(value.participants) ||
     !Array.isArray(value.kickedParticipantIds) ||
     !Array.isArray(value.queue) ||
-    !Array.isArray(value.setlist)
+    !Array.isArray(value.setlist) ||
+    (value.recordingQueue !== undefined &&
+      (!Array.isArray(value.recordingQueue) ||
+        !value.recordingQueue.every((item) => typeof item === 'string')))
   ) {
     return null;
   }
@@ -413,11 +464,22 @@ export function parseRoomState(value: unknown): RoomState | null {
     ) {
       return null;
     }
+    const lyrics =
+      item.lyrics === undefined ? null : parseLyricsSheet(item.lyrics);
+    if (item.lyrics !== undefined && !lyrics) return null;
+    if (
+      item.requestId !== undefined &&
+      item.requestId !== null &&
+      typeof item.requestId !== 'string'
+    )
+      return null;
     return {
+      requestId: typeof item.requestId === 'string' ? item.requestId : null,
       shareId: item.shareId,
       title: item.title,
       language: item.language,
       startedAt: item.startedAt,
+      lyrics,
     };
   };
   const setlist: SetlistSong[] = [];
@@ -431,6 +493,8 @@ export function parseRoomState(value: unknown): RoomState | null {
     if (
       !isRecord(value.currentRecording) ||
       typeof value.currentRecording.requestId !== 'string' ||
+      (value.currentRecording.coordinatorId !== undefined &&
+        typeof value.currentRecording.coordinatorId !== 'string') ||
       typeof value.currentRecording.startedAt !== 'number'
     ) {
       return null;
@@ -442,6 +506,10 @@ export function parseRoomState(value: unknown): RoomState | null {
     if (value.currentRecording.lyrics !== null && !lyrics) return null;
     currentRecording = {
       requestId: value.currentRecording.requestId,
+      coordinatorId:
+        typeof value.currentRecording.coordinatorId === 'string'
+          ? value.currentRecording.coordinatorId
+          : '',
       startedAt: value.currentRecording.startedAt,
       lyrics,
     };
@@ -489,6 +557,11 @@ export function parseRoomState(value: unknown): RoomState | null {
     participants,
     kickedParticipantIds: value.kickedParticipantIds,
     queue,
+    recordingQueue: Array.isArray(value.recordingQueue)
+      ? value.recordingQueue.filter(
+          (item): item is string => typeof item === 'string',
+        )
+      : queue.filter((item) => item.status === 'queued').map((item) => item.id),
     currentRecording,
     currentSong,
     setlist,

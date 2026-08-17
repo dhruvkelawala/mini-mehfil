@@ -9,11 +9,7 @@ import {
   Show,
 } from 'solid-js';
 
-import type {
-  ClientMessage,
-  LyricsSheet,
-  SongRequest,
-} from '../../room/protocol.ts';
+import type { LyricsSheet, SongRequest } from '../../room/protocol.ts';
 import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
 import {
   createGenerationController,
@@ -22,7 +18,6 @@ import {
 import {
   createHostRoomController,
   roomReorderTargets,
-  runRoomRecordingLifecycle,
 } from './host-room-controller.ts';
 import { createMediaDiagnostics } from './media-diagnostics.ts';
 import { createPlayerController } from './player-controller.ts';
@@ -66,6 +61,7 @@ export function App() {
   const [hasRevealed, setHasRevealed] = createSignal(false);
   const [shareLabel, setShareLabel] = createSignal('Share');
   const [tokenVisible, setTokenVisible] = createSignal(false);
+  const [hasToken, setHasToken] = createSignal(false);
   const [roomError, setRoomError] = createSignal('');
   const [clock, setClock] = createSignal('--:--');
   const [idea, setIdea] = createSignal('');
@@ -74,10 +70,12 @@ export function App() {
   let tokenInput: HTMLInputElement | undefined;
   let performanceDialog: HTMLElement | undefined;
   let performanceOpener: HTMLElement | null = null;
-  let roomRecordingRun = 0;
 
+  const activeLyrics = createMemo(
+    () => room.currentSong()?.lyrics ?? generation.lyrics(),
+  );
   const lyricLines = createMemo(() => {
-    const sheet = generation.lyrics();
+    const sheet = activeLyrics();
     if (!sheet) return [];
     const roman = sheet.lyricsRoman.split('\n').filter((line) => line.trim());
     const native = sheet.lyricsNative.split('\n').filter((line) => line.trim());
@@ -103,19 +101,33 @@ export function App() {
     );
   });
   const languageLabel = createMemo(() => {
-    const sheet = generation.lyrics();
+    const sheet = activeLyrics();
     if (!sheet) return '';
     return sheet.isLatinScript
       ? sheet.language
       : `${sheet.language} · ${sheet.nativeScriptName}`;
   });
-  const activeQueue = createMemo(() =>
+  const requestQueue = createMemo(() =>
     room
       .view()
       .queue.filter(
-        (item) => item.status !== 'declined' && item.status !== 'ready',
+        (item) =>
+          item.status === 'pending' ||
+          item.status === 'accepted' ||
+          item.status === 'failed',
       ),
   );
+  const recordingQueue = createMemo(() => {
+    const state = room.snapshot();
+    const byId = new Map(room.view().queue.map((item) => [item.id, item]));
+    return (state?.recordingQueue ?? [])
+      .map((requestId) => byId.get(requestId))
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  });
+  const currentRecording = createMemo(() => {
+    const requestId = room.snapshot()?.currentRecording?.requestId;
+    return room.view().queue.find((item) => item.id === requestId) ?? null;
+  });
   const performanceAvailable = createMemo(
     () => generation.performanceAvailable() || player.ready(),
   );
@@ -168,7 +180,6 @@ export function App() {
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
     if (!tokenInput) return;
-    roomRecordingRun += 1;
     setRoomError('');
     setLyricsOpen(false);
     setHasRevealed(false);
@@ -198,41 +209,126 @@ export function App() {
       setRoomError(error instanceof Error ? error.message : 'Sharing failed.');
     }
   };
-  const recordRequest = async (item: SongRequest) => {
-    if (item.status !== 'accepted' || generation.generating() || !tokenInput)
+  const recordRequest = (item: SongRequest) => {
+    if (!hasToken() || !tokenInput?.value.trim()) {
+      setRoomError('Paste your MiniMax token before queueing a recording.');
+      tokenInput?.focus();
       return;
-    setIdea(item.idea);
-    setVibe(item.vibe);
-    setLanguage(languages.includes(item.language) ? item.language : 'auto');
-    const lifecycleRun = ++roomRecordingRun;
-    const outcome = await runRoomRecordingLifecycle<GeneratedSong>({
-      requestId: item.id,
-      run: lifecycleRun,
-      isCurrent: (candidate) => candidate === roomRecordingRun,
-      send: (message: ClientMessage) => room.send(message),
-      generate: async ({ onLyrics, onReady, onFailed }) => {
-        const result = await generation.generate(
-          {
-            token: tokenInput?.value ?? '',
-            idea: item.idea,
-            vibe: item.vibe,
-            language: item.language || 'auto',
-          },
-          {
-            onLyrics: (sheet) => onLyrics(publicLyrics(sheet)),
-            onReady,
-            onFailed,
-          },
-        );
-        return result;
-      },
-      upload: async (song) => (await generation.share(false, song))?.url,
-    });
-    if (outcome === 'disconnected')
+    }
+    if (!room.enqueueRecording(item.id)) {
       setRoomError(
         'The room is reconnecting. Wait for it to reconnect, then press Record again.',
       );
+    }
   };
+
+  const roomGenerationHooks = (requestId: string) => {
+    const context = {
+      kind: 'room-recording' as const,
+      roomId: room.details()?.roomId ?? '',
+      requestId,
+    };
+    return {
+      context,
+      onLyrics: (sheet: LyricsSheet) =>
+        room.send({
+          type: 'lyrics-ready',
+          requestId,
+          lyrics: publicLyrics(sheet),
+        }),
+      onReady: async (song: GeneratedSong) => {
+        const result = await generation.share(false, song);
+        const match = result
+          ? /\/s\/([A-Za-z0-9_-]{16})$/.exec(new URL(result.url).pathname)
+          : null;
+        if (!match?.[1])
+          throw new Error('The share service returned an invalid link.');
+        if (!room.send({ type: 'song-ready', requestId, shareId: match[1] }))
+          throw new Error('The live room lost its connection.');
+      },
+      onFailed: () => {
+        processingRoomRequest = '';
+        room.send({ type: 'recording-failed', requestId });
+      },
+    };
+  };
+
+  let processingRoomRequest = '';
+  createEffect(() => {
+    const state = room.snapshot();
+    const details = room.details();
+    const authenticated = room.authenticated();
+    const generating = generation.generating();
+    const tokenReady = hasToken();
+    if (!state || !details || !authenticated || room.terminal()) return;
+    const pending = generation.pendingContext();
+    if (
+      pending?.kind === 'room-recording' &&
+      pending.roomId === details.roomId
+    ) {
+      const request = state.queue.find(
+        (candidate) => candidate.id === pending.requestId,
+      );
+      if (request?.status === 'ready' || request?.status === 'failed') {
+        generation.acknowledgeRoomOutcome(details.roomId, pending.requestId);
+      }
+    }
+    const recording = state.currentRecording;
+    if (!recording) {
+      processingRoomRequest = '';
+      if (
+        !generating &&
+        tokenReady &&
+        tokenInput?.value.trim() &&
+        state.recordingQueue[0]
+      ) {
+        room.send({
+          type: 'recording-started',
+          requestId: state.recordingQueue[0],
+          coordinatorId: room.coordinatorId(),
+        });
+      }
+      return;
+    }
+    if (recording.coordinatorId !== room.coordinatorId()) return;
+    if (processingRoomRequest === recording.requestId) return;
+    const item = state.queue.find(
+      (candidate) => candidate.id === recording.requestId,
+    );
+    if (!item || !tokenReady || !tokenInput?.value.trim()) return;
+    const hooks = roomGenerationHooks(item.id);
+    const recoveryContext = generation.pendingContext();
+    if (recoveryContext) {
+      if (
+        recoveryContext.kind !== 'room-recording' ||
+        recoveryContext.roomId !== details.roomId ||
+        recoveryContext.requestId !== item.id
+      ) {
+        setRoomError(
+          'Another recording is still recovering in this tab. Finish checking it before this queue continues.',
+        );
+        return;
+      }
+      processingRoomRequest = item.id;
+      generation.resumePending('page-load', hooks);
+      return;
+    }
+    if (generating) return;
+    processingRoomRequest = item.id;
+    void generation
+      .generate(
+        {
+          token: tokenInput.value,
+          idea: item.idea,
+          vibe: item.vibe,
+          language: item.language || 'auto',
+        },
+        hooks,
+      )
+      .catch(() => {
+        /* The generation hooks advance the authoritative queue. */
+      });
+  });
   const togglePlayback = async () => {
     const song = room.currentSong();
     if (song) {
@@ -261,7 +357,7 @@ export function App() {
   });
   createEffect(() => {
     void roomSongKey();
-    if (player.playing() && generation.lyrics()) setLyricsOpen(true);
+    if (player.playing() && activeLyrics()) setLyricsOpen(true);
   });
   createEffect(() => {
     document.body.classList.toggle('performance-open', performanceOpen());
@@ -428,6 +524,9 @@ export function App() {
                 placeholder="sk-cp-••••••••"
                 required
                 disabled={generation.generating()}
+                onInput={(event) =>
+                  setHasToken(Boolean(event.currentTarget.value.trim()))
+                }
               />
               <button
                 type="button"
@@ -603,7 +702,7 @@ export function App() {
             </ul>
             <h3>Requests</h3>
             <ol id="host-queue" class="host-queue" aria-label="Request queue">
-              <For each={activeQueue()}>
+              <For each={requestQueue()}>
                 {(item) => {
                   const targets = () =>
                     roomReorderTargets(room.snapshot()?.queue ?? [], item.id);
@@ -646,12 +745,16 @@ export function App() {
                           Decline
                         </button>
                       </Show>
-                      <Show when={item.status === 'accepted'}>
+                      <Show
+                        when={
+                          item.status === 'accepted' || item.status === 'failed'
+                        }
+                      >
                         <button
                           type="button"
-                          onClick={() => void recordRequest(item)}
+                          onClick={() => recordRequest(item)}
                         >
-                          Record
+                          {item.status === 'failed' ? 'Retry' : 'Record'}
                         </button>
                       </Show>
                     </li>
@@ -659,6 +762,59 @@ export function App() {
                 }}
               </For>
             </ol>
+            <div aria-live="polite" aria-atomic="true">
+              <Show when={currentRecording()}>
+                {(item) => (
+                  <section class="recording-now" aria-label="Recording now">
+                    <h3>Recording now</h3>
+                    <p>
+                      {item().requesterName}: {item().idea}
+                    </p>
+                  </section>
+                )}
+              </Show>
+              <Show when={recordingQueue().length > 0}>
+                <section class="recording-up-next" aria-label="Up next">
+                  <h3>Up next</h3>
+                  <ol>
+                    <For each={recordingQueue()}>
+                      {(item, index) => (
+                        <li>
+                          {item.requesterName}: {item.idea}
+                          <button
+                            type="button"
+                            aria-label={`Move ${item.idea} up in recording queue`}
+                            disabled={index() === 0}
+                            onClick={() =>
+                              room.reorderRecording(item.id, index() - 1)
+                            }
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Move ${item.idea} down in recording queue`}
+                            disabled={index() === recordingQueue().length - 1}
+                            onClick={() =>
+                              room.reorderRecording(item.id, index() + 1)
+                            }
+                          >
+                            ↓
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Remove ${item.idea} from recording queue`}
+                            onClick={() => room.removeRecording(item.id)}
+                          >
+                            Remove
+                          </button>
+                        </li>
+                      )}
+                    </For>
+                  </ol>
+                </section>
+              </Show>
+            </div>
             <h3>Setlist</h3>
             <ol id="host-setlist" class="host-setlist">
               <For each={room.view().setlist}>
@@ -667,6 +823,17 @@ export function App() {
                     <a href={song.url} target="_blank" rel="noreferrer">
                       {song.title}
                     </a>
+                    <Show when={song.lyrics}>
+                      <button
+                        type="button"
+                        disabled={room.currentSong()?.shareId === song.shareId}
+                        onClick={() => room.selectSong(song.shareId)}
+                      >
+                        {room.currentSong()?.shareId === song.shareId
+                          ? 'Current'
+                          : 'Make current'}
+                      </button>
+                    </Show>
                   </li>
                 )}
               </For>
@@ -732,7 +899,7 @@ export function App() {
                 <span>Check generation</span>
               </button>
             </Show>
-            <Show when={generation.lyrics()}>
+            <Show when={activeLyrics()}>
               <div class="peek" id="peek">
                 <button
                   type="button"
@@ -757,9 +924,7 @@ export function App() {
                 </button>
               </div>
             </Show>
-            <Show
-              when={generation.lyrics() && (lyricsOpen() || player.playing())}
-            >
+            <Show when={activeLyrics() && (lyricsOpen() || player.playing())}>
               <div class="lyric-reveal" id="lyric-reveal">
                 <span class="reveal-language" id="reveal-language">
                   {languageLabel()}

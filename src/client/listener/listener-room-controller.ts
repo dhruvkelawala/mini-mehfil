@@ -18,7 +18,6 @@ export interface ListenerSnapshot {
   currentRecording: {
     requestId: string;
     startedAt: number;
-    lyrics: LyricsSheet | null;
   } | null;
   currentSong: ListenerSong | null;
   setlist: Array<{ shareId: string; title: string }>;
@@ -114,15 +113,9 @@ function parseSnapshot(value: unknown): ListenerSnapshot | null {
     ) {
       return null;
     }
-    const lyrics =
-      value.currentRecording.lyrics === null
-        ? null
-        : parseLyricsSheet(value.currentRecording.lyrics);
-    if (value.currentRecording.lyrics !== null && !lyrics) return null;
     currentRecording = {
       requestId: value.currentRecording.requestId,
       startedAt: value.currentRecording.startedAt,
-      lyrics,
     };
   }
   return {
