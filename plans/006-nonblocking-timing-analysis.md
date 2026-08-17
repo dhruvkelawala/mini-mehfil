@@ -1,10 +1,12 @@
 # Plan 006: Make MiniMax timing analysis non-blocking and retryable
 
 > **Status**: BLOCKED — implementation and every automated gate pass, and the
-> real non-blocking/provider path passed on 2026-08-17. One further explicitly
-> approved paid operator run is required to record host/live-listener/shared-
-> page line parity; do not issue another paid generation under the completed
-> one-song approval.
+> first real non-blocking/provider path passed on 2026-08-17. The explicitly
+> approved parity retest was consumed by one guarded browser POST, but its local
+> operator route never returned a generation response to the product. It
+> retained no source and timing analysis never began, so live
+> host/listener/shared-page parity is still unproven. No further paid request is
+> authorized.
 >
 > **Execution**: `advisor/005-approximate-line-refinement` was rebased from
 > `7c8b596` onto fetched `origin/main` `0d6bd5a` with a recoverable safety
@@ -56,12 +58,33 @@
    lyrics, signed source, request payload nor replayable artifact, so live
    host/listener/shared-page line equality cannot be reconstructed or truthfully
    claimed. No second paid request was issued.
-6. **Exact remaining gate**: one further explicitly approved paid generation,
-   using configured external room/share infrastructure or a corrected
-   non-persisting operator harness, must observe the same recording switch to
-   timed mode without seek/restart and record equal active lines on the host,
-   live listener and standalone shared page at sampled media times. This single
-   operator parity retest is the only Plan 006 blocker. Diagnostics must remain
+6. The separately approved parity retest first ran end to end with fixture
+   responses. It proved the hardened privacy filter, immediate playback/Save,
+   pending-to-timed upgrade without source or clock replacement, identical
+   room/share timing, three equal host/listener/shared active section-and-line
+   samples including a backward seek, and video capture. That no-cost proof is
+   preserved locally as `plan-006-fixture-proof.webm` in the ignored Plan 006
+   operator artifact directory.
+7. Exactly one guarded live `/api/generate` POST was then released. The browser
+   remained on the recording UI and the harness timed out after 12 minutes.
+   Privacy-safe inspection while it was alive found the pending generate route,
+   but `generationCompleted=false`, `sourceRetained=false`, zero analysis
+   requests and zero share calls. The deployment has no external
+   room/share/recovery configuration; a read-only generation-status GET
+   returned HTTP 503, so there was no source that could be replayed through the
+   product recovery seam. The full 761.96-second failure recording and a
+   12-second excerpt are preserved in the ignored local artifact directory.
+   This evidence does not establish whether the upstream paid call accepted or
+   completed, and it does not establish any live timing or cross-surface parity.
+   No retry POST was issued during this retest.
+8. **Exact remaining gate**: the operator must explicitly decide whether to
+   authorize another paid generation. Before any such run, the local harness
+   must avoid response interception where possible, bound any forwarding fetch,
+   recompute response framing after a body rewrite, and have a configured
+   recovery/status path. A successful run must observe the same recording
+   switch to timed mode without seek/restart and record equal active lines on
+   the host, live listener and standalone shared page at sampled media times.
+   This live parity proof is the only Plan 006 blocker. Diagnostics must remain
    in source through that retest.
 
 ## Step 0: mandatory rebase and baseline
