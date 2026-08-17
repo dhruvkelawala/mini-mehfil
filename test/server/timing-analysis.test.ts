@@ -1,22 +1,16 @@
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test } from 'vitest';
 
 import { analyzeMiniMaxTiming } from '../../src/server/timing-analysis.ts';
-import {
-  emitTimingDiagnostic,
-  type TimingDiagnostic,
-} from '../../src/timing/timing-analysis.ts';
 
 const input = {
   source: 'https://cdn.minimax.test/song.mp3',
   token: 'sk-private-analysis-token',
-  attempt: 2,
 };
 
 const options = (fetchImpl: typeof fetch) => ({
   apiBase: 'https://api.minimax.test',
   fetchImpl,
   timeoutMs: 180_000,
-  diagnostic: vi.fn<(diagnostic: TimingDiagnostic) => void>(),
 });
 
 describe('MiniMax timing analysis adapter', () => {
@@ -73,27 +67,37 @@ describe('MiniMax timing analysis adapter', () => {
     });
   });
 
-  test('diagnostic runtime guard drops secrets and arbitrary provider data', () => {
-    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
-    emitTimingDiagnostic({
-      event: 'provider-terminal',
-      surface: 'provider',
-      reason: 'ready',
-      attempt: 1,
-      segmentCount: 3,
-      token: input.token,
-      source: input.source,
-      transcript: 'private transcript',
-      traceId: 'provider-trace',
-    } as TimingDiagnostic & Record<string, unknown>);
-
-    expect(info).toHaveBeenCalledOnce();
-    const serialized = JSON.stringify(info.mock.calls[0]);
-    expect(serialized).toContain('[TIMING-DIAGNOSTIC]');
-    expect(serialized).toContain('segmentCount');
-    expect(serialized).not.toMatch(
-      /private-analysis-token|cdn\.minimax|private transcript|provider-trace/,
+  // Real provider replies observed on 2026-08-17. A non-zero base_resp status
+  // is a failure even though the HTTP status is 200.
+  test.each([
+    {
+      name: 'an unrecognized status falls back to the numeric class',
+      status_code: 1000,
+      status_msg: 'unknown error, download audio_url failed',
+      expected: { reason: 'provider-http', retryable: true },
+    },
+    {
+      name: 'an authentication message is terminal',
+      status_code: 1004,
+      status_msg:
+        "login fail: Please carry the API secret key in the 'Authorization' field",
+      expected: { reason: 'authentication', retryable: false },
+    },
+    {
+      name: 'a busy message stays retryable',
+      status_code: 1002,
+      status_msg: 'server is busy, please try again',
+      expected: { reason: 'provider-busy', retryable: true },
+    },
+  ])('$name', async ({ status_code, status_msg, expected }) => {
+    const outcome = await analyzeMiniMaxTiming(
+      input,
+      options(() =>
+        Promise.resolve(
+          Response.json({ base_resp: { status_code, status_msg } }),
+        ),
+      ),
     );
-    info.mockRestore();
+    expect(outcome).toEqual({ status: 'unavailable', ...expected });
   });
 });

@@ -25,12 +25,11 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function controller(port: TimingAnalysisPort, diagnostic = vi.fn()) {
+function controller(port: TimingAnalysisPort) {
   return createTimingAnalysisController({
     port,
     deadlineMs: 1_000,
     maxAttempts: 2,
-    diagnostic,
   });
 }
 
@@ -67,8 +66,7 @@ describe('TimingAnalysisController', () => {
         return call.promise;
       }),
     };
-    const diagnostic = vi.fn();
-    const analysis = controller(port, diagnostic);
+    const analysis = controller(port);
     const running = analysis.analyze({
       source: 'https://audio.test/song.mp3',
       token: 'secret',
@@ -80,13 +78,6 @@ describe('TimingAnalysisController', () => {
     await running;
 
     expect(analysis.state()).toEqual({ status: 'ready', timing });
-    expect(diagnostic).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'provider-retry',
-        reason: 'timeout',
-        attempt: 2,
-      }),
-    );
   });
 
   test('bounds retries and preserves the terminal reason', async () => {
@@ -201,7 +192,6 @@ describe('TimingAnalysisController', () => {
       port.analyze({
         source: 'https://audio.test/song.mp3',
         token: 'secret',
-        attempt: 1,
         signal,
       }),
     ).resolves.toEqual({ status: 'ready', timing });
@@ -213,7 +203,6 @@ describe('TimingAnalysisController', () => {
         body: JSON.stringify({
           source: 'https://audio.test/song.mp3',
           token: 'secret',
-          attempt: 1,
         }),
       }),
     );

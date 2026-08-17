@@ -215,6 +215,54 @@ describe('timing artifact validation', () => {
     expect(input.segments[0]?.confidence).toBe(0.9);
   });
 
+  test('clamps a final boundary that overshoots the duration within one second', () => {
+    // Real provider output from the 2026-08-17 20:49 generation: MiniMax
+    // rounds segment boundaries but reports the exact duration, so its own
+    // final boundary can land past its own duration by a few milliseconds.
+    const durationSeconds = 126.72290249433107;
+    const normalized = normalizeLyricTiming({
+      version: 1,
+      mode: 'minimax-section-asr',
+      durationSeconds,
+      segments: [
+        { start: 0, end: 9, label: 'intro' },
+        { start: 9, end: 125.645, label: 'verse' },
+        { start: 125.645, end: 126.725, label: 'silence' },
+      ],
+    });
+    expect(normalized).not.toBeNull();
+    expect(normalized?.segments[2]).toEqual({
+      start: 125.645,
+      end: durationSeconds,
+      label: 'silence',
+    });
+  });
+
+  test('clamps an overshoot of exactly one second', () => {
+    const normalized = normalizeLyricTiming({
+      version: 1,
+      mode: 'minimax-section-asr',
+      durationSeconds: 90,
+      segments: [{ start: 80, end: 91, label: 'outro' }],
+    });
+    expect(normalized?.segments[0]).toEqual({
+      start: 80,
+      end: 90,
+      label: 'outro',
+    });
+  });
+
+  test('clamped artifacts re-normalize to the same value', () => {
+    const first = normalizeLyricTiming({
+      version: 1,
+      mode: 'minimax-section-asr',
+      durationSeconds: 126.72290249433107,
+      segments: [{ start: 0, end: 126.725, label: 'verse' }],
+    });
+    expect(first).not.toBeNull();
+    expect(normalizeLyricTiming(first)).toEqual(first);
+  });
+
   const valid = {
     version: 1,
     mode: 'minimax-section-asr',
@@ -248,9 +296,13 @@ describe('timing artifact validation', () => {
       ...valid,
       segments: [{ start: 10, end: 10, label: 'intro' }],
     },
-    'end after duration': {
+    'end more than a second after duration': {
       ...valid,
-      segments: [{ start: 80, end: 91, label: 'outro' }],
+      segments: [{ start: 80, end: 91.001, label: 'outro' }],
+    },
+    'start at or past the clamped duration': {
+      ...valid,
+      segments: [{ start: 90, end: 90.5, label: 'outro' }],
     },
     overlap: {
       ...valid,

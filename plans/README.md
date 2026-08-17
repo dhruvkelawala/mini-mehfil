@@ -8,8 +8,8 @@ starting, honor its STOP conditions, and update its row when done.
 
 | Plan | Title                                                                                         | Priority | Effort | Depends on                 | Status                                                                                                                                   | Issue                                                         |
 | ---- | --------------------------------------------------------------------------------------------- | -------- | ------ | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| 006  | [Make MiniMax timing analysis non-blocking and retryable](006-nonblocking-timing-analysis.md) | P1       | L      | Plan 005 through `7c8b596` | BLOCKED — shipped to `main` in PR #33 (merge `b5f4fa4`, 2026-08-17); live host/listener/shared parity is still unproven, no further paid run is authorized, and DONE awaits an operator decision | —                                                             |
-| 007  | [Benchmark and productionize Mac-hosted MLX lyric timing](007-local-mlx-timing-service.md)    | P1       | L      | PR #33 / Plan 006 DONE     | TODO — benchmark-driven follow-up; MiniMax remains default/fallback                                                                        | [#35](https://github.com/dhruvkelawala/mini-mehfil/issues/35) |
+| 006  | [Make MiniMax timing analysis non-blocking and retryable](006-nonblocking-timing-analysis.md) | P1       | L      | Plan 005 through `7c8b596` | DONE — 2026-08-18: both live failure causes found and fixed (boundary-overshoot clamp in PR #38; stale share-worker deploy corrected plus CI deploy job); operator confirmed live timed host playback and a live timed shared page | —                                                             |
+| 007  | [Benchmark and productionize Mac-hosted MLX lyric timing](007-local-mlx-timing-service.md)    | P1       | L      | PR #33 / Plan 006 DONE     | DEFERRED — 2026-08-18 operator decision: MiniMax analysis proven reliable once the real causes were fixed, so the local MLX service is a latency/independence option, not a need                                                    | [#35](https://github.com/dhruvkelawala/mini-mehfil/issues/35) |
 | 001  | Unify host and listener lyric performance presentation                                        | P2       | M      | PR #29 merged              | TODO                                                                                                                                     | [#32](https://github.com/dhruvkelawala/mini-mehfil/issues/32) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
@@ -33,14 +33,11 @@ abandoned)
   guarded to one generate POST, but the forwarding route never returned a
   response to the product: privacy-safe inspection found no retained source and
   zero analysis/share requests, while the unconfigured recovery GET returned
-  HTTP 503. No retry POST was issued during this retest. Retained diagnostics
-  stay in source; an operator decision on whether to authorize another paid
-  live parity run is the exact remaining gate.
+  HTTP 503. No retry POST was issued during this retest.
 - PR #33 was merged into `main` at `b5f4fa4` on 2026-08-17 from the reviewed
-  head `0aa1fc0` with no additional commits. The retained
-  `[TIMING-DIAGNOSTIC]` instrumentation shipped with it and stays until the
-  operator approves removal. The merge does not by itself satisfy the Plan 006
-  completion gate: live parity evidence is still missing.
+  head `0aa1fc0` with no additional commits. Its retained
+  `[TIMING-DIAGNOSTIC]` instrumentation identified both live failure causes and
+  was removed with operator approval in PR #38 on 2026-08-18.
 - Plan 007 must not begin until PR #33 is merged and Plan 006 is marked DONE.
   It keeps the production MiniMax adapter as the default and fallback while a
   native Mac/MLX service is benchmarked, secured, queued, and proven across

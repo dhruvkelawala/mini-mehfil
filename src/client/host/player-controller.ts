@@ -5,10 +5,6 @@ import {
   type LyricTiming,
 } from '../../lyrics/lyric-sync.ts';
 import type { RoomSong } from '../../room/protocol.ts';
-import {
-  emitTimingDiagnostic,
-  type TimingDiagnosticSink,
-} from '../../timing/timing-analysis.ts';
 import type { HostLyrics } from './generation-recovery.ts';
 import type { MediaDiagnostics } from './media-diagnostics.ts';
 import { trustedRemoteAudioSource } from './replay-source.ts';
@@ -77,7 +73,6 @@ function sourceUrl(source: string): {
 
 export function createPlayerController(
   diagnostics: MediaDiagnostics,
-  timingDiagnostic: TimingDiagnosticSink = emitTimingDiagnostic,
 ): PlayerController {
   const [ready, setReady] = createSignal(false);
   const [playing, setPlaying] = createSignal(false);
@@ -137,36 +132,12 @@ export function createPlayerController(
     const tolerance = Math.max(1, mediaDuration * 0.02);
     const matches =
       Math.abs(timing.durationSeconds - mediaDuration) <= tolerance;
-    timingDiagnostic({
-      event: 'host-media-validation',
-      surface: 'host',
-      reason: matches ? 'duration-match' : 'duration-mismatch',
-      segmentCount: timing.segments.length,
-      analyzedDurationSeconds: timing.durationSeconds,
-      mediaDurationSeconds: mediaDuration,
-    });
     setTimingMatchesMedia(matches);
   };
   const applyTiming = (expectedSource: string, value: unknown): boolean => {
     const timing = normalizeLyricTiming(value);
-    timingDiagnostic({
-      event: 'host-artifact-receipt',
-      surface: 'host',
-      reason: timing ? 'ready' : 'invalid-timing',
-      ...(timing
-        ? {
-            segmentCount: timing.segments.length,
-            analyzedDurationSeconds: timing.durationSeconds,
-          }
-        : {}),
-    });
     const sourceMatches =
       Boolean(expectedSource) && source() === expectedSource;
-    timingDiagnostic({
-      event: 'host-source-validation',
-      surface: 'host',
-      reason: sourceMatches ? 'source-match' : 'source-mismatch',
-    });
     if (!sourceMatches || !timing) return false;
     setLoadedTiming(timing);
     setTimingMatchesMedia(false);

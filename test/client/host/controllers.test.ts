@@ -249,11 +249,7 @@ describe('host section timing', () => {
 
   test('applies matching late timing without restarting, seeking, or mutating it', async () => {
     const audio = new FakeAudio();
-    const diagnostics = vi.fn();
-    const player = createPlayerController(
-      createMediaDiagnostics(),
-      diagnostics,
-    );
+    const player = createPlayerController(createMediaDiagnostics());
     player.bindAudio(audio as unknown as HTMLAudioElement);
     const load = vi.spyOn(audio, 'load');
     const play = vi.spyOn(audio, 'play');
@@ -277,12 +273,6 @@ describe('host section timing', () => {
       end: 12,
       label: 'intro',
     });
-    expect(diagnostics).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'host-media-validation',
-        reason: 'duration-match',
-      }),
-    );
   });
 
   test('rejects late timing for stale sources and mismatched durations', async () => {
@@ -423,7 +413,7 @@ describe('host section timing', () => {
 
   test('retains normalized timing when the host loads a room song', () => {
     const audio = new FakeAudio();
-    const player = createPlayerController(createMediaDiagnostics(), vi.fn());
+    const player = createPlayerController(createMediaDiagnostics());
     player.bindAudio(audio as unknown as HTMLAudioElement);
     player.loadRoomSong(
       {

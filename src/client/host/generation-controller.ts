@@ -3,10 +3,6 @@ import { createSignal, getOwner, onCleanup } from 'solid-js';
 import { normalizeLyricTiming } from '../../lyrics/lyric-sync.ts';
 import { isRecord, parseLyricsSheet } from '../../room/protocol.ts';
 import {
-  emitTimingDiagnostic,
-  type TimingDiagnosticSink,
-} from '../../timing/timing-analysis.ts';
-import {
   createRecoveryCoordinator,
   type GenerationContext,
   type HostLyrics,
@@ -135,7 +131,6 @@ export function createGenerationController({
   visible = () =>
     typeof document === 'undefined' || document.visibilityState === 'visible',
   timingAnalysis,
-  timingDiagnostic = emitTimingDiagnostic,
 }: {
   player: PlayerController;
   fetcher?: GenerationFetch;
@@ -143,13 +138,11 @@ export function createGenerationController({
   now?: () => number;
   visible?: () => boolean;
   timingAnalysis?: TimingAnalysisController;
-  timingDiagnostic?: TimingDiagnosticSink;
 }): GenerationController {
   const analysis =
     timingAnalysis ??
     createTimingAnalysisController({
       port: createHttpTimingAnalysisPort(fetcher),
-      diagnostic: timingDiagnostic,
     });
   const [status, setStatus] = createSignal('');
   const [statusWorking, setStatusWorking] = createSignal(false);
@@ -555,32 +548,9 @@ export function createGenerationController({
       const pendingTiming = selectedSong?.timingSettled;
       let lyricTiming = null;
       if (pendingTiming) {
-        const current = analysis.state();
-        if (current.status === 'pending')
-          timingDiagnostic({
-            event: 'share-waiting',
-            surface: 'share',
-            reason: 'pending',
-            attempt: current.attempt,
-          });
         const settled = await pendingTiming;
         if (requestRun !== run) return undefined;
-        if (settled.status === 'ready') {
-          lyricTiming = settled.timing;
-          timingDiagnostic({
-            event: 'share-ready',
-            surface: 'share',
-            reason: 'ready',
-            segmentCount: settled.timing.segments.length,
-            analyzedDurationSeconds: settled.timing.durationSeconds,
-          });
-        } else {
-          timingDiagnostic({
-            event: 'share-terminal-untimed',
-            surface: 'share',
-            reason: settled.reason,
-          });
-        }
+        if (settled.status === 'ready') lyricTiming = settled.timing;
       }
       let url = song ? null : shareUrl();
       if (!url) {

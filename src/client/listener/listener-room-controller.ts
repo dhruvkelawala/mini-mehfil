@@ -6,10 +6,6 @@ import {
 } from '../../lyrics/lyric-sync.ts';
 import { isRecord, parseLyricsSheet } from '../../room/protocol.ts';
 import type { LyricsSheet, RoomPlayback } from '../../room/protocol.ts';
-import {
-  emitTimingDiagnostic,
-  type TimingDiagnosticSink,
-} from '../../timing/timing-analysis.ts';
 
 export interface ListenerSong {
   shareId: string;
@@ -155,12 +151,10 @@ export function createListenerRoomController({
   roomId,
   socketFactory = (url) => new WebSocket(url),
   storage = sessionStorage,
-  timingDiagnostic = emitTimingDiagnostic,
 }: {
   roomId: string;
   socketFactory?: (url: string) => WebSocket;
   storage?: Storage;
-  timingDiagnostic?: TimingDiagnosticSink;
 }): ListenerRoomController {
   const credentialKey = `mini-mehfil-room:${roomId}`;
   const [status, setStatus] = createSignal('Take a seat in the courtyard.');
@@ -204,14 +198,6 @@ export function createListenerRoomController({
     const tolerance = Math.max(1, mediaDuration * 0.02);
     const matches =
       Math.abs(timing.durationSeconds - mediaDuration) <= tolerance;
-    timingDiagnostic({
-      event: 'listener-media-validation',
-      surface: 'listener',
-      reason: matches ? 'duration-match' : 'duration-mismatch',
-      segmentCount: timing.segments.length,
-      analyzedDurationSeconds: timing.durationSeconds,
-      mediaDurationSeconds: mediaDuration,
-    });
     setTimingMatchesMedia(matches);
   };
   const receiveTiming = (song: ListenerSong | null) => {
@@ -225,13 +211,6 @@ export function createListenerRoomController({
     timingRevision = revision;
     setLoadedTiming(timing);
     setTimingMatchesMedia(false);
-    timingDiagnostic({
-      event: 'listener-artifact-receipt',
-      surface: 'listener',
-      reason: timing ? 'ready' : 'untimed',
-      segmentCount: timing?.segments.length ?? 0,
-      ...(timing ? { analyzedDurationSeconds: timing.durationSeconds } : {}),
-    });
     matchTimingToMedia(duration());
   };
   const stopPlaybackClock = () => {

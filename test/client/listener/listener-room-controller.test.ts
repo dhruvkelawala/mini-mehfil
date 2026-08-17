@@ -128,13 +128,11 @@ afterEach(() => {
 describe('listener room timing and media clock', () => {
   test('applies late timing without moving playback and rejects duration drift', () => {
     const socket = new FakeSocket();
-    const diagnostic = vi.fn();
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const controller = createListenerRoomController({
       roomId: 'ABCDEFGH',
       storage: new MemoryStorage(),
       socketFactory: () => socket as unknown as WebSocket,
-      timingDiagnostic: diagnostic,
     });
     const audio = new FakeAudio();
     controller.bindAudio(audio as unknown as HTMLAudioElement);
@@ -168,12 +166,6 @@ describe('listener room timing and media clock', () => {
     audio.metadata(90);
     expect(audio.currentTime).toBe(10);
     expect(controller.timing()).toBeNull();
-    expect(diagnostic).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'listener-media-validation',
-        reason: 'duration-mismatch',
-      }),
-    );
     controller.close();
   });
 
@@ -189,7 +181,6 @@ describe('listener room timing and media clock', () => {
         sockets.push(socket);
         return socket as unknown as WebSocket;
       },
-      timingDiagnostic: vi.fn(),
     });
     const audio = new FakeAudio();
     controller.bindAudio(audio as unknown as HTMLAudioElement);

@@ -9,11 +9,7 @@ import { isRoomId } from '../room/primitives.ts';
 import { isRecord } from '../room/protocol.ts';
 import type { LyricsResult, WriteLyricsOptions } from './lyricist.ts';
 import { analyzeMiniMaxTiming } from './timing-analysis.ts';
-import {
-  emitTimingDiagnostic,
-  type TimingAnalysisOutcome,
-  type TimingDiagnosticSink,
-} from '../timing/timing-analysis.ts';
+import { type TimingAnalysisOutcome } from '../timing/timing-analysis.ts';
 
 const DEFAULT_STATIC_ROOT = path.resolve(process.cwd(), 'dist/host');
 const MAX_BODY_BYTES = 64 * 1024;
@@ -46,7 +42,6 @@ export interface ServerOptions {
   vercelProjectProductionUrl?: string;
   generationTimeoutMs?: number;
   analysisTimeoutMs?: number;
-  timingDiagnostic?: TimingDiagnosticSink;
   roomTimeoutMs?: number;
   staticRoot?: string;
   /** Test-only seam for a loopback replay provider. Never enabled from env. */
@@ -328,7 +323,6 @@ export function createServer(options: ServerOptions = {}): http.Server {
   const generationTimeoutMs =
     options.generationTimeoutMs ?? GENERATION_TIMEOUT_MS;
   const analysisTimeoutMs = options.analysisTimeoutMs ?? ANALYSIS_TIMEOUT_MS;
-  const timingDiagnostic = options.timingDiagnostic ?? emitTimingDiagnostic;
   const staticRoot = options.staticRoot ?? DEFAULT_STATIC_ROOT;
   const allowLocalHttpAudioSource = options.allowLocalHttpAudioSource === true;
   const sharedUrls = new Map<string, string>();
@@ -471,8 +465,6 @@ export function createServer(options: ServerOptions = {}): http.Server {
         const token = typeof body.token === 'string' ? body.token.trim() : '';
         const source =
           typeof body.source === 'string' ? body.source.trim() : '';
-        const attempt =
-          typeof body.attempt === 'number' ? body.attempt : undefined;
         let outcome: TimingAnalysisOutcome;
         if (!validMiniMaxToken(token)) {
           outcome = {
@@ -482,12 +474,11 @@ export function createServer(options: ServerOptions = {}): http.Server {
           };
         } else {
           outcome = await analyzeMiniMaxTiming(
-            { source, token, ...(attempt === undefined ? {} : { attempt }) },
+            { source, token },
             {
               apiBase,
               fetchImpl,
               timeoutMs: analysisTimeoutMs,
-              diagnostic: timingDiagnostic,
               allowLocalHttpSource: allowLocalHttpAudioSource,
             },
           );

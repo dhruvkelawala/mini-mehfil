@@ -52,8 +52,7 @@ describe('listener app', () => {
     expect(connect).toHaveBeenCalled();
   });
 
-  test('renders one untimed primary line and diagnoses the untimed map', () => {
-    const diagnostic = vi.spyOn(console, 'info').mockImplementation(() => {});
+  test('renders one untimed primary line', () => {
     const controller = listenerController({
       hostPresent: true,
       listenerCount: 1,
@@ -85,17 +84,6 @@ describe('listener app', () => {
     expect(
       document.querySelectorAll('.lyric-stage > .lyric-primary'),
     ).toHaveLength(1);
-    expect(diagnostic).toHaveBeenCalledWith(
-      '[TIMING-DIAGNOSTIC]',
-      expect.objectContaining({
-        event: 'listener-map',
-        surface: 'listener',
-        reason: 'untimed',
-        segmentCount: 0,
-        sectionCount: 0,
-      }),
-    );
-    diagnostic.mockRestore();
   });
 
   test('uses the host timeline and line rules through forward and backward seeks', async () => {

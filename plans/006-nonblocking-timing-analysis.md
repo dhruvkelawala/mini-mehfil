@@ -1,24 +1,35 @@
 # Plan 006: Make MiniMax timing analysis non-blocking and retryable
 
-> **Status**: BLOCKED — implementation and every automated gate pass, and the
-> first real non-blocking/provider path passed on 2026-08-17. The explicitly
-> approved parity retest was consumed by one guarded browser POST, but its local
-> operator route never returned a generation response to the product. It
-> retained no source and timing analysis never began, so live
-> host/listener/shared-page parity is still unproven. No further paid request is
-> authorized.
+> **Status**: DONE — closed 2026-08-18 after the 2026-08-17 diagnosis session
+> found and fixed both real-world failure causes. (1) MiniMax rounds segment
+> boundaries but reports the exact duration, so its own final boundary can
+> overshoot its own duration by milliseconds; `normalizeLyricTiming` voided the
+> whole artifact as `invalid-timing` (non-retryable). Reproduced live against
+> the 20:49 BST generation's retained source and fixed by clamping overshoots
+> up to one second. (2) The deployed Cloudflare share worker predated PR #33
+> and silently dropped `lyricTiming` from every upload, so all shared pages
+> fell back to Atmospheric regardless of analysis. Fixed by redeploying the
+> worker and adding a CI `deploy-worker` job on `main`. Live evidence: three
+> real generations (two desktop, one mobile preview) analyzed ready on attempt
+> one; the operator saw timed host playback live; the re-uploaded "London Fog"
+> share (`/s/eNYSMkG5WUswT6y3`) stores the 7-segment artifact and the operator
+> confirmed the live shared page renders timed lines. The live room-listener
+> leg rests on the automated parity suites and real-audio sync replay. The
+> earlier guarded-parity-retest failure was a harness fault, not a product
+> fault, and no further paid retest was needed.
 >
 > **Merge (2026-08-17)**: PR #33 was merged into `main` at `b5f4fa4` from the
 > reviewed head `0aa1fc0` with no additional commits. The retained
-> `[TIMING-DIAGNOSTIC]` instrumentation shipped with the merge and stays until
-> the operator approves removal. The merge does not satisfy the completion
-> gate below; live parity evidence and the operator's decision on a further
-> paid run remain outstanding, so this plan stays BLOCKED rather than DONE.
+> `[TIMING-DIAGNOSTIC]` instrumentation shipped with that merge and did its
+> job: it identified both live failure causes on 2026-08-17. The operator
+> approved its removal on 2026-08-18, and it was removed in PR #38 along with
+> the tests that asserted on it.
 >
 > **Execution**: `advisor/005-approximate-line-refinement` was rebased from
 > `7c8b596` onto fetched `origin/main` `0d6bd5a` with a recoverable safety
-> branch. Implementation is complete through `945e88d`; retained diagnostics
-> remain intentionally present until an explicit PR-creation step.
+> branch. Implementation is complete through `945e88d`. The dated execution
+> record below is historical; where it requires diagnostics to stay in source,
+> that requirement ended with the approved removal noted above.
 
 ## Metadata
 
@@ -336,6 +347,7 @@ Plan 006 must close that gap rather than stopping at the host.
 Plan 006 is DONE only when real playback is available before analysis resolves,
 the same recording upgrades to timed mode without reload, host/live-listener/
 shared-page active lines agree at sampled media times, and timeout no longer
-causes the paid generation result to wait or disappear. Keep diagnostics until
-the PR-creation step, remove them there, re-run the complete gate, then resume
+causes the paid generation result to wait or disappear. Diagnostics were kept
+through live diagnosis and removed with operator approval in PR #38 after the
+complete gate passed again. Then resume
 Plan 005's 2–3 song audible pacing judgment.

@@ -1,4 +1,4 @@
-import { createEffect, createMemo, Show, For, untrack } from 'solid-js';
+import { createMemo, Show, For, untrack } from 'solid-js';
 
 import { activePacedLine, buildLinePacing } from '../../lyrics/line-pacing.ts';
 import {
@@ -6,7 +6,6 @@ import {
   buildSectionTimeline,
   parseLyricSheet,
 } from '../../lyrics/lyric-sync.ts';
-import { emitTimingDiagnostic } from '../../timing/timing-analysis.ts';
 import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
 import { TimedSectionView } from '../lyrics/timed-lyrics.tsx';
 import { RoomActivity } from './components/RoomActivity.tsx';
@@ -90,20 +89,6 @@ export function App(props: {
       line.tag ??
       ''
     );
-  });
-  createEffect(() => {
-    if (!controller.snapshot()?.currentSong) return;
-    const timing = controller.timing();
-    const timeline = sectionTimeline();
-    emitTimingDiagnostic({
-      event: 'listener-map',
-      surface: 'listener',
-      reason: timeline ? 'mapped' : timing ? 'weak-map' : 'untimed',
-      segmentCount: timing?.segments.length ?? 0,
-      sectionCount:
-        timeline?.filter((entry) => entry.sectionIndex !== null).length ?? 0,
-      ...(timing ? { analyzedDurationSeconds: timing.durationSeconds } : {}),
-    });
   });
   const playbackProgress = createMemo(() => {
     const duration = controller.duration();

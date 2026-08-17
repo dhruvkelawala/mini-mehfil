@@ -1,8 +1,6 @@
 import { normalizeLyricTiming } from '../lyrics/lyric-sync.ts';
 import {
-  emitTimingDiagnostic,
   type TimingAnalysisOutcome,
-  type TimingDiagnosticSink,
   type TimingFailureReason,
 } from '../timing/timing-analysis.ts';
 
@@ -13,15 +11,12 @@ export interface TimingAnalysisFetch {
 export interface AnalyzeMiniMaxTimingInput {
   source: string;
   token: string;
-  attempt?: number;
 }
 
 export interface AnalyzeMiniMaxTimingOptions {
   apiBase: string;
   fetchImpl: TimingAnalysisFetch;
   timeoutMs: number;
-  diagnostic?: TimingDiagnosticSink;
-  now?: () => number;
   /** Test-only seam for a loopback replay provider. */
   allowLocalHttpSource?: boolean;
 }
@@ -89,51 +84,8 @@ export async function analyzeMiniMaxTiming(
   input: AnalyzeMiniMaxTimingInput,
   options: AnalyzeMiniMaxTimingOptions,
 ): Promise<TimingAnalysisOutcome> {
-  const diagnostic = options.diagnostic ?? emitTimingDiagnostic;
-  const attempt =
-    Number.isSafeInteger(input.attempt) && Number(input.attempt) > 0
-      ? Number(input.attempt)
-      : 1;
-  const now = options.now ?? Date.now;
-  const startedAt = now();
-  const elapsedMs = () => Math.max(0, Math.round(now() - startedAt));
-  const terminal = (
-    outcome: TimingAnalysisOutcome,
-    details: { httpStatus?: number; providerStatus?: number } = {},
-  ) => {
-    diagnostic({
-      event: 'provider-terminal',
-      surface: 'provider',
-      attempt,
-      elapsedMs: elapsedMs(),
-      deadlineMs: options.timeoutMs,
-      reason: outcome.status === 'ready' ? 'ready' : outcome.reason,
-      ...(details.httpStatus === undefined
-        ? {}
-        : { httpStatus: details.httpStatus }),
-      ...(details.providerStatus === undefined
-        ? {}
-        : { providerStatus: details.providerStatus }),
-      ...(outcome.status === 'ready'
-        ? {
-            segmentCount: outcome.timing.segments.length,
-            analyzedDurationSeconds: outcome.timing.durationSeconds,
-          }
-        : {}),
-    });
-    return outcome;
-  };
-
-  if (!safeAnalysisSource(input.source, options.allowLocalHttpSource)) {
-    return terminal(unavailable('unsupported-source', false));
-  }
-
-  diagnostic({
-    event: 'provider-start',
-    surface: 'provider',
-    attempt,
-    deadlineMs: options.timeoutMs,
-  });
+  if (!safeAnalysisSource(input.source, options.allowLocalHttpSource))
+    return unavailable('unsupported-source', false);
 
   let response: Response;
   try {
@@ -155,41 +107,18 @@ export async function analyzeMiniMaxTiming(
   } catch (error) {
     const timedOut =
       errorName(error) === 'AbortError' || errorName(error) === 'TimeoutError';
-    const outcome = unavailable(timedOut ? 'timeout' : 'network', true);
-    if (timedOut) {
-      diagnostic({
-        event: 'provider-timeout',
-        surface: 'provider',
-        attempt,
-        elapsedMs: elapsedMs(),
-        deadlineMs: options.timeoutMs,
-        reason: 'timeout',
-      });
-    }
-    return terminal(outcome);
+    return unavailable(timedOut ? 'timeout' : 'network', true);
   }
 
   let value: unknown;
   try {
     value = JSON.parse(await response.text()) as unknown;
   } catch {
-    diagnostic({
-      event: 'provider-response',
-      surface: 'provider',
-      attempt,
-      elapsedMs: elapsedMs(),
-      deadlineMs: options.timeoutMs,
-      httpStatus: response.status,
-    });
     if (!response.ok) {
       const failure = providerFailure(response.status, '');
-      return terminal(unavailable(failure.reason, failure.retryable), {
-        httpStatus: response.status,
-      });
+      return unavailable(failure.reason, failure.retryable);
     }
-    return terminal(unavailable('malformed-response', false), {
-      httpStatus: response.status,
-    });
+    return unavailable('malformed-response', false);
   }
 
   const record = isRecord(value) ? value : null;
@@ -199,53 +128,27 @@ export async function analyzeMiniMaxTiming(
     typeof baseResponse.status_code === 'number'
       ? baseResponse.status_code
       : undefined;
-  diagnostic({
-    event: 'provider-response',
-    surface: 'provider',
-    attempt,
-    elapsedMs: elapsedMs(),
-    deadlineMs: options.timeoutMs,
-    httpStatus: response.status,
-    ...(providerStatus === undefined ? {} : { providerStatus }),
-  });
 
   if (!response.ok) {
     const failure = providerFailure(
       response.status,
       baseResponse.status_msg ?? (record && record.error),
     );
-    return terminal(unavailable(failure.reason, failure.retryable), {
-      httpStatus: response.status,
-      ...(providerStatus === undefined ? {} : { providerStatus }),
-    });
+    return unavailable(failure.reason, failure.retryable);
   }
-  if (!record) {
-    return terminal(unavailable('malformed-response', false), {
-      httpStatus: response.status,
-    });
-  }
+  if (!record) return unavailable('malformed-response', false);
   if (providerStatus) {
     const failure = providerFailure(providerStatus, baseResponse.status_msg);
-    return terminal(unavailable(failure.reason, failure.retryable), {
-      httpStatus: response.status,
-      providerStatus,
-    });
+    return unavailable(failure.reason, failure.retryable);
   }
-  if (typeof record.structure_result !== 'string') {
-    return terminal(unavailable('malformed-response', false), {
-      httpStatus: response.status,
-      ...(providerStatus === undefined ? {} : { providerStatus }),
-    });
-  }
+  if (typeof record.structure_result !== 'string')
+    return unavailable('malformed-response', false);
 
   let structure: unknown;
   try {
     structure = JSON.parse(record.structure_result) as unknown;
   } catch {
-    return terminal(unavailable('malformed-response', false), {
-      httpStatus: response.status,
-      ...(providerStatus === undefined ? {} : { providerStatus }),
-    });
+    return unavailable('malformed-response', false);
   }
   const timing = normalizeLyricTiming({
     version: 1,
@@ -253,17 +156,6 @@ export async function analyzeMiniMaxTiming(
     durationSeconds: record.audio_duration,
     segments: isRecord(structure) ? structure.segments : undefined,
   });
-  if (!timing) {
-    return terminal(unavailable('invalid-timing', false), {
-      httpStatus: response.status,
-      ...(providerStatus === undefined ? {} : { providerStatus }),
-    });
-  }
-  return terminal(
-    { status: 'ready', timing },
-    {
-      httpStatus: response.status,
-      ...(providerStatus === undefined ? {} : { providerStatus }),
-    },
-  );
+  if (!timing) return unavailable('invalid-timing', false);
+  return { status: 'ready', timing };
 }
