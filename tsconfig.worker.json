@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "WebWorker"],
+    "moduleResolution": "Bundler",
+    "types": ["./worker-configuration.d.ts"]
+  },
+  "include": [
+    "src/room/**/*.ts",
+    "src/worker/**/*.ts",
+    "worker-configuration.d.ts"
+  ]
+}

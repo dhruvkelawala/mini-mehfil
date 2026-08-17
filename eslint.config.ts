@@ -1,0 +1,69 @@
+import eslint from '@eslint/js';
+import solid from 'eslint-plugin-solid/configs/typescript';
+import globals from 'globals';
+import tseslint from 'typescript-eslint';
+
+export default tseslint.config(
+  {
+    ignores: [
+      'node_modules/**',
+      'dist/**',
+      'coverage/**',
+      'playwright-report/**',
+      'test-results/**',
+      'plans/**',
+    ],
+  },
+  eslint.configs.recommended,
+  ...tseslint.configs.recommended,
+  ...tseslint.configs.recommendedTypeChecked.map((config) => ({
+    ...config,
+    files: [
+      'src/**/*.ts',
+      'src/**/*.tsx',
+      'api/**/*.ts',
+      'scripts/**/*.ts',
+      'test/**/*.ts',
+      'test/**/*.tsx',
+    ],
+  })),
+  {
+    files: [
+      'src/**/*.ts',
+      'src/**/*.tsx',
+      'api/**/*.ts',
+      'scripts/**/*.ts',
+      'test/**/*.ts',
+      'test/**/*.tsx',
+    ],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+      },
+    },
+  },
+  {
+    ...solid,
+    files: ['src/client/**/*.ts', 'src/client/**/*.tsx'],
+    languageOptions: {
+      globals: globals.browser,
+      parserOptions: {
+        projectService: true,
+      },
+    },
+  },
+  {
+    files: [
+      'eslint.config.ts',
+      'vite.config.ts',
+      'vitest*.config.ts',
+      'playwright.config.ts',
+      'scripts/**/*.ts',
+      'src/server/**/*.ts',
+      'api/**/*.ts',
+      'test/**/*.ts',
+      'test/**/*.tsx',
+    ],
+    languageOptions: { globals: globals.node },
+  },
+);
