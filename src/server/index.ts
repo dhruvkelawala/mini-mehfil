@@ -4,6 +4,10 @@ import path from 'node:path';
 import { Buffer } from 'node:buffer';
 
 import { isDirectEntry, parseTcpPort } from '../config/runtime.ts';
+import {
+  normalizeLyricTiming,
+  type LyricTiming,
+} from '../lyrics/lyric-sync.ts';
 import { isRoomId } from '../room/primitives.ts';
 import { isRecord } from '../room/protocol.ts';
 import type { LyricsResult, WriteLyricsOptions } from './lyricist.ts';
@@ -14,6 +18,7 @@ const MAX_SHARE_AUDIO_BYTES = 10 * 1024 * 1024;
 const JOB_ID_PATTERN = /^[A-Za-z0-9_-]{24}$/;
 const RECOVERY_TIMEOUT_MS = 15 * 1000;
 const GENERATION_TIMEOUT_MS = 4 * 60 * 1000;
+const ANALYSIS_TIMEOUT_MS = 10 * 1000;
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -37,6 +42,7 @@ export interface ServerOptions {
   shareSecret?: string;
   vercelProjectProductionUrl?: string;
   generationTimeoutMs?: number;
+  analysisTimeoutMs?: number;
   roomTimeoutMs?: number;
   staticRoot?: string;
 }
@@ -123,6 +129,76 @@ function audioSource(result: JsonRecord): string | null {
   }
 }
 
+/**
+ * Asks MiniMax's free cover-preprocess endpoint where the sections of a freshly
+ * generated recording fall, using the same per-request user token.
+ *
+ * Analysis is strictly best effort: any non-2xx, timeout, malformed body, or
+ * out-of-contract artifact resolves to `null` so audio delivery is never
+ * delayed past the timeout or failed by it. Nothing the provider returns other
+ * than the normalized timing — not the transcript, the trace id, the feature
+ * id, nor the signed URL — is kept, logged, or forwarded.
+ */
+async function analyzeLyricTiming({
+  source,
+  token,
+  apiBase,
+  fetchImpl,
+  timeoutMs,
+}: {
+  source: string;
+  token: string;
+  apiBase: string;
+  fetchImpl: ServerFetch;
+  timeoutMs: number;
+}): Promise<LyricTiming | null> {
+  try {
+    const audioUrl = new URL(source);
+    if (
+      audioUrl.protocol !== 'https:' ||
+      audioUrl.username ||
+      audioUrl.password
+    )
+      return null;
+  } catch {
+    return null;
+  }
+
+  try {
+    const response = await fetchImpl(`${apiBase}/v1/music_cover_preprocess`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ model: 'music-cover', audio_url: source }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return null;
+
+    const value = parseJsonRecord(await response.text());
+    if (!value) return null;
+    const baseResponse = isRecord(value.base_resp) ? value.base_resp : {};
+    if (baseResponse.status_code) return null;
+    if (typeof value.structure_result !== 'string') return null;
+
+    let structure: unknown;
+    try {
+      structure = JSON.parse(value.structure_result);
+    } catch {
+      return null;
+    }
+    return normalizeLyricTiming({
+      version: 1,
+      mode: 'minimax-section-asr',
+      durationSeconds: value.audio_duration,
+      segments: isRecord(structure) ? structure.segments : undefined,
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function readLimitedBody(
   response: Response,
   limit: number,
@@ -201,6 +277,8 @@ function completedGeneration(record: JsonRecord): JsonRecord {
     share_ref: record.jobId,
   };
   if (record.traceId) result.trace_id = record.traceId;
+  const timing = normalizeLyricTiming(record.lyricTiming);
+  if (timing) result.lyric_timing = timing;
   return result;
 }
 
@@ -287,6 +365,7 @@ export function createServer(options: ServerOptions = {}): http.Server {
   const sharingConfigured = Boolean(shareBaseUrl && shareSecret);
   const generationTimeoutMs =
     options.generationTimeoutMs ?? GENERATION_TIMEOUT_MS;
+  const analysisTimeoutMs = options.analysisTimeoutMs ?? ANALYSIS_TIMEOUT_MS;
   const staticRoot = options.staticRoot ?? DEFAULT_STATIC_ROOT;
   const sharedUrls = new Map<string, string>();
 
@@ -511,6 +590,8 @@ export function createServer(options: ServerOptions = {}): http.Server {
         const result = parseJsonRecord(text) ?? {
           error: text || 'MiniMax returned an unreadable response.',
         };
+        // Timing is server-issued only; never let an upstream field masquerade.
+        delete result.lyric_timing;
         const baseResponse = isRecord(result.base_resp) ? result.base_resp : {};
         const resultError = isRecord(result.error) ? result.error : {};
 
@@ -544,6 +625,13 @@ export function createServer(options: ServerOptions = {}): http.Server {
           return sendJson(res, 502, { error: failure.message });
         }
         audioReady = true;
+        const lyricTiming = await analyzeLyricTiming({
+          source,
+          token,
+          apiBase,
+          fetchImpl,
+          timeoutMs: analysisTimeoutMs,
+        });
         if (claimedJobId) {
           const resultData = isRecord(result.data) ? result.data : {};
           const traceId =
@@ -552,6 +640,7 @@ export function createServer(options: ServerOptions = {}): http.Server {
             status: 'complete',
             source,
             ...(typeof traceId === 'string' ? { traceId } : {}),
+            ...(lyricTiming ? { lyricTiming } : {}),
           });
           if (!checkpoint)
             return sendJson(res, 503, {
@@ -560,6 +649,7 @@ export function createServer(options: ServerOptions = {}): http.Server {
             });
           return sendJson(res, 200, completedGeneration(checkpoint));
         }
+        if (lyricTiming) result.lyric_timing = lyricTiming;
         return sendJson(res, 200, result);
       } catch (error) {
         const details = errorDetails(error);
@@ -686,6 +776,9 @@ export function createServer(options: ServerOptions = {}): http.Server {
             typeof body.lyricsNative === 'string' ? body.lyricsNative : '',
           lyricsRoman:
             typeof body.lyricsRoman === 'string' ? body.lyricsRoman : '',
+          // Read from the server-issued generation record only. A browser can
+          // never supply timing for a recording it did not analyze.
+          lyricTiming: normalizeLyricTiming(recovered.value.lyricTiming),
         };
 
         let audio = decodeAudioSource(entry.source);

@@ -117,7 +117,8 @@ test('rejects an empty token without contacting MiniMax', async () => {
 test('proxies the token and normalized Music 3 payload', async () => {
   let captured;
   const mockFetch = async (url, init) => {
-    captured = { url, init, body: JSON.parse(init.body) };
+    if (url === 'https://mock.minimax.test/v1/music_generation')
+      captured = { url, init, body: JSON.parse(init.body) };
     return new Response(
       JSON.stringify({
         data: { audio: 'https://cdn.example/song.mp3', status: 2 },
@@ -170,6 +171,349 @@ test('does not cache or expose the token in responses', async () => {
     assert.equal(response.status, 400);
     assert.doesNotMatch(text, /never-return-this/);
   });
+});
+
+const SECTION_SEGMENTS = [
+  { start: 0, end: 12, label: 'intro' },
+  { start: 12, end: 44, label: 'verse' },
+  { start: 44, end: 90, label: 'chorus' },
+];
+
+function generatedSong() {
+  return new Response(
+    JSON.stringify({
+      data: { audio: 'https://cdn.minimax.test/song.mp3', status: 2 },
+      base_resp: { status_code: 0, status_msg: 'success' },
+    }),
+    { status: 200 },
+  );
+}
+
+function preprocessed(overrides = {}) {
+  return new Response(
+    JSON.stringify({
+      base_resp: { status_code: 0, status_msg: 'success' },
+      audio_duration: 90,
+      structure_result: JSON.stringify({ segments: SECTION_SEGMENTS }),
+      formatted_lyrics: 'raw ASR transcript that must never leave the server',
+      cover_feature_id: 'feature-1234',
+      trace_id: 'trace-5678',
+      ...overrides,
+    }),
+    { status: 200 },
+  );
+}
+
+async function generateWith(mockFetch, options = {}) {
+  let response;
+  await withServer(
+    mockFetch,
+    async (base) => {
+      response = await (
+        await fetch(`${base}/api/generate`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            token: 'sk-cp-analysis',
+            lyrics: '[Verse]\nઆ સાંજ',
+            prompt: 'Gujarati indie pop',
+            lyric_timing: { version: 1, mode: 'browser-forgery' },
+          }),
+        })
+      ).json();
+    },
+    options,
+  );
+  return response;
+}
+
+test('analyzes a finished recording into normalized section timing', async () => {
+  let preprocess;
+  const song = await generateWith(async (url, init) => {
+    if (url === 'https://mock.minimax.test/v1/music_generation')
+      return generatedSong();
+    if (url === 'https://mock.minimax.test/v1/music_cover_preprocess') {
+      preprocess = { init, body: JSON.parse(init.body) };
+      return preprocessed();
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  });
+
+  assert.deepEqual(song.lyric_timing, {
+    version: 1,
+    mode: 'minimax-section-asr',
+    durationSeconds: 90,
+    segments: SECTION_SEGMENTS,
+  });
+  assert.equal(preprocess.init.headers.Authorization, 'Bearer sk-cp-analysis');
+  assert.equal(preprocess.body.model, 'music-cover');
+  assert.equal(preprocess.body.audio_url, 'https://cdn.minimax.test/song.mp3');
+  const serialized = JSON.stringify(song);
+  assert.doesNotMatch(serialized, /formatted_lyrics|raw ASR transcript/);
+  assert.doesNotMatch(serialized, /cover_feature_id|feature-1234/);
+  assert.doesNotMatch(serialized, /trace-5678/);
+});
+
+test('delivers audio without timing when section analysis cannot be trusted', async () => {
+  const unusable = {
+    'a rejected request': () => new Response('nope', { status: 401 }),
+    'an upstream status code': () =>
+      preprocessed({ base_resp: { status_code: 1002, status_msg: 'busy' } }),
+    'an unreadable body': () => new Response('not json', { status: 200 }),
+    'a malformed structure_result': () =>
+      preprocessed({ structure_result: '{{{' }),
+    'a non-string structure_result': () =>
+      preprocessed({ structure_result: { segments: SECTION_SEGMENTS } }),
+    'segments outside the audio': () =>
+      preprocessed({
+        structure_result: JSON.stringify({
+          segments: [{ start: 0, end: 900, label: 'verse' }],
+        }),
+      }),
+    'an unknown label': () =>
+      preprocessed({
+        structure_result: JSON.stringify({
+          segments: [{ start: 0, end: 12, label: 'karaoke' }],
+        }),
+      }),
+    'a missing duration': () => preprocessed({ audio_duration: undefined }),
+  };
+
+  for (const [name, reply] of Object.entries(unusable)) {
+    const song = await generateWith(async (url) => {
+      if (url === 'https://mock.minimax.test/v1/music_generation')
+        return generatedSong();
+      if (url === 'https://mock.minimax.test/v1/music_cover_preprocess')
+        return reply();
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    assert.equal(song.data.audio, 'https://cdn.minimax.test/song.mp3', name);
+    assert.equal(song.lyric_timing, undefined, name);
+  }
+});
+
+test('a hung analysis never delays or fails audio delivery past its timeout', async () => {
+  const song = await generateWith(
+    async (url, init) => {
+      if (url === 'https://mock.minimax.test/v1/music_generation')
+        return generatedSong();
+      if (url === 'https://mock.minimax.test/v1/music_cover_preprocess') {
+        return new Promise((resolve, reject) => {
+          init.signal.addEventListener('abort', () =>
+            reject(new Error('aborted')),
+          );
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+    { analysisTimeoutMs: 25 },
+  );
+  assert.equal(song.data.audio, 'https://cdn.minimax.test/song.mp3');
+  assert.equal(song.lyric_timing, undefined);
+});
+
+test('never analyzes an inline recording and never trusts browser-supplied timing', async () => {
+  let preprocessCalls = 0;
+  const song = await generateWith(async (url) => {
+    if (url === 'https://mock.minimax.test/v1/music_generation') {
+      return new Response(
+        JSON.stringify({
+          data: { audio: '49443304' },
+          base_resp: { status_code: 0, status_msg: 'success' },
+          lyric_timing: {
+            version: 1,
+            mode: 'minimax-section-asr',
+            durationSeconds: 90,
+            segments: SECTION_SEGMENTS,
+          },
+        }),
+        { status: 200 },
+      );
+    }
+    if (url === 'https://mock.minimax.test/v1/music_cover_preprocess') {
+      preprocessCalls += 1;
+      return preprocessed();
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  });
+  assert.equal(preprocessCalls, 0);
+  assert.equal(song.lyric_timing, undefined);
+});
+
+test('carries server-issued timing through recovery and into share metadata', async () => {
+  let uploaded;
+  let job;
+  const mockFetch = async (url, init = {}) => {
+    if (url === `https://share.example/generation-jobs/${JOB_ID}/claim`) {
+      job = job || { version: 1, jobId: JOB_ID, status: 'pending' };
+      return new Response(JSON.stringify(job), { status: 201 });
+    }
+    if (
+      url === `https://share.example/generation-jobs/${JOB_ID}` &&
+      init.method === 'PUT'
+    ) {
+      job = { version: 1, jobId: JOB_ID, ...JSON.parse(init.body) };
+      return new Response(JSON.stringify(job));
+    }
+    if (url === `https://share.example/generation-jobs/${JOB_ID}`)
+      return new Response(JSON.stringify(job));
+    if (url === 'https://mock.minimax.test/v1/music_generation')
+      return generatedSong();
+    if (url === 'https://mock.minimax.test/v1/music_cover_preprocess')
+      return preprocessed();
+    if (url === 'https://cdn.minimax.test/song.mp3') {
+      return new Response(new Uint8Array([73, 68, 51]), {
+        status: 200,
+        headers: { 'content-type': 'audio/mpeg' },
+      });
+    }
+    if (url === 'https://share.example/shares') {
+      uploaded = { metadata: JSON.parse(init.body.get('metadata')) };
+      return new Response(
+        JSON.stringify({ url: 'https://share.example/s/AbCdEfGhIjKlMnOp' }),
+        { status: 201 },
+      );
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  await withServer(
+    mockFetch,
+    async (base) => {
+      const song = await (
+        await fetch(`${base}/api/generate`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            jobId: JOB_ID,
+            token: 'sk-cp-analysis',
+            lyrics: '[Verse]\nઆ સાંજ',
+          }),
+        })
+      ).json();
+      assert.deepEqual(song.lyric_timing.segments, SECTION_SEGMENTS);
+
+      // A second reader of the same job gets the same stored timing.
+      const recovered = await (
+        await fetch(`${base}/api/generation-status?id=${JOB_ID}`)
+      ).json();
+      assert.deepEqual(recovered.lyric_timing.segments, SECTION_SEGMENTS);
+
+      const shared = await fetch(`${base}/api/share`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          shareRef: song.share_ref,
+          title: 'Aloopuri Khavsa',
+          language: 'Gujarati',
+          nativeScriptName: 'Gujarati',
+          isLatinScript: false,
+          lyricsNative: '[Verse]\nઆ સાંજ',
+          lyricsRoman: '[Verse]\naa saanj',
+          lyricTiming: {
+            version: 1,
+            mode: 'minimax-section-asr',
+            durationSeconds: 5,
+            segments: [{ start: 0, end: 5, label: 'outro' }],
+          },
+        }),
+      });
+      assert.equal(shared.status, 201);
+    },
+    {
+      shareBaseUrl: 'https://share.example',
+      publicBaseUrl: 'https://minimehfil.wtf',
+      shareSecret: 'worker-upload-secret',
+    },
+  );
+
+  assert.deepEqual(uploaded.metadata.lyricTiming, {
+    version: 1,
+    mode: 'minimax-section-asr',
+    durationSeconds: 90,
+    segments: SECTION_SEGMENTS,
+  });
+  assert.doesNotMatch(
+    JSON.stringify(uploaded),
+    /formatted_lyrics|feature-1234/,
+  );
+});
+
+test('shares a recording with null timing when analysis produced none', async () => {
+  let uploaded;
+  let job;
+  const mockFetch = async (url, init = {}) => {
+    if (url === `https://share.example/generation-jobs/${JOB_ID}/claim`) {
+      job = job || { version: 1, jobId: JOB_ID, status: 'pending' };
+      return new Response(JSON.stringify(job), { status: 201 });
+    }
+    if (
+      url === `https://share.example/generation-jobs/${JOB_ID}` &&
+      init.method === 'PUT'
+    ) {
+      job = { version: 1, jobId: JOB_ID, ...JSON.parse(init.body) };
+      return new Response(JSON.stringify(job));
+    }
+    if (url === `https://share.example/generation-jobs/${JOB_ID}`)
+      return new Response(JSON.stringify(job));
+    if (url === 'https://mock.minimax.test/v1/music_generation')
+      return generatedSong();
+    if (url === 'https://mock.minimax.test/v1/music_cover_preprocess')
+      return new Response('nope', { status: 500 });
+    if (url === 'https://cdn.minimax.test/song.mp3') {
+      return new Response(new Uint8Array([73, 68, 51]), {
+        status: 200,
+        headers: { 'content-type': 'audio/mpeg' },
+      });
+    }
+    if (url === 'https://share.example/shares') {
+      uploaded = { metadata: JSON.parse(init.body.get('metadata')) };
+      return new Response(
+        JSON.stringify({ url: 'https://share.example/s/AbCdEfGhIjKlMnOp' }),
+        { status: 201 },
+      );
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  await withServer(
+    mockFetch,
+    async (base) => {
+      const song = await (
+        await fetch(`${base}/api/generate`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            jobId: JOB_ID,
+            token: 'sk-cp-analysis',
+            lyrics: '[Verse]\nઆ સાંજ',
+          }),
+        })
+      ).json();
+      assert.equal(song.lyric_timing, undefined);
+      const shared = await fetch(`${base}/api/share`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          shareRef: song.share_ref,
+          title: 'Aloopuri Khavsa',
+          language: 'Gujarati',
+          nativeScriptName: 'Gujarati',
+          isLatinScript: false,
+          lyricsNative: '[Verse]\nઆ સાંજ',
+          lyricsRoman: '[Verse]\naa saanj',
+        }),
+      });
+      assert.equal(shared.status, 201);
+    },
+    {
+      shareBaseUrl: 'https://share.example',
+      publicBaseUrl: 'https://minimehfil.wtf',
+      shareSecret: 'worker-upload-secret',
+    },
+  );
+
+  assert.equal(uploaded.metadata.lyricTiming, null);
 });
 
 test('shares only server-issued recordings and forwards no token', async () => {
