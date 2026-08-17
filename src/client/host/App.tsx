@@ -684,11 +684,12 @@ export function App() {
             </span>
           </button>
           <a
+            class="topbar-docs"
             href="https://platform.minimax.io/docs/api-reference/music-generation"
             target="_blank"
             rel="noreferrer"
           >
-            API docs <span>↗</span>
+            API docs
           </a>
         </div>
       </header>
@@ -823,7 +824,9 @@ export function App() {
                 ? 'Making your song…'
                 : 'Start the mehfil'}
             </span>
-            <span class="arrow">→</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 12h13M14 7l5 5-5 5" />
+            </svg>
           </button>
           <p class="cost-hint" id="cost-hint">
             Lyrics cost about a tenth of a cent. The song costs ≈ $0.15.
@@ -940,14 +943,14 @@ export function App() {
                           aria-label={`Move ${item.idea} up`}
                           onClick={() => room.reorder(item.id, targets().up)}
                         >
-                          ↑
+                          Move up
                         </button>
                         <button
                           type="button"
                           aria-label={`Move ${item.idea} down`}
                           onClick={() => room.reorder(item.id, targets().down)}
                         >
-                          ↓
+                          Move down
                         </button>
                         <button
                           type="button"

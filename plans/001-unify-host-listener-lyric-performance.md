@@ -234,7 +234,7 @@ reason, not because setup cannot find either surface.
 
 **Verify**:
 `npx vitest run test/client/shared/lyric-performance.test.tsx && npx playwright test test/browser/characterization.spec.ts --grep "host and listener share the live lyric performance" --project=desktop-chromium`
-→ the new assertions fail on presentation/parity before implementation; all
+Result: the new assertions fail on presentation/parity before implementation; all
 test setup reaches both lyric surfaces.
 
 ### Step 2: Extract one pure lyric timeline model
@@ -262,7 +262,7 @@ no DOM or Solid code.
 
 **Verify**:
 `npx vitest run test/client/shared/lyric-performance.test.tsx`
-→ all parser and frame-selection cases pass.
+Result: all parser and frame-selection cases pass.
 
 ### Step 3: Build a shared visual lyric component
 
@@ -293,7 +293,7 @@ romanized secondary text, current-frame changes, and full transcript content.
 
 **Verify**:
 `npx vitest run test/client/shared/lyric-performance.test.tsx && npm run typecheck`
-→ all shared component tests pass and TypeScript reports no errors.
+Result: all shared component tests pass and TypeScript reports no errors.
 
 ### Step 4: Replace both bespoke render paths without changing role controls
 
@@ -322,7 +322,7 @@ structure, not brittle pixel coordinates.
 
 **Verify**:
 `npx playwright test test/browser/characterization.spec.ts --grep "host and listener share the live lyric performance"`
-→ desktop and mobile pass with matching cue, primary, and secondary content.
+Result: desktop and mobile pass with matching cue, primary, and secondary content.
 
 ### Step 5: Polish and verify the integrated surfaces
 
@@ -347,9 +347,9 @@ document why the shared stage itself cannot own it.
 
 **Verify**:
 
-1. `npm run check` → all repository checks and both bundle budgets pass.
-2. `npm run test:browser` → the complete desktop/mobile browser suite passes.
-3. `git diff --name-only` → only files listed under **In scope** are present.
+1. `npm run check`: all repository checks and both bundle budgets pass.
+2. `npm run test:browser`: the complete desktop/mobile browser suite passes.
+3. `git diff --name-only`: only files listed under **In scope** are present.
 
 ## Test plan
 

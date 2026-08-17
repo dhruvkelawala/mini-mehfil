@@ -935,8 +935,14 @@ input::placeholder {
   cursor: wait;
   filter: saturate(0.45);
 }
-.arrow {
-  font-size: 20px;
+.generate svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .player-shell {
   position: fixed;

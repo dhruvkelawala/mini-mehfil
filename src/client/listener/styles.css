@@ -224,6 +224,15 @@ textarea {
   cursor: pointer;
   font-weight: 750;
 }
+.generate svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .room {
   display: contents;
 }

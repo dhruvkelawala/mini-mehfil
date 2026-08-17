@@ -220,7 +220,9 @@ export function App(props: {
             </label>
             <button class="generate" type="submit">
               <span>Join the mehfil</span>
-              <span aria-hidden="true">→</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12h13M14 7l5 5-5 5" />
+              </svg>
             </button>
             <small class="join-note">
               Your first tap also prepares this browser for shared audio.
@@ -282,7 +284,9 @@ export function App(props: {
                     </div>
                     <button class="generate">
                       <span>Send request</span>
-                      <span aria-hidden="true">→</span>
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M5 12h13M14 7l5 5-5 5" />
+                      </svg>
                     </button>
                   </form>
                   <RoomActivity snapshot={snapshot()} />

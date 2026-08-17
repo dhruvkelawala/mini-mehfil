@@ -12,7 +12,7 @@ Primarily a host generating songs locally with their own MiniMax API key (BYOK).
 
 ## Product Purpose
 
-Mini Mehfil is a tiny local song room for MiniMax Music 3: paste a token, type a few keywords in any language, and get a playable, downloadable song with lyrics written for you. Success is a single delightful loop — write → record → listen — with minimal setup beyond installing dependencies and starting the local app.
+Mini Mehfil is a tiny local song room for MiniMax Music 3: paste a token, type a few keywords in any language, and get a playable, downloadable song with lyrics written for you. Success is a single delightful loop — write -> record -> listen — with minimal setup beyond installing dependencies and starting the local app.
 
 ## Positioning
 
@@ -32,7 +32,7 @@ An immersive single-room experience (inspired by saloon.wtf) rather than a utili
 - **Lyrics are sung literally.** MiniMax performs the `lyrics` field verbatim, so keywords must be expanded into a full structured song before generating. Direct music-3.0 generation accepts 1–3,500 lyric chars and 0–2,000 prompt chars (the 10–1,000 figure applies to cover mode only); we target ~1,100 and cap at 3,500. Prompt/lyric craft findings live in `docs/research/minimax-native-vocals.md`.
 - Solid and TypeScript provide two independently built client entries: the host and the room listener. Vite emits static assets served by the Node proxy and Worker respectively.
 - Privacy posture documented in README: the token lives only in the browser field, is forwarded per-request, and is never logged or stored. One pending lyric sheet may live temporarily in the current tab's `sessionStorage` so a paid recording can survive refresh or iOS suspension. Optional rooms keep transient queue/presence state in a Durable Object and explicitly shared recordings in R2; the Worker never receives the MiniMax key or generation prompt.
-- Live rooms are optional and host-controlled: accepting a listener request does not spend money, and only an explicit host **Record** action runs the existing write → record → share pipeline. Private host playback can begin while section analysis is pending; publication waits for the timing decision so every listener receives the same trusted artifact or the same explicit untimed fallback.
+- Live rooms are optional and host-controlled: accepting a listener request does not spend money, and only an explicit host **Record** action runs the existing write -> record -> share pipeline. Private host playback can begin while section analysis is pending; publication waits for the timing decision so every listener receives the same trusted artifact or the same explicit untimed fallback.
 - Open decision: whether/when to publish for public BYOK consumption.
 
 ## Brand Commitments
@@ -43,7 +43,7 @@ The saloon.wtf-inspired dusk-courtyard identity is **binding**: that stacked wor
 
 ## Product Principles
 
-1. One room, one loop — everything serves write → record → listen on a single screen.
+1. One room, one loop — everything serves write -> record -> listen on a single screen.
 2. The user's key, the user's music — never store, log, or phone home with
    tokens. Keep a pending lyric sheet only in the current tab for lifecycle
    recovery and a private finished source for at most 24 hours. Full lyrics and
