@@ -1,15 +1,117 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { createRoomState } from '../../src/room/state.ts';
+import { createRoomState, projectRoomState } from '../../src/room/state.ts';
+import { playbackPage } from '../../src/worker/playback-page.ts';
 import {
   installWebSocketHarness,
   projectHostFixture,
 } from '../fixtures/websocket-harness.ts';
 
 const sharedSongId = 'AbCdEfGhIjKlMnOp';
+const fixtureToken = 'sk-fixture-secret-token';
+
+const timedLyrics = {
+  title: 'Timed Rain',
+  language: 'English',
+  nativeScriptName: 'Latin',
+  isLatinScript: true,
+  lyricsNative:
+    '[Verse]\nRain begins\nSoft drums answer\n[Chorus]\nSing again\nFind the morning',
+  lyricsRoman:
+    '[Verse]\nRain begins\nSoft drums answer\n[Chorus]\nSing again\nFind the morning',
+};
+
+const timedArtifact = {
+  version: 1 as const,
+  mode: 'minimax-section-asr' as const,
+  durationSeconds: 24,
+  segments: [
+    { start: 0, end: 12, label: 'verse' as const },
+    { start: 12, end: 24, label: 'chorus' as const },
+  ],
+};
+
+type TimingDiagnostic = Record<string, string | number>;
+
+async function installTimingBrowserHarness(
+  page: Page,
+  { currentTime = 6, duration = 24 } = {},
+) {
+  await page.addInitScript(
+    ({ initialTime, mediaDuration }) => {
+      const fixtureWindow = window as typeof window & {
+        __mediaCurrentTime?: number;
+        __mediaPaused?: boolean;
+        __timingDiagnostics?: Array<Record<string, string | number>>;
+      };
+      fixtureWindow.__mediaCurrentTime = initialTime;
+      fixtureWindow.__mediaPaused = true;
+      fixtureWindow.__timingDiagnostics = [];
+      const originalInfo = console.info.bind(console);
+      console.info = (...values: unknown[]) => {
+        if (
+          values[0] === '[TIMING-DIAGNOSTIC]' &&
+          values[1] &&
+          typeof values[1] === 'object'
+        ) {
+          fixtureWindow.__timingDiagnostics?.push(
+            JSON.parse(JSON.stringify(values[1])) as Record<
+              string,
+              string | number
+            >,
+          );
+        }
+        originalInfo(...values);
+      };
+      Object.defineProperties(HTMLMediaElement.prototype, {
+        currentTime: {
+          configurable: true,
+          get: () => fixtureWindow.__mediaCurrentTime ?? 0,
+          set: (value: number) => {
+            fixtureWindow.__mediaCurrentTime = value;
+          },
+        },
+        duration: { configurable: true, get: () => mediaDuration },
+        paused: {
+          configurable: true,
+          get: () => fixtureWindow.__mediaPaused ?? true,
+        },
+        ended: { configurable: true, get: () => false },
+        readyState: { configurable: true, get: () => 1 },
+      });
+      HTMLMediaElement.prototype.load = function () {
+        queueMicrotask(() => {
+          this.dispatchEvent(new Event('loadedmetadata'));
+          this.dispatchEvent(new Event('durationchange'));
+        });
+      };
+      HTMLMediaElement.prototype.play = function () {
+        fixtureWindow.__mediaPaused = false;
+        this.dispatchEvent(new Event('play'));
+        return Promise.resolve();
+      };
+      HTMLMediaElement.prototype.pause = function () {
+        fixtureWindow.__mediaPaused = true;
+        this.dispatchEvent(new Event('pause'));
+      };
+    },
+    { initialTime: currentTime, mediaDuration: duration },
+  );
+}
+
+async function timingDiagnostics(page: Page): Promise<TimingDiagnostic[]> {
+  return page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          __timingDiagnostics?: Array<Record<string, string | number>>;
+        }
+      ).__timingDiagnostics ?? [],
+  );
+}
 
 async function fillSong(page: Page) {
-  await page.getByLabel(/MiniMax token/).fill('sk-fixture-secret-token');
+  await page.getByLabel(/MiniMax token/).fill(fixtureToken);
   await page.getByLabel(/What's the song about\?/).fill('Monsoon Song');
 }
 
@@ -450,9 +552,289 @@ test('a host manages a request through recording and publication', async ({
         type: 'song-ready',
         requestId: 'request-2',
         shareId: sharedSongId,
+        lyricTiming: null,
       },
     ]),
   );
+});
+
+test('delayed timing upgrades host, listener, and shared playback at the same media clock', async ({
+  page,
+  context,
+}) => {
+  let releaseAnalysis: (() => void) | undefined;
+  const analysisHeld = new Promise<void>((resolve) => {
+    releaseAnalysis = resolve;
+  });
+  let shareCalls = 0;
+  const sharedBodies: Array<Record<string, unknown>> = [];
+
+  await installWebSocketHarness(page);
+  await installTimingBrowserHarness(page);
+  await page.route('**/api/write-lyrics', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...timedLyrics,
+        prompt: 'Warm acoustic mehfil',
+      }),
+    }),
+  );
+  await page.route('**/api/generate', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { audio: 'https://audio.example.test/timed-song.mp3' },
+        share_ref: 'AbCdEfGhIjKlMnOpQrStUvWx',
+      }),
+    }),
+  );
+  await page.route('**/api/analyze-timing', async (route) => {
+    await analysisHeld;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ status: 'ready', timing: timedArtifact }),
+    });
+  });
+  await page.route('**/api/share', async (route) => {
+    shareCalls += 1;
+    sharedBodies.push(
+      route.request().postDataJSON() as Record<string, unknown>,
+    );
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        url: `http://127.0.0.1:4387/s/${sharedSongId}`,
+      }),
+    });
+  });
+  await page.route('https://audio.example.test/**', (route) =>
+    route.fulfill({ contentType: 'audio/mpeg', body: 'ID3' }),
+  );
+
+  await page.goto('/');
+  await page
+    .getByRole('button', { name: 'Open this mehfil to friends' })
+    .click();
+  await expect(page.getByText('connected')).toBeVisible();
+  await fillSong(page);
+  await page.getByRole('button', { name: 'Start the mehfil' }).click();
+
+  await expect(page.getByText('Your recording is ready.')).toBeVisible();
+  await expect(
+    page.getByText('Analyzing MiniMax sections · music is ready'),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+  expect(
+    await page
+      .locator('audio')
+      .evaluate((audio) => (audio as HTMLAudioElement).currentTime),
+  ).toBe(6);
+  expect(shareCalls).toBe(0);
+  await expect
+    .poll(async () =>
+      (await timingDiagnostics(page)).map((diagnostic) => diagnostic.event),
+    )
+    .toEqual(expect.arrayContaining(['room-waiting', 'share-waiting']));
+
+  releaseAnalysis?.();
+  await expect(
+    page.getByText('Lines follow MiniMax sections · timing is approximate'),
+  ).toBeVisible();
+  await expect(page.locator('#reveal-lines .lyric-section')).toHaveCount(1);
+  await expect(page.locator('#reveal-lines [aria-current="true"]')).toHaveCount(
+    1,
+  );
+  const hostLine = await page
+    .locator('#reveal-lines [aria-current="true"] .lyric-primary')
+    .textContent();
+  expect(hostLine).toBeTruthy();
+  expect(
+    await page
+      .locator('audio')
+      .evaluate((audio) => (audio as HTMLAudioElement).currentTime),
+  ).toBe(6);
+  await expect.poll(() => shareCalls).toBe(1);
+  expect(sharedBodies[0]?.lyricTiming).toEqual(timedArtifact);
+  await expect
+    .poll(async () =>
+      (await sentFrames(page)).find(
+        (frame) => (frame as { type?: string }).type === 'song-shared',
+      ),
+    )
+    .toEqual(
+      expect.objectContaining({
+        type: 'song-shared',
+        shareId: sharedSongId,
+        lyricTiming: timedArtifact,
+      }),
+    );
+
+  const listenerState = createRoomState({
+    roomId: 'ABCDEFGH',
+    openedAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+  });
+  listenerState.hostPresent = true;
+  listenerState.participants.push({
+    id: 'listener-fixture',
+    name: 'Listener',
+    connected: true,
+    joinedAt: Date.now(),
+  });
+  listenerState.currentSong = {
+    requestId: null,
+    shareId: sharedSongId,
+    title: timedLyrics.title,
+    language: timedLyrics.language,
+    startedAt: Date.now(),
+    lyrics: timedLyrics,
+    lyricTiming: timedArtifact,
+    playback: { status: 'paused', positionMs: 6_000, changedAt: Date.now() },
+  };
+  const listenerSnapshot = projectRoomState(listenerState, {
+    role: 'listener',
+    participantId: 'listener-fixture',
+  });
+  const listener = await context.newPage();
+  await installWebSocketHarness(listener);
+  await installTimingBrowserHarness(listener);
+  await listener.goto('/r/ABCDEFGH');
+  await listener.getByLabel('Your name').fill('Listener');
+  await listener.getByRole('button', { name: 'Join the mehfil' }).click();
+  await listener.evaluate((state) => {
+    const fixtureWindow = window as typeof window & {
+      __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
+    };
+    fixtureWindow.__mehfilSockets[0]?.serverMessage({
+      type: 'snapshot',
+      state,
+    });
+  }, listenerSnapshot);
+  await expect(listener.locator('.lyric-stage .lyric-section')).toHaveCount(1);
+  await expect(
+    listener.locator('.lyric-stage [aria-current="true"]'),
+  ).toHaveCount(1);
+  const listenerLine = await listener
+    .locator('.lyric-stage [aria-current="true"] .lyric-primary')
+    .textContent();
+  expect(listenerLine).toBe(hostLine);
+
+  const standalone = await context.newPage();
+  await installTimingBrowserHarness(standalone);
+  await standalone.route(`**/s/${sharedSongId}`, (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: playbackPage(
+        sharedSongId,
+        { ...timedLyrics, lyricTiming: timedArtifact },
+        'fixture-nonce',
+        'http://127.0.0.1:4387',
+        '',
+      ),
+    }),
+  );
+  await standalone.goto(`/s/${sharedSongId}`);
+  await standalone
+    .locator('audio')
+    .evaluate((audio) => audio.dispatchEvent(new Event('loadedmetadata')));
+  await expect(
+    standalone.locator('#reveal-lines [aria-current="true"]'),
+  ).toHaveCount(1);
+  const standaloneLine = await standalone
+    .locator('#reveal-lines [aria-current="true"] .lyric-primary')
+    .textContent();
+  expect(standaloneLine).toBe(hostLine);
+
+  const hostDiagnostics = await timingDiagnostics(page);
+  const listenerDiagnostics = await timingDiagnostics(listener);
+  const standaloneDiagnostics = await timingDiagnostics(standalone);
+  const hostEvents = hostDiagnostics.map((diagnostic) => diagnostic.event);
+  for (const event of [
+    'room-waiting',
+    'share-waiting',
+    'host-artifact-receipt',
+    'host-source-validation',
+    'host-media-validation',
+    'host-map',
+    'room-ready',
+    'share-ready',
+  ])
+    expect(hostEvents).toContain(event);
+  const firstHostIndex = (event: string, after = -1) =>
+    hostEvents.findIndex(
+      (candidate, index) => index > after && candidate === event,
+    );
+  const roomWaitingIndex = firstHostIndex('room-waiting');
+  const shareWaitingIndex = firstHostIndex('share-waiting');
+  const receiptIndex = firstHostIndex(
+    'host-artifact-receipt',
+    Math.max(roomWaitingIndex, shareWaitingIndex),
+  );
+  const sourceIndex = firstHostIndex('host-source-validation', receiptIndex);
+  const mediaIndex = firstHostIndex('host-media-validation', sourceIndex);
+  const mappedIndex = firstHostIndex('host-map', mediaIndex);
+  const roomReadyIndex = firstHostIndex('room-ready', receiptIndex);
+  const shareReadyIndex = firstHostIndex('share-ready', receiptIndex);
+  expect([
+    roomWaitingIndex,
+    shareWaitingIndex,
+    receiptIndex,
+    sourceIndex,
+    mediaIndex,
+    mappedIndex,
+    roomReadyIndex,
+    shareReadyIndex,
+  ]).not.toContain(-1);
+  expect(receiptIndex).toBeGreaterThan(roomWaitingIndex);
+  expect(receiptIndex).toBeGreaterThan(shareWaitingIndex);
+  expect(sourceIndex).toBeGreaterThan(receiptIndex);
+  expect(mediaIndex).toBeGreaterThan(sourceIndex);
+  expect(mappedIndex).toBeGreaterThan(mediaIndex);
+  expect(roomReadyIndex).toBeGreaterThan(receiptIndex);
+  expect(shareReadyIndex).toBeGreaterThan(receiptIndex);
+  for (const event of [
+    'listener-artifact-receipt',
+    'listener-media-validation',
+    'listener-map',
+  ])
+    expect(listenerDiagnostics.map((diagnostic) => diagnostic.event)).toContain(
+      event,
+    );
+  expect(standaloneDiagnostics.map((diagnostic) => diagnostic.event)).toContain(
+    'shared-page-validation',
+  );
+  const safeFields = new Set([
+    'event',
+    'surface',
+    'reason',
+    'attempt',
+    'elapsedMs',
+    'deadlineMs',
+    'httpStatus',
+    'providerStatus',
+    'segmentCount',
+    'sectionCount',
+    'analyzedDurationSeconds',
+    'mediaDurationSeconds',
+  ]);
+  for (const diagnostic of [
+    ...hostDiagnostics,
+    ...listenerDiagnostics,
+    ...standaloneDiagnostics,
+  ])
+    expect(Object.keys(diagnostic).every((key) => safeFields.has(key))).toBe(
+      true,
+    );
+  const serializedDiagnostics = JSON.stringify([
+    hostDiagnostics,
+    listenerDiagnostics,
+    standaloneDiagnostics,
+  ]);
+  expect(serializedDiagnostics).not.toContain(fixtureToken);
+  expect(serializedDiagnostics).not.toContain('audio.example.test');
+  expect(serializedDiagnostics).not.toContain('Rain begins');
+  expect(serializedDiagnostics).not.toContain('AbCdEfGhIjKlMnOp');
 });
 
 test('a listener submits a request and resumes the same seat after reload', async ({

@@ -5,6 +5,15 @@ import { test } from 'vitest';
 import { COURTYARD_SCENE } from '../../src/worker/courtyard.ts';
 import { playbackPage } from '../../src/worker/playback-page.ts';
 import {
+  activeTimelineEntry,
+  buildSectionTimeline,
+  parseLyricSheet,
+} from '../../src/lyrics/lyric-sync.ts';
+import {
+  activePacedLine,
+  buildLinePacing,
+} from '../../src/lyrics/line-pacing.ts';
+import {
   createR2Storage,
   createShareHandler,
 } from '../../src/worker/sharing.ts';
@@ -171,6 +180,7 @@ class Element {
  * paraphrase of it.
  */
 async function playbackHarness(metadata, mediaDuration) {
+  const diagnostics = [];
   const elements = new Map([
     ['#audio', new Element()],
     ['#play', new Element()],
@@ -235,6 +245,11 @@ async function playbackHarness(metadata, mediaDuration) {
       return frames.length;
     },
     cancelAnimationFrame() {},
+    console: {
+      info(...args) {
+        diagnostics.push(JSON.parse(JSON.stringify(args)));
+      },
+    },
   });
   return {
     html,
@@ -244,6 +259,7 @@ async function playbackHarness(metadata, mediaDuration) {
     songData: JSON.parse(songData),
     lines: () => elements.get('#reveal-lines').children,
     timingNote: () => elements.get('.performance-timing').textContent,
+    diagnostics,
     async seekTo(seconds) {
       audio.currentTime = seconds;
       await audio.emit('timeupdate');
@@ -287,8 +303,16 @@ const TIMED_LYRICS = {
 
 test('a timed share follows its sections and never shows stale sung lines', async () => {
   const page = await playbackHarness(TIMED_LYRICS, 90);
+  const sheet = parseLyricSheet(TIMED_LYRICS);
+  const sharedTimeline = buildSectionTimeline(
+    sheet.sections,
+    TIMED_LYRICS.lyricTiming,
+  );
+  const sharedPacing = buildLinePacing(sheet.sections, sharedTimeline);
   assert.equal(page.songData.timeline.length, 4);
   assert.equal(page.songData.pacing.length, 4);
+  assert.deepEqual(page.songData.timeline, sharedTimeline);
+  assert.deepEqual(page.songData.pacing, sharedPacing);
   assert.equal(page.songData.expectedDurationSeconds, 90);
   assert.deepEqual(Object.keys(page.songData).sort(), [
     'expectedDurationSeconds',
@@ -305,6 +329,37 @@ test('a timed share follows its sections and never shows stale sung lines', asyn
     page.timingNote(),
     'Lines follow MiniMax sections · timing is approximate',
   );
+  assert.deepEqual(page.diagnostics, [
+    [
+      '[TIMING-DIAGNOSTIC]',
+      {
+        event: 'shared-page-validation',
+        surface: 'shared-page',
+        reason: 'duration-match',
+        segmentCount: 4,
+        sectionCount: 4,
+        analyzedDurationSeconds: 90,
+        mediaDurationSeconds: 90,
+      },
+    ],
+  ]);
+
+  for (const seconds of [1, 20, 39, 45, 60, 5, 95]) {
+    const timelineEntry = activeTimelineEntry(sharedTimeline, seconds);
+    const pacedLine = activePacedLine(sharedPacing, seconds);
+    assert.equal(
+      page.songData.timeline.find(
+        (entry) => entry.start <= seconds && seconds < entry.end,
+      )?.sectionIndex ?? null,
+      timelineEntry?.sectionIndex ?? null,
+    );
+    assert.equal(
+      page.songData.pacing.find(
+        (entry) => entry.start <= seconds && seconds < entry.end,
+      )?.lineIndexInSection ?? null,
+      pacedLine?.lineIndexInSection ?? null,
+    );
+  }
 
   await page.seekTo(1);
   assert.equal(page.lines().length, 1);
@@ -367,10 +422,26 @@ test('a timed share follows its sections and never shows stale sung lines', asyn
 test('a timed share falls back to the approximate reveal when the audio does not match', async () => {
   const page = await playbackHarness(TIMED_LYRICS, 140);
   await page.audio.emit('loadedmetadata');
+  assert.equal(page.diagnostics[0][1].reason, 'duration-mismatch');
+  await page.audio.emit('loadedmetadata');
+  assert.deepEqual(
+    page.diagnostics.map((diagnostic) => diagnostic[1].reason),
+    ['duration-mismatch', 'duration-mismatch'],
+  );
   assert.equal(page.timingNote(), 'Atmospheric reveal · timing is approximate');
   await page.seekTo(139);
   assert.equal(page.lines().length, page.songData.lines.length);
   assert.ok(page.lines().some((line) => !line.hidden));
+
+  page.audio.duration = 90;
+  await page.audio.emit('loadedmetadata');
+  assert.equal(page.diagnostics[2][1].reason, 'duration-match');
+  assert.equal(
+    page.timingNote(),
+    'Lines follow MiniMax sections · timing is approximate',
+  );
+  await page.seekTo(20);
+  assert.match(page.lines()[0].text, /Rain on the window/);
 });
 
 test('an untimed share serializes no timeline and reveals approximately', async () => {
@@ -380,6 +451,7 @@ test('an untimed share serializes no timeline and reveals approximately', async 
   assert.deepEqual(page.songData.sections, []);
   assert.equal(page.songData.expectedDurationSeconds, 0);
   await page.audio.emit('loadedmetadata');
+  assert.equal(page.diagnostics[0][1].reason, 'untimed');
   assert.equal(page.timingNote(), 'Atmospheric reveal · timing is approximate');
   await page.seekTo(99);
   assert.equal(page.lines().length, page.songData.lines.length);
