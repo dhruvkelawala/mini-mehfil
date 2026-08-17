@@ -3,7 +3,7 @@ import { cleanup, render, screen } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
 import { afterEach, describe, expect, test } from 'vitest';
 
-import { TimedSectionView } from '../../../src/client/host/App.tsx';
+import { App, TimedSectionView } from '../../../src/client/host/App.tsx';
 import {
   activePacedLine,
   buildLinePacing,
@@ -16,6 +16,11 @@ import {
 import { vocalGateSeconds } from '../../../src/client/host/vocal-onset.ts';
 
 afterEach(cleanup);
+
+test('renders the host shell with release pacing initialized', () => {
+  render(() => <App />);
+  expect(screen.getByLabelText(/MiniMax token/)).toBeTruthy();
+});
 
 describe('host timed lyric rendering', () => {
   test('holds sung lines then reveals the first spoken line from real pacing at gate cutover', async () => {

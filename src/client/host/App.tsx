@@ -171,9 +171,6 @@ export function App() {
   const activeEntry = createMemo(() =>
     activeTimelineEntry(sectionTimeline(), player.currentTime()),
   );
-  const activeLine = createMemo(() =>
-    activePacedLine(linePacing(), player.currentTime()),
-  );
   const firstVocalEntry = createMemo(() =>
     sectionTimeline()?.find(
       (entry) =>
@@ -198,6 +195,9 @@ export function App() {
   });
   const linePacing = createMemo(() =>
     buildLinePacing(lyricSheet().sections, sectionTimeline(), vocalRelease()),
+  );
+  const activeLine = createMemo(() =>
+    activePacedLine(linePacing(), player.currentTime()),
   );
   const activeSection = createMemo(() => {
     const index = activeEntry()?.sectionIndex;
