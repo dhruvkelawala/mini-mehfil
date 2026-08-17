@@ -50,6 +50,7 @@ function player(): PlayerController {
     currentTime: () => 0,
     source: () => '',
     shareReference: () => null,
+    timing: () => null,
     bindAudio: vi.fn(),
     load: vi.fn(() => Promise.resolve()),
     loadRoomSong: vi.fn(),

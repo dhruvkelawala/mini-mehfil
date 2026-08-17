@@ -1,5 +1,9 @@
 import { createSignal, getOwner, onCleanup } from 'solid-js';
 
+import {
+  normalizeLyricTiming,
+  type LyricTiming,
+} from '../../lyrics/lyric-sync.ts';
 import type { RoomSong } from '../../room/protocol.ts';
 import type { HostLyrics } from './generation-recovery.ts';
 import type { MediaDiagnostics } from './media-diagnostics.ts';
@@ -14,11 +18,17 @@ export interface PlayerController {
   currentTime: () => number;
   source: () => string;
   shareReference: () => string | null;
+  /**
+   * Section timing for the loaded recording, or `null` until the media element
+   * has confirmed its own duration agrees with the artifact's.
+   */
+  timing: () => LyricTiming | null;
   bindAudio(element: HTMLAudioElement): void;
   load(
     source: string,
     lyrics: HostLyrics,
     reference?: string | null,
+    timing?: unknown,
   ): Promise<void>;
   loadRoomSong(song: RoomSong, origin: string): void;
   syncRoomSong(song: RoomSong): void;
@@ -56,6 +66,10 @@ export function createPlayerController(
   const [currentTime, setCurrentTime] = createSignal(0);
   const [source, setSource] = createSignal('');
   const [shareReference, setShareReference] = createSignal<string | null>(null);
+  const [loadedTiming, setLoadedTiming] = createSignal<LyricTiming | null>(
+    null,
+  );
+  const [timingMatchesMedia, setTimingMatchesMedia] = createSignal(false);
   let audio: HTMLAudioElement | null = null;
   let objectUrl: string | null = null;
   let roomTimer: ReturnType<typeof setTimeout> | null = null;
@@ -86,6 +100,20 @@ export function createPlayerController(
       return false;
     }
   };
+  /**
+   * Section timings describe one specific recording. If the media element
+   * reports a materially different length, the file is not the one that was
+   * analyzed, so the timeline is discarded rather than stretched onto it.
+   */
+  const matchTimingToMedia = (mediaDuration: number) => {
+    const timing = loadedTiming();
+    if (!timing || !Number.isFinite(mediaDuration) || mediaDuration <= 0)
+      return setTimingMatchesMedia(false);
+    const tolerance = Math.max(1, mediaDuration * 0.02);
+    return setTimingMatchesMedia(
+      Math.abs(timing.durationSeconds - mediaDuration) <= tolerance,
+    );
+  };
   const clear = () => {
     releaseObjectUrl();
     if (roomTimer) clearTimeout(roomTimer);
@@ -104,6 +132,8 @@ export function createPlayerController(
     setCurrentTime(0);
     setSource('');
     setShareReference(null);
+    setLoadedTiming(null);
+    setTimingMatchesMedia(false);
     setTitle('Your song will appear here');
     setSubtitle('MiniMax Music 3');
   };
@@ -118,6 +148,7 @@ export function createPlayerController(
     currentTime,
     source,
     shareReference,
+    timing: () => (timingMatchesMedia() ? loadedTiming() : null),
     bindAudio(element) {
       audio = element;
       element.addEventListener('play', () => {
@@ -135,6 +166,7 @@ export function createPlayerController(
       element.addEventListener('loadedmetadata', () => {
         setDuration(Number.isFinite(element.duration) ? element.duration : 0);
         setCurrentTime(element.currentTime);
+        matchTimingToMedia(element.duration);
       });
       element.addEventListener('error', () => {
         diagnostics.recordFailure(
@@ -143,7 +175,7 @@ export function createPlayerController(
         );
       });
     },
-    async load(value, lyrics, reference = null) {
+    async load(value, lyrics, reference = null, timing = null) {
       releaseObjectUrl();
       const resolved = sourceUrl(value);
       objectUrl = resolved.disposable ? resolved.url : null;
@@ -155,12 +187,16 @@ export function createPlayerController(
       setTitle(lyrics.title || 'Your Mehfil recording');
       setSubtitle('Fresh from MiniMax Music 3');
       setShareReference(reference);
+      setLoadedTiming(normalizeLyricTiming(timing));
+      setTimingMatchesMedia(false);
       setReady(true);
       setEnded(false);
       await play();
     },
     loadRoomSong(song, origin) {
       releaseObjectUrl();
+      setLoadedTiming(null);
+      setTimingMatchesMedia(false);
       const url = `${origin}/s/${song.shareId}/audio`;
       if (audio && audio.src !== url) {
         audio.src = url;

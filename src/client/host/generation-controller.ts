@@ -216,8 +216,15 @@ export function createGenerationController({
       setShareUrl(null);
     }
     setCheckGenerationVisible(false);
-    if (!background) await player.load(source, pending.lyricSheet, reference);
-    if (!background) recovery.clear();
+    if (!background) {
+      await player.load(
+        source,
+        pending.lyricSheet,
+        reference,
+        result.lyric_timing,
+      );
+      recovery.clear();
+    }
     setGenerating(false);
     setBusy([]);
     setStatusWorking(true);

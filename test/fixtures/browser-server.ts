@@ -145,6 +145,7 @@ const sharedMetadata = {
   isLatinScript: false,
   lyricsNative: '[Verse]\nઆ સાંજ ધીમે\nમહેકે છે',
   lyricsRoman: '[Verse]\naa saanj dhime\nmaheke chhe',
+  lyricTiming: null,
   createdAt: new Date(0).toISOString(),
 };
 const shareStorage: ShareStorage = {

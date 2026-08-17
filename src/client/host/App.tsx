@@ -9,6 +9,12 @@ import {
   Show,
 } from 'solid-js';
 
+import {
+  activeTimelineEntry,
+  buildSectionTimeline,
+  parseLyricSheet,
+  type LyricLine,
+} from '../../lyrics/lyric-sync.ts';
 import type { LyricsSheet, SongRequest } from '../../room/protocol.ts';
 import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
 import {
@@ -42,6 +48,23 @@ const formatTime = (seconds: number) =>
   Number.isFinite(seconds)
     ? `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
     : '0:00';
+/**
+ * One rendered lyric line. Shared by the untimed reveal and both timed views so
+ * they cannot drift apart in markup.
+ */
+const LyricLineView = (props: { line: LyricLine; hidden?: boolean }) => (
+  <span
+    class={props.line.cue ? 'lyric-line lyric-cue' : 'lyric-line'}
+    hidden={props.hidden}
+  >
+    <Show when={!props.line.cue} fallback={props.line.primary}>
+      <span class="lyric-primary">{props.line.primary}</span>
+      <Show when={props.line.secondary}>
+        <span class="lyric-secondary">{props.line.secondary}</span>
+      </Show>
+    </Show>
+  </span>
+);
 const publicLyrics = (sheet: LyricsSheet): LyricsSheet => ({
   title: sheet.title,
   language: sheet.language,
@@ -76,23 +99,30 @@ export function App() {
   const activeLyrics = createMemo(
     () => room.currentSong()?.lyrics ?? generation.lyrics(),
   );
-  const lyricLines = createMemo(() => {
-    const sheet = activeLyrics();
-    if (!sheet) return [];
-    const roman = sheet.lyricsRoman.split('\n').filter((line) => line.trim());
-    const native = sheet.lyricsNative.split('\n').filter((line) => line.trim());
-    const useNative = !sheet.isLatinScript && native.length > 0;
-    return (useNative ? native : roman).map((primary, index) => {
-      const romanLine = roman[index] ?? '';
-      const cue = /^\[.+\]$/.test(romanLine || primary);
-      return {
-        cue,
-        primary: cue
-          ? (romanLine || primary).replace(/^\[(.+)\]$/, '$1')
-          : primary,
-        secondary: useNative && !cue && romanLine !== primary ? romanLine : '',
-      };
-    });
+  const lyricSheet = createMemo(() => parseLyricSheet(activeLyrics()));
+  const lyricLines = createMemo(() => lyricSheet().lines);
+  /**
+   * Non-null only when this recording's own section analysis maps onto the
+   * written sections. Everything below reads the media clock through it — no
+   * timers, no cursors — so seeking backwards is as correct as playing forward.
+   */
+  const sectionTimeline = createMemo(() =>
+    buildSectionTimeline(lyricSheet().sections, player.timing()),
+  );
+  const activeEntry = createMemo(() =>
+    activeTimelineEntry(sectionTimeline(), player.currentTime()),
+  );
+  const activeSection = createMemo(() => {
+    const index = activeEntry()?.sectionIndex;
+    return typeof index === 'number'
+      ? lyricSheet().sections.find((section) => section.index === index)
+      : undefined;
+  });
+  const restLabel = createMemo(() => {
+    const entry = activeEntry();
+    if (!entry || entry.sectionIndex !== null) return '';
+    if (entry.label === 'inst') return 'Instrumental';
+    return entry.label === 'silence' ? 'Pause' : '';
   });
   const shownSpoken = createMemo(() => {
     if (hasRevealed()) return Number.POSITIVE_INFINITY;
@@ -1000,46 +1030,86 @@ export function App() {
                 <span class="reveal-language" id="reveal-language">
                   {languageLabel()}
                 </span>
-                <Show when={!hasRevealed()}>
+                <Show when={sectionTimeline() || !hasRevealed()}>
                   <span class="performance-timing" id="performance-timing">
-                    Atmospheric reveal · timing is approximate
+                    {sectionTimeline()
+                      ? 'Section timing from MiniMax analysis'
+                      : 'Atmospheric reveal · timing is approximate'}
                   </span>
                 </Show>
                 <p class="reveal-lines" id="reveal-lines">
-                  <For each={lyricLines()}>
-                    {(line, index) => {
-                      const spokenBefore = () =>
-                        lyricLines()
-                          .slice(0, index())
-                          .filter((candidate) => !candidate.cue).length;
-                      const visible = () =>
-                        hasRevealed() ||
-                        (line.cue
-                          ? spokenBefore() ===
-                            lyricLines().filter((candidate) => !candidate.cue)
-                              .length
-                            ? shownSpoken() >= spokenBefore()
-                            : shownSpoken() > spokenBefore()
-                          : shownSpoken() >= spokenBefore() + 1);
-                      return (
-                        <span
-                          class={
-                            line.cue ? 'lyric-line lyric-cue' : 'lyric-line'
-                          }
-                          hidden={!visible()}
-                        >
-                          <Show when={!line.cue} fallback={line.primary}>
-                            <span class="lyric-primary">{line.primary}</span>
-                            <Show when={line.secondary}>
-                              <span class="lyric-secondary">
-                                {line.secondary}
+                  <Show
+                    when={sectionTimeline()}
+                    fallback={
+                      <For each={lyricLines()}>
+                        {(line, index) => {
+                          const spokenBefore = () =>
+                            lyricLines()
+                              .slice(0, index())
+                              .filter((candidate) => !candidate.cue).length;
+                          const visible = () =>
+                            hasRevealed() ||
+                            (line.cue
+                              ? spokenBefore() ===
+                                lyricLines().filter(
+                                  (candidate) => !candidate.cue,
+                                ).length
+                                ? shownSpoken() >= spokenBefore()
+                                : shownSpoken() > spokenBefore()
+                              : shownSpoken() >= spokenBefore() + 1);
+                          return (
+                            <LyricLineView line={line} hidden={!visible()} />
+                          );
+                        }}
+                      </For>
+                    }
+                  >
+                    <Show
+                      when={hasRevealed()}
+                      fallback={
+                        <Show
+                          when={activeSection()}
+                          fallback={
+                            <Show when={restLabel()}>
+                              <span class="lyric-line lyric-cue">
+                                {restLabel()}
                               </span>
                             </Show>
-                          </Show>
-                        </span>
-                      );
-                    }}
-                  </For>
+                          }
+                        >
+                          <span
+                            class="lyric-section lyric-section-current"
+                            aria-current="true"
+                          >
+                            <For each={activeSection()?.lines ?? []}>
+                              {(line) => <LyricLineView line={line} />}
+                            </For>
+                          </span>
+                        </Show>
+                      }
+                    >
+                      <For each={lyricSheet().sections}>
+                        {(section) => {
+                          const current = () =>
+                            activeEntry()?.sectionIndex === section.index;
+                          return (
+                            <span
+                              class={
+                                current()
+                                  ? 'lyric-section lyric-section-current'
+                                  : 'lyric-section'
+                              }
+                              aria-current={current() ? 'true' : undefined}
+                            >
+                              <For each={section.lines}>
+                                {(line) => <LyricLineView line={line} />}
+                              </For>
+                            </span>
+                          );
+                        }}
+                      </For>
+                    </Show>
+                  </Show>
                 </p>
               </div>
             </Show>

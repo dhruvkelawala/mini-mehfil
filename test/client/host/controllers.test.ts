@@ -10,7 +10,15 @@ import {
   type HostLyrics,
 } from '../../../src/client/host/generation-recovery.ts';
 import { createMediaDiagnostics } from '../../../src/client/host/media-diagnostics.ts';
-import type { PlayerController } from '../../../src/client/host/player-controller.ts';
+import {
+  createPlayerController,
+  type PlayerController,
+} from '../../../src/client/host/player-controller.ts';
+import {
+  activeTimelineEntry,
+  buildSectionTimeline,
+  parseLyricSheet,
+} from '../../../src/lyrics/lyric-sync.ts';
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>();
@@ -56,6 +64,7 @@ function fakePlayer(load = vi.fn(() => Promise.resolve())): PlayerController {
     currentTime: () => 0,
     source: () => '',
     shareReference: () => null,
+    timing: () => null,
     bindAudio: vi.fn(),
     load,
     loadRoomSong: vi.fn(),
@@ -163,5 +172,116 @@ describe('host generation modules', () => {
     expect(diagnostics.available()).toBe(false);
     expect(diagnostics.visible()).toBe(false);
     expect(diagnostics.report()).toBe('');
+  });
+});
+
+class FakeAudio {
+  readonly listeners = new Map<string, () => void>();
+  duration = 0;
+  currentTime = 0;
+  paused = true;
+  src = '';
+  addEventListener(type: string, listener: () => void) {
+    this.listeners.set(type, listener);
+  }
+  removeAttribute() {}
+  load() {}
+  pause() {}
+  play() {
+    this.paused = false;
+    return Promise.resolve();
+  }
+  emit(type: string) {
+    this.listeners.get(type)?.();
+  }
+}
+
+const SECTION_TIMING = {
+  version: 1,
+  mode: 'minimax-section-asr',
+  durationSeconds: 90,
+  segments: [
+    { start: 0, end: 12, label: 'intro' },
+    { start: 12, end: 40, label: 'verse' },
+    { start: 40, end: 52, label: 'inst' },
+    { start: 52, end: 90, label: 'chorus' },
+  ],
+};
+
+async function loadedPlayer(timing: unknown, mediaDuration: number) {
+  const audio = new FakeAudio();
+  const player = createPlayerController(createMediaDiagnostics());
+  player.bindAudio(audio as unknown as HTMLAudioElement);
+  await player.load('https://cdn.example/song.mp3', lyrics, null, timing);
+  audio.duration = mediaDuration;
+  audio.emit('loadedmetadata');
+  return { audio, player };
+}
+
+describe('host section timing', () => {
+  test('activates timed mode only when the media matches the analyzed length', async () => {
+    const cases: Array<[string, number, boolean]> = [
+      ['an exact match', 90, true],
+      ['drift inside the one second floor', 90.9, true],
+      ['drift inside two percent of a long track', 91.8, true],
+      ['drift past the two percent ceiling', 93, false],
+      ['a materially shorter file', 60, false],
+      ['a media element with no duration yet', Number.NaN, false],
+    ];
+    for (const [name, mediaDuration, expected] of cases) {
+      const { player } = await loadedPlayer(SECTION_TIMING, mediaDuration);
+      expect(Boolean(player.timing()), name).toBe(expected);
+    }
+  });
+
+  test('falls back to no timing for absent or out-of-contract artifacts', async () => {
+    for (const timing of [
+      undefined,
+      null,
+      { version: 2, mode: 'minimax-section-asr', durationSeconds: 90 },
+      { ...SECTION_TIMING, mode: 'guesswork' },
+    ]) {
+      const { player } = await loadedPlayer(timing, 90);
+      expect(player.timing()).toBeNull();
+      expect(buildSectionTimeline([], player.timing())).toBeNull();
+    }
+  });
+
+  test('selects the section the media clock is inside, forwards and backwards', async () => {
+    const { player } = await loadedPlayer(SECTION_TIMING, 90);
+    const sheet = parseLyricSheet({
+      isLatinScript: true,
+      lyricsNative: '',
+      lyricsRoman:
+        '[Intro]\nOoh\n[Verse]\nRain on the window\n[Inst]\n—\n[Chorus]\nSing it back',
+    });
+    const timeline = buildSectionTimeline(sheet.sections, player.timing());
+    const sectionAt = (time: number) =>
+      activeTimelineEntry(timeline, time)?.sectionIndex;
+
+    expect(sectionAt(0)).toBe(0);
+    expect(sectionAt(11.999)).toBe(0);
+    expect(sectionAt(12)).toBe(1);
+    expect(sectionAt(45)).toBe(2);
+    expect(sectionAt(52)).toBe(3);
+    expect(sectionAt(89.999)).toBe(3);
+    // A backward seek is a fresh lookup, never a rewound cursor.
+    expect(sectionAt(5)).toBe(0);
+    // Past the end of the analyzed audio nothing is active, so no stale
+    // section can linger on screen.
+    expect(activeTimelineEntry(timeline, 90)).toBeNull();
+  });
+
+  test('drops timing when a different recording is loaded or the player clears', async () => {
+    const { audio, player } = await loadedPlayer(SECTION_TIMING, 90);
+    expect(player.timing()).not.toBeNull();
+
+    player.clear();
+    expect(player.timing()).toBeNull();
+
+    await player.load('https://cdn.example/other.mp3', lyrics, null, undefined);
+    audio.duration = 90;
+    audio.emit('loadedmetadata');
+    expect(player.timing()).toBeNull();
   });
 });
