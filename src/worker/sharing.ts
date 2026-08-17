@@ -1,3 +1,7 @@
+import {
+  normalizeLyricTiming,
+  type LyricTiming,
+} from '../lyrics/lyric-sync.ts';
 import { base64Url, randomBase64Url } from '../room/primitives.ts';
 import { isRecord } from '../room/protocol.ts';
 import { constantTimeEqual, sha256 } from '../room/transport.ts';
@@ -18,6 +22,7 @@ const REPOSITORY_URL = 'https://github.com/dhruvkelawala/mini-mehfil';
 
 interface SongMetadata extends PlaybackSong {
   createdAt: string;
+  lyricTiming: LyricTiming | null;
 }
 
 interface GenerationJob {
@@ -29,6 +34,7 @@ interface GenerationJob {
   expiresAt: string;
   source?: string;
   traceId?: string;
+  lyricTiming?: LyricTiming;
   error?: { code: string; message: string };
 }
 
@@ -186,13 +192,28 @@ function validateMetadata(raw: FormDataEntryValue | null): SongMetadata {
     return entry;
   };
 
-  const metadata = {
+  // Absent or null timing is normal — most shares have none. Anything present
+  // but out of contract is as malformed as a missing title, and is rejected
+  // rather than silently dropped.
+  const lyricTiming =
+    value.lyricTiming === undefined || value.lyricTiming === null
+      ? null
+      : normalizeLyricTiming(value.lyricTiming);
+  if (
+    value.lyricTiming !== undefined &&
+    value.lyricTiming !== null &&
+    !lyricTiming
+  )
+    throw new Error('Invalid song details.');
+
+  const metadata: SongMetadata = {
     title: text('title', 120, true),
     language: text('language', 80, true),
     nativeScriptName: text('nativeScriptName', 80),
     isLatinScript: Boolean(value.isLatinScript),
     lyricsNative: text('lyricsNative', 5000, true),
     lyricsRoman: text('lyricsRoman', 5000, true),
+    lyricTiming,
     createdAt: new Date().toISOString(),
   };
   return metadata;
@@ -257,6 +278,8 @@ function validStoredJob(value: unknown, jobId: string): GenerationJob | null {
       /^[A-Za-z0-9._:-]{1,200}$/.test(value.traceId)
     )
       record.traceId = value.traceId;
+    const lyricTiming = normalizeLyricTiming(value.lyricTiming);
+    if (lyricTiming) record.lyricTiming = lyricTiming;
   }
   if (value.status === 'failed') {
     const error = isRecord(value.error) ? value.error : null;
@@ -307,6 +330,8 @@ function terminalJob(
       const traceId = input.traceId.trim();
       if (/^[A-Za-z0-9._:-]{1,200}$/.test(traceId)) base.traceId = traceId;
     }
+    const lyricTiming = normalizeLyricTiming(input.lyricTiming);
+    if (lyricTiming) base.lyricTiming = lyricTiming;
     return base;
   }
   if (input.status === 'failed') {
@@ -335,6 +360,8 @@ function sameTerminal(left: GenerationJob, right: GenerationJob): boolean {
     left.status === right.status &&
     left.source === right.source &&
     left.traceId === right.traceId &&
+    JSON.stringify(left.lyricTiming ?? null) ===
+      JSON.stringify(right.lyricTiming ?? null) &&
     left.error?.code === right.error?.code &&
     left.error?.message === right.error?.message
   );
@@ -460,6 +487,9 @@ export function createR2Storage(bucket: R2Bucket): ShareStorage {
           isLatinScript: Boolean(value.isLatinScript),
           lyricsNative: String(value.lyricsNative),
           lyricsRoman: String(value.lyricsRoman),
+          // Shares written before section analysis existed have no timing
+          // field, and stored bytes are re-validated rather than trusted.
+          lyricTiming: normalizeLyricTiming(value.lyricTiming),
           createdAt: String(value.createdAt),
         };
       } catch {

@@ -1,3 +1,9 @@
+import {
+  buildSectionTimeline,
+  normalizeLyricTiming,
+  parseLyricSheet,
+  type LyricTiming,
+} from '../lyrics/lyric-sync.ts';
 import { COURTYARD_SCENE } from './courtyard.ts';
 
 const EXTERNAL_LINK_ICON =
@@ -20,6 +26,12 @@ export interface PlaybackSong {
   isLatinScript: boolean;
   lyricsNative: string;
   lyricsRoman: string;
+  /**
+   * Section timing for this exact recording, or `null`/absent. Shares stored
+   * before section analysis existed have no field at all, so every reader must
+   * re-normalize rather than trust the shape.
+   */
+  lyricTiming?: LyricTiming | null;
 }
 
 function escapeHtml(value: unknown): string {

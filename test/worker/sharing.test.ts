@@ -307,6 +307,152 @@ test('upload to playback round trip preserves title, language, and both lyric sc
   );
 });
 
+const TIMED_SONG = {
+  ...SONG,
+  lyricTiming: {
+    version: 1,
+    mode: 'minimax-section-asr',
+    durationSeconds: 90,
+    segments: [
+      { start: 0, end: 12, label: 'intro' },
+      { start: 12, end: 90, label: 'verse' },
+    ],
+  },
+};
+
+test('stores and re-serves only the normalized timing artifact', async () => {
+  const storage = memoryStorage();
+  const handle = createShareHandler({
+    storage,
+    idGenerator: () => ID,
+    uploadSecret: SECRET,
+  });
+  const upload = await handle(
+    uploadRequest(new Uint8Array([73, 68, 51]), {
+      ...TIMED_SONG,
+      lyricTiming: {
+        ...TIMED_SONG.lyricTiming,
+        traceId: 'trace-5678',
+        coverFeatureId: 'feature-1234',
+        segments: TIMED_SONG.lyricTiming.segments.map((segment) => ({
+          ...segment,
+          confidence: 0.91,
+          text: 'raw ASR transcript that must never be stored',
+        })),
+      },
+      formattedLyrics: 'raw ASR transcript that must never be stored',
+    }),
+  );
+  assert.equal(upload.status, 201);
+
+  const stored = await storage.getMetadata(ID);
+  assert.deepEqual(stored.lyricTiming, TIMED_SONG.lyricTiming);
+  const serialized = JSON.stringify(stored);
+  assert.doesNotMatch(serialized, /raw ASR transcript/);
+  assert.doesNotMatch(serialized, /trace-5678|feature-1234|confidence/);
+  assert.equal(stored.formattedLyrics, undefined);
+
+  const html = await (
+    await handle(new Request(`https://share.example/s/${ID}`))
+  ).text();
+  assert.doesNotMatch(html, /raw ASR transcript|trace-5678|feature-1234/);
+});
+
+test('rejects malformed timing as firmly as any other malformed detail', async () => {
+  const malformed = {
+    'a non-object': 'timed',
+    'an unknown mode': { ...TIMED_SONG.lyricTiming, mode: 'guesswork' },
+    'a future version': { ...TIMED_SONG.lyricTiming, version: 2 },
+    'an unknown label': {
+      ...TIMED_SONG.lyricTiming,
+      segments: [{ start: 0, end: 12, label: 'karaoke' }],
+    },
+    'overlapping segments': {
+      ...TIMED_SONG.lyricTiming,
+      segments: [
+        { start: 0, end: 12, label: 'intro' },
+        { start: 11, end: 90, label: 'verse' },
+      ],
+    },
+    'segments past the duration': {
+      ...TIMED_SONG.lyricTiming,
+      segments: [{ start: 0, end: 91, label: 'verse' }],
+    },
+  };
+  for (const [name, lyricTiming] of Object.entries(malformed)) {
+    const handle = createShareHandler({
+      storage: memoryStorage(),
+      idGenerator: () => ID,
+      uploadSecret: SECRET,
+    });
+    const response = await handle(
+      uploadRequest(new Uint8Array([73, 68, 51]), { ...SONG, lyricTiming }),
+    );
+    assert.equal(response.status, 400, name);
+    assert.match((await response.json()).error, /Invalid song details/, name);
+  }
+});
+
+test('accepts shares with absent or null timing exactly as before', async () => {
+  for (const metadata of [SONG, { ...SONG, lyricTiming: null }]) {
+    const storage = memoryStorage();
+    const handle = createShareHandler({
+      storage,
+      idGenerator: () => ID,
+      uploadSecret: SECRET,
+    });
+    const response = await handle(
+      uploadRequest(new Uint8Array([73, 68, 51]), metadata),
+    );
+    assert.equal(response.status, 201);
+    assert.equal((await storage.getMetadata(ID)).lyricTiming, null);
+  }
+});
+
+test('renders a share stored before section timing existed', async () => {
+  const legacy = { ...SONG, createdAt: '2026-08-01T00:00:00.000Z' };
+  const handle = createShareHandler({
+    storage: {
+      ...memoryStorage(),
+      async getMetadata() {
+        return legacy;
+      },
+    },
+    uploadSecret: SECRET,
+  });
+  const page = await handle(new Request(`https://share.example/s/${ID}`));
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  assert.match(html, /આ સાંજ ધીમે/);
+  assert.match(html, /Atmospheric reveal · timing is approximate/);
+});
+
+test('maximum lyrics plus a full timeline fit the metadata size limit', () => {
+  const oversized = JSON.stringify({
+    title: 'x'.repeat(120),
+    language: 'x'.repeat(80),
+    nativeScriptName: 'x'.repeat(80),
+    isLatinScript: false,
+    lyricsNative: 'ધ'.repeat(5000),
+    lyricsRoman: 'x'.repeat(5000),
+    lyricTiming: {
+      version: 1,
+      mode: 'minimax-section-asr',
+      durationSeconds: 359.999,
+      segments: Array.from({ length: 64 }, (_, index) => ({
+        start: index * 5.625 + 0.125,
+        end: (index + 1) * 5.625,
+        label: 'chorus',
+      })),
+    },
+  });
+  // validateMetadata rejects anything over 16 KB of JSON.
+  assert.ok(
+    oversized.length <= 16 * 1024,
+    `metadata JSON was ${oversized.length} characters`,
+  );
+});
+
 test('rejects audio over 10 MB', async () => {
   const handle = createShareHandler({
     storage: memoryStorage(),
