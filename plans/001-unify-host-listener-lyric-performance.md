@@ -151,12 +151,12 @@ Repository conventions to match:
 
 | Purpose | Command | Expected on success |
 |---|---|---|
-| Install | `npm install` | exit 0; dependencies installed with Node 24+ |
-| Focused unit tests | `npx vitest run test/client/shared/lyric-performance.test.tsx test/client/listener/App.test.tsx` | all focused tests pass |
-| Focused browser parity | `npx playwright test test/browser/characterization.spec.ts --grep "host and listener share the live lyric performance"` | desktop and mobile pass |
-| Typecheck | `npm run typecheck` | exit 0, no TypeScript errors |
-| Full checks | `npm run check` | formatting, lint, types, unit/Worker tests, builds, bundle budgets, and Worker dry-run pass |
-| Full browser suite | `npm run test:browser` | all Chromium desktop/mobile tests pass |
+| Install | `pnpm install` | exit 0; dependencies installed with Node 24+ |
+| Focused unit tests | `pnpm exec vitest run test/client/shared/lyric-performance.test.tsx test/client/listener/App.test.tsx` | all focused tests pass |
+| Focused browser parity | `pnpm exec playwright test test/browser/characterization.spec.ts --grep "host and listener share the live lyric performance"` | desktop and mobile pass |
+| Typecheck | `pnpm run typecheck` | exit 0, no TypeScript errors |
+| Full checks | `pnpm run check` | formatting, lint, types, unit/Worker tests, builds, bundle budgets, and Worker dry-run pass |
+| Full browser suite | `pnpm run test:browser` | all Chromium desktop/mobile tests pass |
 
 ## Suggested executor toolkit
 
@@ -233,7 +233,7 @@ must fail against the duplicated implementations for a meaningful parity
 reason, not because setup cannot find either surface.
 
 **Verify**:
-`npx vitest run test/client/shared/lyric-performance.test.tsx && npx playwright test test/browser/characterization.spec.ts --grep "host and listener share the live lyric performance" --project=desktop-chromium`
+`pnpm exec vitest run test/client/shared/lyric-performance.test.tsx && pnpm exec playwright test test/browser/characterization.spec.ts --grep "host and listener share the live lyric performance" --project=desktop-chromium`
 Result: the new assertions fail on presentation/parity before implementation; all
 test setup reaches both lyric surfaces.
 
@@ -261,7 +261,7 @@ controller. The timeline module must remain platform-independent and contain
 no DOM or Solid code.
 
 **Verify**:
-`npx vitest run test/client/shared/lyric-performance.test.tsx`
+`pnpm exec vitest run test/client/shared/lyric-performance.test.tsx`
 Result: all parser and frame-selection cases pass.
 
 ### Step 3: Build a shared visual lyric component
@@ -292,7 +292,7 @@ assert semantic output: headings/labels, cue text, native primary text,
 romanized secondary text, current-frame changes, and full transcript content.
 
 **Verify**:
-`npx vitest run test/client/shared/lyric-performance.test.tsx && npm run typecheck`
+`pnpm exec vitest run test/client/shared/lyric-performance.test.tsx && pnpm run typecheck`
 Result: all shared component tests pass and TypeScript reports no errors.
 
 ### Step 4: Replace both bespoke render paths without changing role controls
@@ -321,7 +321,7 @@ desktop and mobile sizes. The test must assert behavior and shared semantic
 structure, not brittle pixel coordinates.
 
 **Verify**:
-`npx playwright test test/browser/characterization.spec.ts --grep "host and listener share the live lyric performance"`
+`pnpm exec playwright test test/browser/characterization.spec.ts --grep "host and listener share the live lyric performance"`
 Result: desktop and mobile pass with matching cue, primary, and secondary content.
 
 ### Step 5: Polish and verify the integrated surfaces
@@ -347,8 +347,8 @@ document why the shared stage itself cannot own it.
 
 **Verify**:
 
-1. `npm run check`: all repository checks and both bundle budgets pass.
-2. `npm run test:browser`: the complete desktop/mobile browser suite passes.
+1. `pnpm run check`: all repository checks and both bundle budgets pass.
+2. `pnpm run test:browser`: the complete desktop/mobile browser suite passes.
 3. `git diff --name-only`: only files listed under **In scope** are present.
 
 ## Test plan
@@ -383,8 +383,8 @@ All conditions must hold:
       controls remain intact.
 - [ ] Listener request, room activity, audio enablement, progress, and lyric
       clock behavior remain intact.
-- [ ] `npm run check` exits 0 without raising host/listener bundle budgets.
-- [ ] `npm run test:browser` exits 0.
+- [ ] `pnpm run check` exits 0 without raising host/listener bundle budgets.
+- [ ] `pnpm run test:browser` exits 0.
 - [ ] `git diff --name-only` contains no files outside the in-scope list.
 - [ ] No runtime dependency was added.
 - [ ] `plans/README.md` marks Plan 001 DONE after implementation review.

@@ -994,7 +994,7 @@ export function createServer(options: ServerOptions = {}): http.Server {
 export function assertHostBuild(staticRoot = DEFAULT_STATIC_ROOT): void {
   if (!fs.existsSync(path.join(staticRoot, 'index.html'))) {
     throw new Error(
-      'Host build is missing. Run `npm run build:host` before `npm start`.',
+      'Host build is missing. Run `pnpm run build:host` before `pnpm start`.',
     );
   }
 }

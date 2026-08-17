@@ -139,12 +139,12 @@ Primary references:
 
 | Purpose | Command | Expected on success |
 | --- | --- | --- |
-| Install app | `npm ci` | exit 0 |
-| App typecheck | `npm run typecheck` | exit 0, no errors |
-| App tests | `npm test` | all unit and Worker tests pass |
-| App browser tests | `npm run test:browser` | all Chromium projects pass |
-| Full app gate | `npm run check` | exit 0; if the known space-containing-path lint bug recurs, run against an exact space-free archive and record both results |
-| No-cost media parity | `npm run test:sync-replay -- /absolute/path/to/fixture.mp3` | one generation/timing/share request; host/listener/shared samples agree; proof video written |
+| Install app | `pnpm install --frozen-lockfile` | exit 0 |
+| App typecheck | `pnpm run typecheck` | exit 0, no errors |
+| App tests | `pnpm test` | all unit and Worker tests pass |
+| App browser tests | `pnpm run test:browser` | all Chromium projects pass |
+| Full app gate | `pnpm run check` | exit 0; if the known space-containing-path lint bug recurs, run against an exact space-free archive and record both results |
+| No-cost media parity | `pnpm run test:sync-replay -- /absolute/path/to/fixture.mp3` | one generation/timing/share request; host/listener/shared samples agree; proof video written |
 | Service unit tests | `python -m unittest discover -s services/local-timing/tests` | exit 0 without loading or downloading an ML model |
 | Service benchmark | `services/local-timing/bin/benchmark /absolute/path/to/manifest.json` | machine-readable report written to an ignored NVMe result directory |
 
@@ -384,7 +384,7 @@ Record a proof video from the no-cost saved-audio path. No test may read a real
 MiniMax token or issue a paid generation request.
 
 **Verify**: focused service/Node/browser tests pass, then run
-`npm run test:sync-replay` and inspect the machine assertions and privacy audit.
+`pnpm run test:sync-replay` and inspect the machine assertions and privacy audit.
 
 ### Step 7: Deploy safely and run a controlled operator gate
 
@@ -423,7 +423,7 @@ Run the complete app and service gates. Review every changed file for scope and
 run a structured autoreview. Do not merge or enable production from the
 executor session.
 
-**Verify**: `npm run check`, `npm run test:browser`, service unit/integration
+**Verify**: `pnpm run check`, `pnpm run test:browser`, service unit/integration
 tests, benchmark thresholds, overload test, sync replay, privacy scan, and
 autoreview all pass. Git status contains only planned files.
 
@@ -479,7 +479,7 @@ autoreview all pass. Git status contains only planned files.
 - [ ] All large model/cache/temp writes remain on the NVMe and cleanup is proven.
 - [ ] Diagnostics remain present and contain no token, signed URL, lyrics,
       transcript, prompt, payload, room credential, or participant data.
-- [ ] `npm run check`, `npm run test:browser`, `npm run test:sync-replay`, service
+- [ ] `pnpm run check`, `pnpm run test:browser`, `pnpm run test:sync-replay`, service
       tests, benchmark, overload test, privacy scan, and autoreview pass.
 - [ ] README, PRODUCT, service runbook, environment reference, and ADR match the
       implementation and include a one-switch rollback to MiniMax-only timing.
