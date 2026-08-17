@@ -49,11 +49,23 @@ function fakePlayer(load = vi.fn(() => Promise.resolve())): PlayerController {
   return {
     ready: () => false,
     playing: () => false,
+    ended: () => false,
     title: () => '',
     subtitle: () => '',
+    duration: () => 0,
+    currentTime: () => 0,
+    source: () => '',
+    shareReference: () => null,
     bindAudio: vi.fn(),
     load,
+    loadRoomSong: vi.fn(),
+    syncRoomSong: vi.fn(),
+    clear: vi.fn(),
+    play: vi.fn(() => Promise.resolve(true)),
+    pause: vi.fn(),
     toggle: vi.fn(() => Promise.resolve()),
+    seek: vi.fn(),
+    replay: vi.fn(() => Promise.resolve()),
   };
 }
 

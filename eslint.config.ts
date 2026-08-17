@@ -122,4 +122,16 @@ export default tseslint.config(
       },
     },
   },
+  {
+    files: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
+    rules: { '@typescript-eslint/require-await': 'off' },
+  },
+  {
+    ...tseslint.configs.disableTypeChecked,
+    files: ['test/server/server.test.ts', 'test/worker/sharing.test.ts'],
+    rules: {
+      ...tseslint.configs.disableTypeChecked.rules,
+      '@typescript-eslint/ban-ts-comment': 'off',
+    },
+  },
 );
