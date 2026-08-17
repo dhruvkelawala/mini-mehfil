@@ -6,5 +6,10 @@
     "allowImportingTsExtensions": true,
     "types": ["vitest/globals"]
   },
-  "include": ["src/room/**/*.ts", "test/room/**/*.ts"]
+  "include": [
+    "src/room/**/*.ts",
+    "test/room/**/*.ts",
+    "src/lyrics/**/*.ts",
+    "test/lyrics/**/*.ts"
+  ]
 }
