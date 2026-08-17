@@ -2,7 +2,10 @@
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { test } from 'vitest';
-import { COURTYARD_SCENE } from '../../src/worker/courtyard.ts';
+import {
+  FOLK_MODERN_BACKGROUND_PATH,
+  FOLK_MODERN_SCENE,
+} from '../../src/worker/courtyard.ts';
 import { playbackPage } from '../../src/worker/playback-page.ts';
 import {
   activeTimelineEntry,
@@ -108,7 +111,7 @@ function uploadRequest(
   return uploadFormRequest(form, headers);
 }
 
-test('shared playback uses the exact courtyard artwork from the app', () => {
+test('shared playback uses the folk-modern background from the app', () => {
   const html = playbackPage(
     ID,
     SONG,
@@ -116,7 +119,10 @@ test('shared playback uses the exact courtyard artwork from the app', () => {
     'https://share.example',
     'https://share.example/preview.png',
   );
-  assert.equal(html.includes(COURTYARD_SCENE), true);
+  assert.equal(html.includes(FOLK_MODERN_SCENE), true);
+  assert.match(html, /rel="preload" as="image"/);
+  assert.equal(html.includes(FOLK_MODERN_BACKGROUND_PATH), true);
+  assert.doesNotMatch(html, /viewBox="0 0 1600 1000"/);
 });
 
 test('shared playback safely embeds titles containing slashes and newlines', () => {
@@ -459,13 +465,18 @@ test('upload to playback round trip preserves title, language, and both lyric sc
     page.headers.get('content-security-policy'),
     /default-src 'none'/,
   );
+  assert.match(
+    page.headers.get('content-security-policy'),
+    /img-src 'self' data:/,
+  );
   assert.match(html, /Aloopuri Khavsa/);
   assert.match(html, /Gujarati · Gujarati/);
   assert.match(html, /આ સાંજ ધીમે/);
   assert.match(html, /aa saanj dhime/);
   assert.match(html, /Make your own song/);
   assert.match(html, /class="scene"/);
-  assert.match(html, /viewBox="0 0 1600 1000"/);
+  assert.match(html, /backgrounds\/04-folk-modern-dusk\.png/);
+  assert.doesNotMatch(html, /viewBox="0 0 1600 1000"/);
   assert.match(html, /class="performance"/);
   assert.match(html, /class="player-shell"/);
   assert.match(html, /class="record-label">M</);
@@ -1220,6 +1231,10 @@ test('room join page applies strict headers and supports HEAD', async () => {
     assert.match(
       response.headers.get('content-security-policy'),
       /media-src 'self' blob:/,
+    );
+    assert.match(
+      response.headers.get('content-security-policy'),
+      /img-src 'self' data:/,
     );
     assert.match(
       response.headers.get('content-security-policy'),
