@@ -95,7 +95,7 @@ const app = createServer({
   shareBaseUrl: 'https://rooms.example.test',
   publicBaseUrl: 'https://public.example.test',
   shareSecret: 'fixture-secret',
-  staticRoot: resolve('public'),
+  staticRoot: resolve('dist/host'),
 });
 const appHandler = app.listeners('request')[0];
 if (typeof appHandler !== 'function')
@@ -122,7 +122,12 @@ const handleRequest = async (
   const pathname = new URL(request.url ?? '/', 'http://fixture').pathname;
   if (pathname.startsWith('/assets/')) {
     try {
-      const body = await readFile(resolve(listenerRoot, pathname.slice(1)));
+      let body: Buffer;
+      try {
+        body = await readFile(resolve(listenerRoot, pathname.slice(1)));
+      } catch {
+        body = await readFile(resolve('dist/host', pathname.slice(1)));
+      }
       const type =
         extname(pathname) === '.css' ? 'text/css' : 'text/javascript';
       response.writeHead(200, { 'content-type': type });

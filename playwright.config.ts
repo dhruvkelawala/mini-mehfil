@@ -13,7 +13,7 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: `node test/fixtures/browser-server.ts --port ${port}`,
+    command: `npm run build && node test/fixtures/browser-server.ts --port ${port}`,
     port,
     reuseExistingServer: false,
     timeout: 15_000,

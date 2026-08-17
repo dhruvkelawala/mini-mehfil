@@ -10,6 +10,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [solid()],
     root: resolve(`src/client/${surface}`),
+    publicDir: false,
     build: {
       outDir: resolve(`dist/${surface}`),
       emptyOutDir: true,
