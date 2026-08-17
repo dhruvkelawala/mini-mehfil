@@ -67,24 +67,37 @@ describe('MiniMax timing analysis adapter', () => {
     });
   });
 
-  test('a provider status failure is classified from its status message', async () => {
+  // Real provider replies observed on 2026-08-17. A non-zero base_resp status
+  // is a failure even though the HTTP status is 200.
+  test.each([
+    {
+      name: 'an unrecognized status falls back to the numeric class',
+      status_code: 1000,
+      status_msg: 'unknown error, download audio_url failed',
+      expected: { reason: 'provider-http', retryable: true },
+    },
+    {
+      name: 'an authentication message is terminal',
+      status_code: 1004,
+      status_msg:
+        "login fail: Please carry the API secret key in the 'Authorization' field",
+      expected: { reason: 'authentication', retryable: false },
+    },
+    {
+      name: 'a busy message stays retryable',
+      status_code: 1002,
+      status_msg: 'server is busy, please try again',
+      expected: { reason: 'provider-busy', retryable: true },
+    },
+  ])('$name', async ({ status_code, status_msg, expected }) => {
     const outcome = await analyzeMiniMaxTiming(
       input,
       options(() =>
         Promise.resolve(
-          Response.json({
-            base_resp: {
-              status_code: 1000,
-              status_msg: 'unknown error, download audio_url failed',
-            },
-          }),
+          Response.json({ base_resp: { status_code, status_msg } }),
         ),
       ),
     );
-    expect(outcome).toEqual({
-      status: 'unavailable',
-      reason: 'provider-http',
-      retryable: true,
-    });
+    expect(outcome).toEqual({ status: 'unavailable', ...expected });
   });
 });
