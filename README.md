@@ -1,17 +1,49 @@
 # Mini Mehfil
 
-A tiny local song room for [MiniMax Music 3](https://platform.minimax.io/docs/api-reference/music-generation), inspired by the immersive single-room feeling of [saloon.wtf](https://saloon.wtf/). The name is a pun on MiniMax: a _mehfil_ is an intimate gathering for music, and this one is mini.
+> Write the words. Set the mood. Let them sing.
 
-Type a few keywords in any language — `Aloopuri Khavsa`, `monsoon in Mumbai`, `first day of a new job` — and a lyricist model writes a full structured song in the language it detects, then MiniMax Music 3 records it in front of you. Lyrics stay hidden unless you press the button that says _don't press me_.
+**Mini Mehfil turns a few words in any language into a finished song with
+[MiniMax Music 3](https://platform.minimax.io/docs/api-reference/music-generation).**
+It is a tiny, atmospheric song room rather than another API playground: bring
+your own MiniMax key, describe the song, and watch the lyrics and recording come
+together in one courtyard.
 
-## Run
+[Try Mini Mehfil](https://minimehfil.wtf) ·
+[Get a MiniMax API key](https://platform.minimax.io/)
+
+_A mehfil is an intimate gathering for music. This one is mini._
+
+## What it does
+
+- **Writes in your language.** Enter a thought such as `monsoon in Mumbai`,
+  `Aloopuri Khavsa`, or `first day of a new job`. The lyricist detects the
+  language and writes a structured song in native script, with romanization for
+  you to follow.
+- **Records a complete song.** MiniMax Music 3 turns those lyrics and your
+  optional vibe into a playable track.
+- **Keeps the experience simple.** One page, one key, and one flow: write →
+  record → listen.
+- **Lets you keep or share the result.** Download the recording, create an
+  expiring public link, or open a live mehfil where friends can request songs
+  and listen together.
+- **Keeps the stack focused.** The host and listener are built with Solid and
+  TypeScript. `solid-js` is the only browser runtime library; the rest of the
+  toolchain exists to build, type-check, test, and deploy the app.
+
+## Quick start
+
+You need [Node.js 24 or newer](https://nodejs.org/) and a
+[MiniMax API key](https://platform.minimax.io/).
 
 ```bash
+git clone https://github.com/dhruvkelawala/mini-mehfil.git
+cd mini-mehfil
 npm install
 npm run dev
 ```
 
-Then open [http://127.0.0.1:4173](http://127.0.0.1:4173) and paste your MiniMax API key ([get one here](https://platform.minimax.io/)). Mini Mehfil requires Node 24 or newer.
+Open [http://127.0.0.1:4173](http://127.0.0.1:4173), paste your key, and start
+the mehfil.
 
 To build and serve the production app locally:
 
@@ -22,18 +54,43 @@ npm start
 
 ## Cost
 
-Bring your own key. Lyrics cost roughly a tenth of a cent (MiniMax M3 text model); each recorded song is about **$0.15** (MiniMax Music 3). Both calls use the same key.
+Mini Mehfil is bring-your-own-key. Writing the lyrics costs roughly **$0.001**
+and recording a song costs roughly **$0.15** at current MiniMax pricing. The
+same key is used for both calls, and a paid recording begins only after you
+explicitly start it.
 
 ## Privacy
 
-- Your token lives only in the browser field. It is sent to the local Node proxy per request, forwarded to `api.minimax.io`, and never logged or stored.
-- Lyrics and prompts stay local unless you explicitly share a finished song. A share stores the MP3 and its lyric sheet in the configured R2 bucket until its lifecycle rule expires them.
-- Generated MiniMax audio URLs expire after 24 hours; use **Save** to download tracks you want to keep. If the optional share Worker is configured, **Share** copies a production `/s/…` courtyard link after an explicit click.
-- Hosted deployments should configure the Worker so a finished recording can be recovered when iOS suspends the page or drops the original response. Recovery stores only a private 24-hour job checkpoint; it never stores the MiniMax token, prompt, or lyrics.
+- Your MiniMax key stays in the browser field. It is sent to the local proxy for
+  each request, forwarded to `api.minimax.io`, and never logged or stored.
+- Your prompt and lyrics are sent to MiniMax to write and record the song, but
+  Mini Mehfil does not log or permanently store them. They enter the optional
+  sharing service only when you explicitly share a finished song or record it
+  for a live room.
+- The current tab may temporarily retain one pending job ID and lyric sheet so a
+  paid recording can recover after a refresh or iOS suspension. It never retains
+  your key, prompt, production request, audio URL, or diagnostics.
+- MiniMax audio URLs expire after 24 hours. Use **Save** for anything you want
+  to keep.
 
-## Sharing and lifecycle-safe recovery
+## Live mehfils
 
-Deploy the Cloudflare Worker described in [`share/README.md`](share/README.md), configure the same server-only upload secret on both sides, then start the app:
+With the optional sharing Worker configured, a host can press **Open this
+mehfil to friends** and send the listener link. Guests need no account, API key,
+or installation. They can request songs and listen together while the host
+controls the queue and playback.
+
+Accepting a request never spends money. Only the host's explicit **Record**
+action starts generation, and every generation uses the host's MiniMax key.
+Rooms are transient; the public URL contains only an eight-character room code,
+while the separate host credential remains in that browser tab.
+
+## Sharing and hosted deployments
+
+Local generation works without any additional services. For expiring share
+links, live rooms, and lifecycle-safe recovery on hosted deployments, deploy the
+Cloudflare Worker in [`share/`](share/README.md), then run the production app
+with:
 
 ```bash
 MEHFIL_SHARE_URL=https://mini-mehfil-share.example.workers.dev \
@@ -41,35 +98,43 @@ MEHFIL_SHARE_SECRET=replace-with-a-long-random-secret \
 npm start
 ```
 
-Both variables are optional for local-only use, where synchronous generation continues to work normally. They are required together for lifecycle-safe hosted deployments: before the paid MiniMax call, the server atomically claims the browser's job ID in the Worker; it checkpoints the finished source before replying. A suspended or refreshed tab checks that same job instead of paying for another generation. If the Worker is not configured and the browser loses the response, the app explains that this deployment cannot recover it.
+Both variables are optional for local-only use and must be configured together
+when sharing is enabled. The browser never receives the Worker secret, and the
+Worker never receives the MiniMax key.
 
-On Vercel, `vercel.mjs` reads `MEHFIL_SHARE_URL` at build time and reverse-proxies `/s/:path*` to that Worker without changing the browser URL. Set `MEHFIL_PUBLIC_URL` to the canonical HTTPS origin (currently `https://minimehfil.wtf`) so preview and production deployments copy the same public link. Vercel's `VERCEL_PROJECT_PRODUCTION_URL` is used only as a fallback; keep automatic system environment variables enabled.
+For Vercel, set the same server-only variables plus:
 
-The Vercel deployment gives the paid request a five-minute function window and stops the upstream generation after four minutes so there is time to save its final status. A claimed job that still has no final status after five minutes becomes a stable failed checkpoint; it never remains pending indefinitely and is never automatically charged again.
+```bash
+MEHFIL_PUBLIC_URL=https://minimehfil.wtf
+```
 
-Sharing remains opt-in for each finished song. The proxy resolves a completed private job, downloads its audio, and uploads the MP3 plus the explicitly supplied lyric sheet through an authenticated, idempotent request. The browser never contacts the Worker directly, and neither the MiniMax token nor the Worker secret is exposed to it. In the tab, `sessionStorage` retains one versioned pending job ID and lyric sheet for recovery; it does not retain the token, idea, vibe, request payload, audio URL, or diagnostics.
+`vercel.mjs` reverse-proxies `/s/…` links to the Worker while keeping the public
+URL on your chosen origin. The hosted flow checkpoints a completed recording
+before replying, allowing the browser to recover it without paying for the same
+generation twice after a refresh or mobile suspension.
 
-## Optional live rooms
-
-The same sharing configuration enables live mehfils. Press **Open this mehfil to friends** locally and copy the public listener link. Listeners join without an account, API key, or installation, submit song requests, and hear finished recordings together. The host accepts and orders requests, then explicitly presses **Record** before any paid generation begins; all generation costs remain on the host's MiniMax key.
-
-Rooms are transient and host-controlled. The host's player is authoritative: play,
-pause, and seeking are synchronized to listeners, whose room page shows the
-current native-script lyric and romanization as the song advances. The public
-join URL contains only an eight-character room code. The separate host
-credential stays in that browser tab's `sessionStorage`, while the MiniMax key
-continues to travel only between the host browser and local proxy.
+See [`share/README.md`](share/README.md) for Worker, R2, Durable Object, expiry,
+and deployment configuration.
 
 ## How it works
 
-- `src/client/host/` — the Solid host surface and typed controllers. The courtyard scene remains a single hand-built SVG.
-- `src/server/` — the typed Node proxy and provider boundary.
-- `src/room/` — platform-independent room protocol, state transitions, and transport ports.
-- `src/worker/` — the Cloudflare Worker, room router, and thin `MehfilRoom` Durable Object adapter.
+1. `POST /api/write-lyrics` asks MiniMax M3, through its Anthropic-compatible
+   endpoint, to turn the idea into structured native-script lyrics and
+   romanization.
+2. `POST /api/generate` sends the native lyrics and an expanded production
+   prompt to MiniMax Music 3.
+3. The browser plays the returned recording and lets the listener reveal the
+   lyrics, download the audio, or explicitly share it.
 
-The project intentionally keeps dependencies focused. `solid-js` is the only
-browser runtime library; Vite, TypeScript, Vitest, Playwright, ESLint, Prettier,
-and Wrangler provide build and verification tooling.
+The code is split around those boundaries:
+
+- `src/client/host/` — the Solid host surface and typed controllers. The
+  courtyard remains a single hand-built SVG.
+- `src/server/` — the typed Node proxy and provider boundary.
+- `src/room/` — the platform-independent room protocol, state transitions, and
+  transport ports.
+- `src/worker/` — the Cloudflare Worker, room router, and thin `MehfilRoom`
+  Durable Object adapter.
 
 ## Test
 
