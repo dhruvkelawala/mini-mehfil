@@ -7,7 +7,12 @@ never generates music, and never sees the host's MiniMax key.
 
 ## Deploy
 
-From this directory, with Wrangler 4.36 or newer authenticated:
+Install dependencies from the repository root, then use the pinned Wrangler
+tooling. Dependencies are allowed when they deepen a module, provide a platform
+SDK, or enforce build/test quality; runtime dependencies remain small and
+audited, with `solid-js` the only browser runtime library.
+
+From this directory, with Wrangler authenticated:
 
 ```bash
 npx wrangler r2 bucket create mini-mehfil-shares
@@ -28,13 +33,13 @@ The Durable Object path is deliberately explicit:
 
 ```text
 wrangler.jsonc: ROOMS binding -> MehfilRoom
-worker.mjs: compose sharing and room routers
-rooms.mjs: room HTTP routes and Durable Object namespace adapter
-mehfil-room.mjs: exported Durable Object lifecycle class
-room-transport.mjs: authentication, sockets, persistence, and expiry
-room-state.mjs: pure room state transitions and participant projections
-room-client.mjs: listener browser behavior
-room-page.mjs: listener HTML and CSS shell
+src/worker/index.ts: compose sharing and room routers
+src/worker/rooms.ts: room HTTP routes and Durable Object namespace adapter
+src/worker/mehfil-room.ts: exported Durable Object lifecycle class
+src/room/transport.ts: authentication, sockets, persistence, and expiry
+src/room/state.ts: pure room state transitions and participant projections
+src/client/listener/: Solid listener UI and socket controller
+src/worker/room-page.ts: external-asset listener HTML shell
 ```
 
 `createDurableRoomDirectory()` is the only implementation that knows how to
@@ -113,6 +118,7 @@ npm start
 
    Expect `206 Partial Content`, `Accept-Ranges: bytes`, and a matching
    `Content-Range` header.
+
 4. Run `npx wrangler r2 bucket lifecycle list mini-mehfil-shares` and verify the
    expiration rules cover `shares/` and retain `jobs/` no longer than one day. For a non-production expiration
    smoke test, temporarily use a short lifecycle, wait for R2's lifecycle window,

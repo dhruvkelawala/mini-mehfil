@@ -5,9 +5,36 @@
   "description": "Mini Mehfil — a tiny local song room for MiniMax Music 3",
   "scripts": {
     "start": "node server.js",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint --max-warnings 0 eslint.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.tools.json",
     "test": "node --test"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=24"
+  },
+  "dependencies": {
+    "solid-js": "^1.9.14"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.21.3",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
+    "@solidjs/testing-library": "^0.8.10",
+    "@types/node": "^24.13.3",
+    "concurrently": "^10.0.5",
+    "eslint": "^10.8.1",
+    "eslint-plugin-solid": "^0.15.0",
+    "globals": "^17.11.0",
+    "jiti": "^2.7.0",
+    "jsdom": "^30.0.1",
+    "prettier": "^3.9.6",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.67.0",
+    "vite": "^8.2.1",
+    "vite-plugin-solid": "^2.11.14",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.123.0"
   }
 }
