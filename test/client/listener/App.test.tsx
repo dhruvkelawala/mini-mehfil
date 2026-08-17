@@ -52,7 +52,8 @@ describe('listener app', () => {
     expect(connect).toHaveBeenCalled();
   });
 
-  test('renders synchronized native and romanized lyrics', () => {
+  test('renders one untimed primary line and diagnoses the untimed map', () => {
+    const diagnostic = vi.spyOn(console, 'info').mockImplementation(() => {});
     const controller = listenerController({
       hostPresent: true,
       listenerCount: 1,
@@ -81,6 +82,20 @@ describe('listener app', () => {
     expect(screen.getByText('बारिश की रात')).toBeTruthy();
     expect(screen.getByText('Baarish ki raat')).toBeTruthy();
     expect(screen.getByText('Pre-Chorus 2')).toBeTruthy();
+    expect(
+      document.querySelectorAll('.lyric-stage > .lyric-primary'),
+    ).toHaveLength(1);
+    expect(diagnostic).toHaveBeenCalledWith(
+      '[TIMING-DIAGNOSTIC]',
+      expect.objectContaining({
+        event: 'listener-map',
+        surface: 'listener',
+        reason: 'untimed',
+        segmentCount: 0,
+        sectionCount: 0,
+      }),
+    );
+    diagnostic.mockRestore();
   });
 
   test('uses the host timeline and line rules through forward and backward seeks', async () => {

@@ -98,7 +98,7 @@ export function App(props: {
     emitTimingDiagnostic({
       event: 'listener-map',
       surface: 'listener',
-      reason: timeline ? 'mapped' : 'weak-map',
+      reason: timeline ? 'mapped' : timing ? 'weak-map' : 'untimed',
       segmentCount: timing?.segments.length ?? 0,
       sectionCount:
         timeline?.filter((entry) => entry.sectionIndex !== null).length ?? 0,
