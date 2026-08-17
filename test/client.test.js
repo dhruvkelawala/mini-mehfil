@@ -405,7 +405,7 @@ test('host player publishes authoritative room playback', () => {
   assert.match(controlled, /currentHostShareId\(\) === song\.shareId/);
   assert.match(playback, /playback\.changedAt/);
   assert.match(playback, /roomPlaybackPositionMs/);
-  assert.match(playback, /audio\.play\(\)/);
+  assert.match(playback, /attemptPlayback\('room-sync'\)/);
   assert.match(playback, /audio\.pause\(\)/);
   assert.match(app, /type: 'playback-updated'/);
   assert.match(app, /status: audio\.paused \? 'paused' : 'playing'/);

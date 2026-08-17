@@ -976,7 +976,7 @@ function applyHostRoomPlayback(song) {
     } else {
       audio.currentTime = desired;
     }
-    if (playback.status === 'playing') audio.play().catch(() => {});
+    if (playback.status === 'playing') void attemptPlayback('room-sync');
     else audio.pause();
   };
 
