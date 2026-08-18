@@ -316,7 +316,7 @@ test('a timed share follows its sections and never shows stale sung lines', asyn
   ]);
 
   // Before loadedmetadata the page is honest about being approximate.
-  assert.match(page.html, /Atmospheric reveal · timing is approximate/);
+  assert.match(page.html, /Atmospheric reveal · not synchronized/);
   await page.audio.emit('loadedmetadata');
   assert.equal(
     page.timingNote(),
@@ -344,7 +344,7 @@ test('a timed share follows its sections and never shows stale sung lines', asyn
   assert.equal(page.lines().length, 1);
   assert.equal(
     page.lines()[0].className,
-    'lyric-section lyric-section-current',
+    'lyric-section lyric-section-current lyric-focus',
   );
   assert.match(page.lines()[0].text, /Intro/);
   assert.match(page.lines()[0].text, /Ooh/);
@@ -356,27 +356,22 @@ test('a timed share follows its sections and never shows stale sung lines', asyn
     page.lines()[0].children[1].attributes.get('aria-current'),
     'true',
   );
-  assert.doesNotMatch(page.lines()[0].text, /Rain on the window/);
+  assert.match(page.lines()[0].text, /Rain on the window/);
 
   await page.seekTo(20);
   assert.match(page.lines()[0].text, /Rain on the window/);
-  assert.doesNotMatch(page.lines()[0].text, /Ooh/);
+  assert.match(page.lines()[0].text, /Ooh/);
   const renderedVerse = page.lines()[0];
   assert.equal(
-    renderedVerse.children[1].className,
+    renderedVerse.children[2].className,
     'lyric-line lyric-line-current',
   );
   assert.equal(
-    renderedVerse.children[2].className,
-    'lyric-line lyric-line-upcoming',
+    renderedVerse.children[3].className,
+    'lyric-line lyric-context lyric-context-next',
   );
   await page.seekTo(39);
-  assert.equal(
-    page.lines()[0],
-    renderedVerse,
-    'line emphasis moves without replacing the aria-live section',
-  );
-  assert.equal(page.lines()[0].children[1].className, 'lyric-line');
+  assert.notEqual(page.lines()[0], renderedVerse);
   assert.equal(
     page.lines()[0].children[2].className,
     'lyric-line lyric-line-current',
@@ -404,10 +399,10 @@ test('a timed share falls back to the approximate reveal when the audio does not
   assert.equal(page.timingNote(), 'Atmospheric reveal · timing is approximate');
   // Re-validating the same mismatch keeps the approximate reveal.
   await page.audio.emit('loadedmetadata');
-  assert.equal(page.timingNote(), 'Atmospheric reveal · timing is approximate');
+  assert.equal(page.timingNote(), 'Atmospheric reveal · not synchronized');
   await page.seekTo(139);
-  assert.equal(page.lines().length, page.songData.lines.length);
-  assert.ok(page.lines().some((line) => !line.hidden));
+  assert.equal(page.lines().length, page.songData.sections.length);
+  assert.ok(page.lines().every((line) => !line.hidden));
 
   page.audio.duration = 90;
   await page.audio.emit('loadedmetadata');
@@ -423,13 +418,15 @@ test('an untimed share serializes no timeline and reveals approximately', async 
   const page = await playbackHarness(SONG, 100);
   assert.equal(page.songData.timeline, null);
   assert.equal('pacing' in page.songData, false);
-  assert.deepEqual(page.songData.sections, []);
+  assert.equal(page.songData.sections.length, 1);
   assert.equal(page.songData.expectedDurationSeconds, 0);
   await page.audio.emit('loadedmetadata');
-  assert.equal(page.timingNote(), 'Atmospheric reveal · timing is approximate');
+  assert.equal(page.timingNote(), 'Atmospheric reveal · not synchronized');
   await page.seekTo(99);
-  assert.equal(page.lines().length, page.songData.lines.length);
-  assert.ok(page.lines().every((line) => !line.className.includes('section')));
+  assert.equal(page.lines().length, 1);
+  assert.equal(page.lines()[0].className, 'lyric-section');
+  assert.match(page.lines()[0].text, /Verse/);
+  assert.match(page.lines()[0].text, /આ સાંજ ધીમે/);
 });
 
 test('upload to playback round trip preserves title, language, and both lyric scripts', async () => {
@@ -622,7 +619,7 @@ test('renders a share stored before section timing existed', async () => {
   assert.equal(page.status, 200);
   const html = await page.text();
   assert.match(html, /આ સાંજ ધીમે/);
-  assert.match(html, /Atmospheric reveal · timing is approximate/);
+  assert.match(html, /Atmospheric reveal · not synchronized/);
 });
 
 test('maximum lyrics plus a full timeline fit the metadata size limit', () => {

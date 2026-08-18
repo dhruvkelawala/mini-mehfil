@@ -80,7 +80,7 @@ export function PerformanceTimingCopy(props: {
         ? 'Analyzing MiniMax sections · music is ready'
         : props.timed
           ? 'Lines follow MiniMax sections · timing is approximate'
-          : 'Atmospheric reveal · timing is approximate'}
+          : 'Atmospheric reveal · not synchronized'}
     </span>
   );
 }

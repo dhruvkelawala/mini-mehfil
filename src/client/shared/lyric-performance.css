@@ -1,19 +1,20 @@
 .lyric-performance {
   --lyric-accent: var(--amber, #e6a653);
-  width: min(720px, 100%);
+  width: min(820px, 100%);
   margin: 24px auto 0;
-  padding: clamp(20px, 4vw, 32px);
-  border-block: 1px solid rgba(230, 166, 83, 0.34);
+  padding: 25px clamp(22px, 5vw, 52px) 30px;
+  border-block: 1px solid rgba(230, 166, 83, 0.38);
   border-radius: 2px;
   color: var(--ink, #f9edda);
   background: linear-gradient(
     90deg,
-    rgba(7, 27, 25, 0.3),
-    rgba(18, 36, 32, 0.88) 14%,
-    rgba(48, 31, 24, 0.84) 50%,
-    rgba(18, 36, 32, 0.88) 86%,
-    rgba(7, 27, 25, 0.3)
+    rgba(7, 27, 25, 0.08),
+    rgba(12, 36, 32, 0.8) 14%,
+    rgba(51, 31, 23, 0.76) 50%,
+    rgba(12, 36, 32, 0.8) 86%,
+    rgba(7, 27, 25, 0.08)
   );
+  box-shadow: 0 26px 64px rgba(3, 15, 14, 0.22);
   text-align: center;
 }
 
@@ -24,58 +25,48 @@
 }
 
 .lyric-performance__title {
-  max-width: 24ch;
+  max-width: 22ch;
   margin: 0;
-  color: var(--lyric-accent);
+  color: #f1b45e;
   font:
-    700 clamp(1.2rem, 2.6vw, 1.55rem) / 1.2 'Iowan Old Style',
+    750 clamp(1.35rem, 2.5vw, 1.85rem) / 1.2 'Iowan Old Style',
     Georgia,
     serif;
-  letter-spacing: -0.015em;
-  text-wrap: balance;
+  letter-spacing: -0.018em;
   overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 
 .lyric-performance__language {
   margin: 0;
-  color: #e9c27f;
-  font-size: 0.625rem;
+  color: #f0cd91;
+  font-size: 0.64rem;
   font-weight: 800;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.13em;
   text-transform: uppercase;
 }
 
 .lyric-performance__status {
-  margin-top: 6px;
+  margin-top: 7px;
 }
 
 .lyric-performance .performance-timing {
   display: block;
   margin: 0;
   color: #dfcbb5;
-  font-size: 0.625rem;
-  font-style: italic;
-  letter-spacing: 0.03em;
+  font:
+    italic 0.72rem/1.4 'Iowan Old Style',
+    Georgia,
+    serif;
+  letter-spacing: 0.025em;
 }
 
 .lyric-performance__body {
-  margin-top: clamp(16px, 3vw, 24px);
+  margin-top: 18px;
   font-family: 'Iowan Old Style', Georgia, serif;
 }
 
-.lyric-performance__live {
-  min-height: 128px;
-  display: grid;
-  align-content: center;
-}
-
-.lyric-performance__frame {
-  display: grid;
-  justify-items: center;
-}
-
 .lyric-performance .lyric-line,
-.lyric-performance .lyric-section,
 .lyric-performance .lyric-primary,
 .lyric-performance .lyric-secondary {
   display: block;
@@ -83,113 +74,111 @@
 
 .lyric-performance .lyric-line {
   margin: 0;
-  color: rgba(249, 237, 218, 0.78);
-  opacity: 0.72;
-  transition:
-    color 0.35s,
-    opacity 0.35s,
-    text-shadow 0.35s,
-    transform 0.35s;
-}
-
-.lyric-performance .lyric-line + .lyric-line {
-  margin-top: 0.25em;
-}
-
-.lyric-performance .lyric-line-current {
-  opacity: 1;
-  text-shadow: 0 4px 22px rgba(249, 237, 218, 0.24);
-  transform: scale(1.012);
-}
-
-.lyric-performance .lyric-line-upcoming {
-  opacity: 0.42;
-}
-
-.lyric-performance .lyric-line[hidden] {
-  display: none;
-}
-
-.lyric-performance .lyric-line:not([hidden]) {
-  animation: lyric-performance-line-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-.lyric-performance .lyric-cue {
-  min-height: 0;
-  margin-block: 0 0.7em;
-  color: var(--lyric-accent);
-  font:
-    800 0.625rem/1.2 'Avenir Next',
-    'Gill Sans',
-    sans-serif;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  opacity: 1;
+  color: var(--ink, #f9edda);
 }
 
 .lyric-performance .lyric-primary {
-  max-width: 28ch;
-  color: #fff8ec;
-  font-size: clamp(1.7rem, 4.5vw, 2.7rem);
-  font-weight: 700;
-  line-height: 1.2;
-  text-wrap: balance;
+  font-weight: 650;
+  line-height: 1.35;
   overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 
 .lyric-performance .lyric-secondary {
-  max-width: 44ch;
-  margin: 0.35em auto 0;
-  color: #dfcbb5;
-  font-size: clamp(0.88rem, 1.8vw, 1rem);
+  margin-top: 0.25em;
+  color: #dbc6ae;
+  font-size: 0.72em;
   font-style: italic;
   line-height: 1.4;
-  text-wrap: balance;
   overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 
-.lyric-performance .lyric-section {
-  padding: 0.4em 0.65em;
-  border-radius: 8px;
-  transition:
-    background 0.25s,
-    box-shadow 0.25s,
-    opacity 0.25s;
+.lyric-performance__focus {
+  min-height: 264px;
+  display: grid;
+  align-content: center;
+  place-items: center;
 }
 
-.lyric-performance .lyric-section + .lyric-section {
-  margin-top: 0.8em;
+.lyric-performance__focus-frame {
+  display: grid;
+  justify-items: center;
 }
 
-.lyric-performance .lyric-section-current {
-  background: rgba(230, 166, 83, 0.09);
-  box-shadow: inset 0 0 0 1px rgba(230, 166, 83, 0.18);
+.lyric-performance__section-cue,
+.lyric-performance__section h3 {
+  margin: 0;
+  color: var(--lyric-accent);
+  font:
+    800 0.64rem/1.2 'Avenir Next',
+    'Gill Sans',
+    sans-serif;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
 }
 
-.lyric-performance__transcript {
-  max-height: max(140px, min(52svh, 430px, calc(100svh - 340px)));
-  padding-inline: 4px;
+.lyric-performance__focus-frame > .lyric-performance__section-cue {
+  margin-bottom: 18px;
+}
+
+.lyric-performance__current {
+  margin: 15px 0;
+}
+
+.lyric-performance__current .lyric-line {
+  color: #fff8ec;
+  font-size: clamp(1.72rem, 4vw, 2.7rem);
+  text-shadow: 0 5px 25px rgba(249, 237, 218, 0.23);
+}
+
+.lyric-performance__context {
+  max-width: 34rem;
+  font-size: clamp(0.94rem, 1.6vw, 1.12rem);
+  opacity: 0.68;
+}
+
+.lyric-performance__context--next {
+  opacity: 0.66;
+}
+
+.lyric-performance__atmospheric {
+  max-height: 310px;
+  padding: 2px 5px 12px;
   overflow-y: auto;
-  scrollbar-width: thin;
   scrollbar-color: rgba(230, 166, 83, 0.55) transparent;
+  scrollbar-width: thin;
+  scroll-behavior: smooth;
 }
 
-.lyric-performance__transcript::-webkit-scrollbar {
+.lyric-performance__atmospheric::-webkit-scrollbar {
   width: 5px;
 }
 
-.lyric-performance__transcript::-webkit-scrollbar-thumb {
+.lyric-performance__atmospheric::-webkit-scrollbar-thumb {
   border-radius: 3px;
   background: rgba(230, 166, 83, 0.55);
 }
 
-.lyric-performance--transcript .lyric-primary {
-  font-size: clamp(1.1rem, 2.4vw, 1.55rem);
-  line-height: 1.5;
+.lyric-performance__section {
+  text-align: center;
 }
 
-.lyric-performance--transcript .lyric-secondary {
-  font-size: 0.8em;
+.lyric-performance__section + .lyric-performance__section {
+  margin-top: 23px;
+}
+
+.lyric-performance__section h3 {
+  margin-bottom: 10px;
+}
+
+.lyric-performance__section .lyric-line {
+  font-size: clamp(1.05rem, 2.1vw, 1.4rem);
+  animation: lyric-performance-line-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.lyric-performance__section .lyric-line + .lyric-line {
+  margin-top: 13px;
 }
 
 .lyric-performance__empty {
@@ -208,19 +197,19 @@
 @media (min-width: 700px) and (max-height: 800px) {
   .lyric-performance {
     margin-top: 12px;
-    padding: 14px 22px 16px;
+    padding-block: 16px 20px;
   }
 
   .lyric-performance__body {
-    margin-top: 10px;
+    margin-top: 12px;
   }
 
-  .lyric-performance__live {
-    min-height: 72px;
+  .lyric-performance__focus {
+    min-height: 190px;
   }
 
-  .lyric-performance .lyric-primary {
-    font-size: clamp(1.55rem, 3.2vw, 2.25rem);
+  .lyric-performance__atmospheric {
+    max-height: max(120px, calc(100svh - 500px));
   }
 }
 
@@ -230,11 +219,11 @@
     padding: 18px 14px 20px;
   }
 
-  .lyric-performance__live {
-    min-height: 112px;
+  .lyric-performance__focus {
+    min-height: 245px;
   }
 
-  .lyric-performance .lyric-primary {
+  .lyric-performance__current .lyric-line {
     font-size: clamp(1.55rem, 8vw, 2.2rem);
   }
 }
@@ -248,11 +237,11 @@
     margin-top: 10px;
   }
 
-  .lyric-performance__live {
-    min-height: 82px;
+  .lyric-performance__focus {
+    min-height: 150px;
   }
 
-  .lyric-performance__transcript {
+  .lyric-performance__atmospheric {
     max-height: max(88px, calc(100svh - 302px));
   }
 }
@@ -263,6 +252,7 @@
   .lyric-performance *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
 }

@@ -111,6 +111,19 @@ textarea {
   text-align: center;
   text-shadow: 0 5px 24px rgba(26, 25, 18, 0.32);
 }
+.identity.has-song h1 {
+  font-size: clamp(54px, 7vw, 92px);
+}
+.identity.has-song .mini {
+  margin-bottom: 0.35em;
+}
+.identity.has-song .tagline {
+  display: none;
+}
+.identity.has-song .status {
+  margin-block: 4px 8px;
+  font-size: 13px;
+}
 .identity h1 {
   margin: 0;
   font:
@@ -286,7 +299,7 @@ textarea {
   padding: 10px 16px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 34px;
-  background: rgba(122, 54, 45, 0.96);
+  background: rgba(21, 63, 56, 0.95);
   transform: translateX(-50%);
 }
 .record {

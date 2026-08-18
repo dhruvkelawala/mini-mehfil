@@ -121,6 +121,13 @@ export function App(props: {
                 currentTime={controller.currentTime()}
                 duration={controller.duration()}
                 mode="live"
+                status={
+                  <span class="performance-timing">
+                    {sectionTimeline()
+                      ? 'Lines follow MiniMax sections · timing is approximate'
+                      : 'Atmospheric reveal · not synchronized'}
+                  </span>
+                }
               />
             )}
           </Show>

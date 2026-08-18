@@ -1,6 +1,15 @@
-import { createMemo, For, Match, Show, Switch, type JSX } from 'solid-js';
+import {
+  createEffect,
+  createMemo,
+  For,
+  Match,
+  Show,
+  Switch,
+  type JSX,
+} from 'solid-js';
 
-import { LyricLineView, TimedSectionView } from '../lyrics/timed-lyrics.tsx';
+import { LyricLineView } from '../lyrics/timed-lyrics.tsx';
+import type { LyricLine, LyricSection } from '../../lyrics/lyric-sync.ts';
 import {
   buildLyricLinePacing,
   lyricFrameAt,
@@ -23,14 +32,42 @@ export interface LyricPerformanceProps {
   status?: JSX.Element;
 }
 
-const activeSectionIndex = (frame: LyricFrame): number | null => {
-  if (frame.kind === 'line' || frame.kind === 'section')
-    return frame.section.index;
-  return null;
-};
+interface SpokenLyric {
+  line: LyricLine;
+  section: LyricSection;
+  lineIndexInSection: number;
+}
+
+function cueForSection(section: LyricSection): string {
+  return section.lines.find((line) => line.cue)?.primary ?? section.tag ?? '';
+}
+
+function approximateShownCount(
+  spokenCount: number,
+  currentTime: number,
+  duration: number,
+): number {
+  if (!spokenCount) return 0;
+  const clock = Number.isFinite(currentTime) ? Math.max(0, currentTime) : 0;
+  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+  if (!safeDuration) return 1;
+  const progress = Math.min(clock / (safeDuration * 0.9), 1);
+  return Math.max(1, Math.min(spokenCount, Math.ceil(progress * spokenCount)));
+}
 
 /** One lyric presentation shared by the host performance and listener room. */
 export function LyricPerformance(props: LyricPerformanceProps) {
+  let atmosphericScroller: HTMLDivElement | undefined;
+  const spoken = createMemo<SpokenLyric[]>(() =>
+    props.timeline.sheet.sections.flatMap((section) =>
+      section.lines.flatMap((line, lineIndexInSection) =>
+        line.cue ? [] : [{ line, section, lineIndexInSection }],
+      ),
+    ),
+  );
+  const timed = createMemo(
+    () => props.mode === 'live' && Boolean(props.timeline.entries),
+  );
   const linePacing = createMemo(() =>
     buildLyricLinePacing(props.timeline, props.firstVocalRelease),
   );
@@ -42,13 +79,54 @@ export function LyricPerformance(props: LyricPerformanceProps) {
       linePacing(),
     ),
   );
+  const activeSpokenIndex = createMemo(() => {
+    if (props.holdLines) return -1;
+    const current = frame();
+    if (current.kind === 'line')
+      return spoken().findIndex((entry) => entry.line === current.line);
+    if (current.kind !== 'section' || !current.activeLine) return -1;
+    return spoken().findIndex(
+      (entry) =>
+        entry.section.index === current.activeLine?.sectionIndex &&
+        entry.lineIndexInSection === current.activeLine.lineIndexInSection,
+    );
+  });
+  const shownSpokenCount = createMemo(() =>
+    props.mode === 'transcript'
+      ? spoken().length
+      : approximateShownCount(
+          spoken().length,
+          props.currentTime,
+          props.duration,
+        ),
+  );
+  createEffect(() => {
+    if (timed()) return;
+    shownSpokenCount();
+    queueMicrotask(() => {
+      if (!atmosphericScroller) return;
+      if (typeof atmosphericScroller.scrollTo === 'function') {
+        atmosphericScroller.scrollTo({
+          top: atmosphericScroller.scrollHeight,
+          behavior: 'smooth',
+        });
+      } else atmosphericScroller.scrollTop = atmosphericScroller.scrollHeight;
+    });
+  });
+
+  const focusedFrame = () => {
+    if (props.holdLines) return undefined;
+    const index = activeSpokenIndex();
+    return index >= 0 ? spoken()[index] : undefined;
+  };
 
   return (
     <section
       id={props.id}
       classList={{
         'lyric-performance': true,
-        'lyric-performance--live': props.mode === 'live',
+        'lyric-performance--timed': timed(),
+        'lyric-performance--atmospheric': !timed(),
         'lyric-performance--transcript': props.mode === 'transcript',
       }}
       aria-label={`${props.title} lyric performance`}
@@ -61,11 +139,10 @@ export function LyricPerformance(props: LyricPerformanceProps) {
         <div class="lyric-performance__status">{props.status}</div>
       </Show>
 
-      <Show
-        when={props.mode === 'transcript'}
-        fallback={
+      <Switch>
+        <Match when={timed()}>
           <div
-            class="lyric-performance__body lyric-performance__live"
+            class="lyric-performance__body lyric-performance__focus"
             aria-live="polite"
             aria-atomic="true"
           >
@@ -74,33 +151,34 @@ export function LyricPerformance(props: LyricPerformanceProps) {
                 <span class="lyric-performance__empty" aria-hidden="true" />
               }
             >
-              <Match
-                when={
-                  frame().kind === 'line'
-                    ? (frame() as Extract<LyricFrame, { kind: 'line' }>)
-                    : undefined
-                }
-              >
-                {(current) => (
-                  <div class="lyric-performance__frame">
-                    <Show when={current().cue}>
-                      <p class="lyric-line lyric-cue">{current().cue}</p>
-                    </Show>
-                    <p
-                      class="lyric-line lyric-line-current"
-                      aria-current="true"
-                    >
-                      <span class="lyric-primary">
-                        {current().line.primary}
-                      </span>
-                      <Show when={current().line.secondary}>
-                        <span class="lyric-secondary">
-                          {current().line.secondary}
-                        </span>
+              <Match when={focusedFrame()}>
+                {(current) => {
+                  const index = () => activeSpokenIndex();
+                  return (
+                    <div class="lyric-performance__focus-frame lyric-section lyric-section-current">
+                      <p class="lyric-performance__section-cue lyric-cue">
+                        {cueForSection(current().section)}
+                      </p>
+                      <Show when={spoken()[index() - 1]?.line}>
+                        {(line) => (
+                          <div class="lyric-performance__context lyric-performance__context--previous">
+                            <LyricLineView line={line()} />
+                          </div>
+                        )}
                       </Show>
-                    </p>
-                  </div>
-                )}
+                      <div class="lyric-performance__current">
+                        <LyricLineView line={current().line} current />
+                      </div>
+                      <Show when={spoken()[index() + 1]?.line}>
+                        {(line) => (
+                          <div class="lyric-performance__context lyric-performance__context--next">
+                            <LyricLineView line={line()} />
+                          </div>
+                        )}
+                      </Show>
+                    </div>
+                  );
+                }}
               </Match>
               <Match
                 when={
@@ -110,11 +188,9 @@ export function LyricPerformance(props: LyricPerformanceProps) {
                 }
               >
                 {(current) => (
-                  <TimedSectionView
-                    section={current().section}
-                    activeLine={current().activeLine}
-                    holdLines={Boolean(props.holdLines)}
-                  />
+                  <p class="lyric-performance__section-cue lyric-cue">
+                    {cueForSection(current().section)}
+                  </p>
                 )}
               </Match>
               <Match
@@ -125,35 +201,53 @@ export function LyricPerformance(props: LyricPerformanceProps) {
                 }
               >
                 {(current) => (
-                  <p class="lyric-line lyric-cue">{current().cue}</p>
+                  <p class="lyric-performance__section-cue lyric-cue">
+                    {current().cue}
+                  </p>
                 )}
               </Match>
             </Switch>
           </div>
-        }
-      >
-        <div class="lyric-performance__body lyric-performance__transcript">
-          <For each={props.timeline.sheet.sections}>
-            {(section) => {
-              const current = () =>
-                activeSectionIndex(frame()) === section.index;
-              return (
-                <span
-                  classList={{
-                    'lyric-section': true,
-                    'lyric-section-current': current(),
-                  }}
-                  aria-current={current() ? 'true' : undefined}
-                >
-                  <For each={section.lines}>
-                    {(line) => <LyricLineView line={line} />}
-                  </For>
-                </span>
-              );
+        </Match>
+        <Match when={!timed()}>
+          <div
+            ref={(element) => {
+              atmosphericScroller = element;
             }}
-          </For>
-        </div>
-      </Show>
+            class="lyric-performance__body lyric-performance__atmospheric"
+            aria-live={props.mode === 'live' ? 'polite' : undefined}
+            aria-label={
+              props.mode === 'live' ? 'Lyrics revealed so far' : 'Lyrics'
+            }
+          >
+            <For each={props.timeline.sheet.sections}>
+              {(section) => {
+                const lines = section.lines.filter((line) => !line.cue);
+                const firstIndex = () =>
+                  spoken().findIndex((entry) => entry.section === section);
+                const visible = () =>
+                  firstIndex() >= 0 && firstIndex() < shownSpokenCount();
+                return (
+                  <section
+                    class="lyric-performance__section lyric-section"
+                    hidden={!visible()}
+                  >
+                    <h3 class="lyric-cue">{cueForSection(section)}</h3>
+                    <For each={lines}>
+                      {(line, index) => (
+                        <LyricLineView
+                          line={line}
+                          hidden={firstIndex() + index() >= shownSpokenCount()}
+                        />
+                      )}
+                    </For>
+                  </section>
+                );
+              }}
+            </For>
+          </div>
+        </Match>
+      </Switch>
     </section>
   );
 }

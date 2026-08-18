@@ -779,8 +779,12 @@ test('host and listener share the live lyric performance', async ({
       'Hindi · Devanagari',
     );
     await expect(root.locator('.lyric-cue')).toHaveText('Verse');
-    await expect(root.locator('.lyric-primary')).toHaveText(primary);
-    await expect(root.locator('.lyric-secondary')).toHaveText(secondary);
+    await expect(
+      root.locator('.lyric-line:not([hidden]) .lyric-primary').last(),
+    ).toHaveText(primary);
+    await expect(
+      root.locator('.lyric-line:not([hidden]) .lyric-secondary').last(),
+    ).toHaveText(secondary);
   };
 
   await assertSharedFrame(hostPerformance, 'पहली पंक्ति', 'Pehli pankti');
@@ -893,7 +897,11 @@ test('listener playback advances its progress, lyrics, and record between room u
     page.getByRole('progressbar', { name: 'Song progress' }),
   ).toHaveAttribute('aria-valuenow', '70');
   await expect(page.getByText('1:10 / 2:00')).toBeVisible();
-  await expect(page.locator('.lyric-primary')).not.toHaveText('पहली पंक्ति');
+  const visibleLyrics = page.locator(
+    '.lyric-line:not([hidden]) .lyric-primary',
+  );
+  await expect(visibleLyrics.first()).toHaveText('पहली पंक्ति');
+  await expect(visibleLyrics.last()).toHaveText('तीसरी पंक्ति');
   await expect(page.locator('.record-mark')).toHaveText('M');
   await expect
     .poll(() =>
