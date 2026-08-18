@@ -5,7 +5,13 @@ import {
   type LyricTiming,
 } from '../lyrics/lyric-sync.ts';
 import { buildLinePacing } from '../lyrics/line-pacing.ts';
+import {
+  storyCardHost,
+  storyFileName,
+  storyStanza,
+} from '../shared/story-card.ts';
 import { FOLK_MODERN_BACKGROUND_PATH, FOLK_MODERN_SCENE } from './courtyard.ts';
+import { STORY_CARD_SCRIPT } from './story-card-script.generated.ts';
 
 const EXTERNAL_LINK_ICON =
   '<svg class="topbar-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 16 16 8M9 8h7v7"/></svg>';
@@ -46,16 +52,6 @@ function escapeHtml(value: unknown): string {
     .replaceAll("'", '&#39;');
 }
 
-/**
- * The host burned into the story card. Parsing by pattern rather than `URL`
- * keeps a malformed origin from throwing inside page rendering.
- */
-function hostOf(origin: string): string {
-  return (
-    /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/i.exec(origin)?.[1] ?? 'minimehfil.wtf'
-  );
-}
-
 function scriptJson(value: unknown): string {
   return (JSON.stringify(value) ?? 'null')
     .replaceAll('<', '\\u003c')
@@ -89,27 +85,32 @@ export function playbackPage(
     primary: string;
     secondary: string;
   }) => ({ cue, primary, secondary });
+  const shareUrl = `${origin}/s/${id}`;
+  // Every choice the story card makes is settled here, by the same functions
+  // the host app calls, so both surfaces hand out the same picture.
+  const card = {
+    title: song.title,
+    label,
+    url: shareUrl,
+    host: storyCardHost(shareUrl),
+    fileName: storyFileName(song.title),
+    stanza: storyStanza(sheet.sections, sheet.lines),
+    backgroundUrl: FOLK_MODERN_BACKGROUND_PATH,
+  };
   const data = scriptJson({
     lines: sheet.lines.map(safeLine),
     sections: sheet.sections.map((section) => ({
       index: section.index,
-      // The story card picks the chorus when the sheet names one, so the
-      // family the server already resolved travels with the section.
-      family: section.family,
       lines: section.lines.map(safeLine),
     })),
     timeline,
     ...(timeline ? { pacing } : {}),
     expectedDurationSeconds: timing?.durationSeconds ?? 0,
+    card,
   });
-  const shareUrl = `${origin}/s/${id}`;
   const audioUrl = `${shareUrl}/audio`;
   const description = `Listen to ${song.title} in the Mini Mehfil courtyard.`;
   const playLabel = scriptJson(`Play ${song.title}`);
-  const cardTitle = scriptJson(song.title);
-  const cardLabel = scriptJson(label);
-  const cardUrl = scriptJson(shareUrl);
-  const cardHost = scriptJson(hostOf(shareUrl));
   // A player card needs domain approval from X, so the page advertises a large
   // summary card, which every reader renders today. The og:audio tags stay for
   // the platforms that play audio from them.
@@ -153,62 +154,24 @@ function startVisualRefresh(){if(!visualFrame)visualFrame=requestAnimationFrame(
 function stopVisualRefresh(){if(visualFrame){cancelAnimationFrame(visualFrame);visualFrame=0}sync()}
 function setPlaying(playing){player.classList.toggle('playing',playing);scene.classList.toggle('is-performing',playing);play.setAttribute('aria-label',playing?'Pause':${playLabel})}
 play.addEventListener('click',()=>audio.paused?audio.play():audio.pause());audio.addEventListener('play',()=>{replay.hidden=true;setPlaying(true);sync();startVisualRefresh()});audio.addEventListener('pause',()=>{setPlaying(false);stopVisualRefresh()});audio.addEventListener('timeupdate',sync);audio.addEventListener('loadedmetadata',()=>{validateTimelineDuration();sync()});audio.addEventListener('ended',()=>{replay.hidden=false;setPlaying(false);stopVisualRefresh()});seek.addEventListener('input',()=>{if(audio.duration){replay.hidden=true;audio.currentTime=(Number(seek.value)/100)*audio.duration;sync()}});replay.addEventListener('click',()=>{replay.hidden=true;audio.currentTime=0;sync();audio.play()});let shareSettle=0;share.addEventListener('click',async()=>{const label=share.querySelector('span');clearTimeout(shareSettle);try{await navigator.clipboard.writeText(location.href);label.textContent='Copied'}catch{label.textContent='Share'}shareSettle=setTimeout(()=>{label.textContent='Share'},2400)});document.querySelector('#clock').textContent=new Intl.DateTimeFormat([],{hour:'numeric',minute:'2-digit'}).format(new Date()).toLowerCase();sync();
-// Story card: a 1080x1920 courtyard poster the phone share sheet can hand to
-// Instagram, WhatsApp or Messages. The URL is painted into the picture because
-// no web page can attach an Instagram link sticker for the user.
-const STORY_BACKGROUND='${FOLK_MODERN_BACKGROUND_PATH}',STORY_W=1080,STORY_H=1920,STORY_PAD=96,STORY_SERIF='"Iowan Old Style",Georgia,"Times New Roman",serif',STORY_SANS='"Avenir Next","Gill Sans",-apple-system,"Segoe UI",sans-serif';
-const story=document.querySelector('#story'),storyLabel=story.querySelector('span'),cardTitle=${cardTitle},cardLabel=${cardLabel},cardUrl=${cardUrl},cardHost=${cardHost};
-function storySpoken(section){return section.lines.filter(line=>!line.cue)}
-function storyStanza(){const groups=sections.map(storySpoken).filter(group=>group.length);if(!groups.length)return lines.filter(line=>!line.cue).slice(0,6);const chorus=sections.find(section=>section.family==='chorus'&&storySpoken(section).length>=3);return (chorus?storySpoken(chorus):groups.reduce((best,group)=>group.length>best.length?group:best)).slice(0,6)}
-function storyFileName(){let name='';for(const character of cardTitle)name+='<>:"/\\|?*'.includes(character)?' ':character;return (name.trim()||'Mini Mehfil').slice(0,60)+'.jpg'}
-// The page has no connect-src, so fetch is blocked here; img-src 'self' is not.
-// A background that fails to load leaves the night-green fill behind the words.
-function storyBackground(){return new Promise(resolve=>{const image=new Image();image.addEventListener('load',()=>resolve(image));image.addEventListener('error',()=>resolve(null));image.src=STORY_BACKGROUND})}
-function storyFont(context,weight,size,family){context.font=weight+' '+size+'px '+family}
-function storyTracking(context,value){if('letterSpacing' in context)context.letterSpacing=value}
-function storyWrap(context,text,maxWidth){const words=String(text).trim().split(' ').filter(Boolean);if(!words.length)return[];const wrapped=[];let current=words[0];for(let index=1;index<words.length;index+=1){const candidate=current+' '+words[index];if(context.measureText(candidate).width<=maxWidth)current=candidate;else{wrapped.push(current);current=words[index]}}wrapped.push(current);return wrapped}
-function storyCanvas(image){const canvas=document.createElement('canvas');canvas.width=STORY_W;canvas.height=STORY_H;const context=canvas.getContext('2d'),centerX=STORY_W/2,maxWidth=STORY_W-STORY_PAD*2;
-context.fillStyle='#142e2d';context.fillRect(0,0,STORY_W,STORY_H);
-if(image&&image.width&&image.height){const scale=Math.max(STORY_W/image.width,STORY_H/image.height),width=image.width*scale,height=image.height*scale;context.drawImage(image,(STORY_W-width)/2,(STORY_H-height)/2,width,height)}
-const crown=context.createLinearGradient(0,0,0,STORY_H*.5);crown.addColorStop(0,'rgba(6,18,17,.86)');crown.addColorStop(1,'rgba(6,18,17,0)');context.fillStyle=crown;context.fillRect(0,0,STORY_W,STORY_H*.5);
-const hem=context.createLinearGradient(0,STORY_H*.42,0,STORY_H);hem.addColorStop(0,'rgba(5,17,16,0)');hem.addColorStop(1,'rgba(5,17,16,.94)');context.fillStyle=hem;context.fillRect(0,STORY_H*.42,STORY_W,STORY_H*.58);
-context.fillStyle='rgba(230,166,83,.6)';context.fillRect(centerX-58,1690,116,3);
-context.textAlign='center';context.textBaseline='alphabetic';
-// The page lifts its lyrics off the courtyard with a text shadow; the card
-// needs the same lift where the words cross the performers.
-context.shadowColor='rgba(4,15,14,.88)';context.shadowBlur=28;context.shadowOffsetY=6;
-storyFont(context,'800',30,STORY_SANS);context.fillStyle='#e6a653';storyTracking(context,'10px');context.fillText('MINI MEHFIL',centerX,206);storyTracking(context,'0px');
-let titleSize=88,titleLines=[];for(;;){storyFont(context,'600',titleSize,STORY_SERIF);titleLines=storyWrap(context,cardTitle,maxWidth);if(titleLines.length<=2||titleSize<=54)break;titleSize-=6}
-let y=336;context.fillStyle='#fff8ec';titleLines.slice(0,2).forEach(line=>{context.fillText(line,centerX,y);y+=titleSize*1.16});
-storyFont(context,'700',27,STORY_SANS);context.fillStyle='#e9c27f';storyTracking(context,'6px');context.fillText(cardLabel.toUpperCase(),centerX,y+18);storyTracking(context,'0px');
-const blockTop=y+92,blockBottom=1636,stanza=storyStanza().map(line=>{storyFont(context,'500',54,STORY_SERIF);const primary=storyWrap(context,line.primary,maxWidth);storyFont(context,'400',33,STORY_SANS);const secondary=line.secondary?storyWrap(context,line.secondary,maxWidth):[];return{primary,secondary,height:primary.length*70+(secondary.length?secondary.length*44+8:0)+34}});
-const stanzaHeight=()=>stanza.reduce((total,entry)=>total+entry.height,0);
-while(stanza.length>2&&stanzaHeight()>blockBottom-blockTop)stanza.pop();
-let lineY=blockTop+Math.max(0,(blockBottom-blockTop-stanzaHeight())/2);
-stanza.forEach(entry=>{storyFont(context,'500',54,STORY_SERIF);context.fillStyle='#fff8ec';entry.primary.forEach(text=>{lineY+=70;context.fillText(text,centerX,lineY)});if(entry.secondary.length){storyFont(context,'400',33,STORY_SANS);context.fillStyle='#d8c3aa';lineY+=8;entry.secondary.forEach(text=>{lineY+=44;context.fillText(text,centerX,lineY)})}lineY+=34});
-storyFont(context,'500',30,STORY_SANS);context.fillStyle='#ddcbb8';context.fillText('Hear the whole song at',centerX,1758);
-storyFont(context,'800',56,STORY_SANS);context.fillStyle='#f9edda';context.fillText(cardHost,centerX,1826);
-return canvas}
-let storyCardPromise=null,storyBusy=false;
-function storyBlob(){return storyBackground().then(image=>new Promise((resolve,reject)=>{storyCanvas(image).toBlob(blob=>blob?resolve(blob):reject(new Error('The story card could not be drawn.')),'image/jpeg',.92)}))}
-function storyCardBlob(){if(!storyCardPromise)storyCardPromise=storyBlob().catch(error=>{storyCardPromise=null;throw error});return storyCardPromise}
-function storyCanShare(file){try{return Boolean(navigator.canShare&&navigator.canShare({files:[file]}))}catch{return false}}
-// Probed once with a throwaway file, so the button knows before it is pressed
-// whether this browser opens a share sheet or has to fall back to a download.
-const storyShareable=(()=>{try{return typeof File==='function'&&storyCanShare(new File([new Uint8Array(1)],'card.jpg',{type:'image/jpeg'}))}catch{return false}})();
-const storyResting=storyShareable?'Story':'Card';let storySettle=0;
+// Story card. The drawing and the share sheet come from the one module the
+// host app also uses; only the button belongs to this page. See
+// scripts/build-story-card.ts.
+${STORY_CARD_SCRIPT}
+const story=document.querySelector('#story'),storyLabel=story.querySelector('span'),card=song.card;
+const storyShareable=storyCard.canShareStoryCard(),storyResting=storyShareable?'Story':'Card';
+let storyDrawing=null,storyBusy=false,storySettle=0;
 storyLabel.textContent=storyResting;
-story.setAttribute('aria-label',(storyShareable?'Share a story card for ':'Download a story card for ')+cardTitle);
+story.setAttribute('aria-label',(storyShareable?'Share a story card for ':'Download a story card for ')+card.title);
 // The Share control returns to its resting caption; this one keeps step with it.
 function storySay(text){clearTimeout(storySettle);storyLabel.textContent=text;if(text!==storyResting)storySettle=setTimeout(()=>{storyLabel.textContent=storyResting},2400)}
-function storyDownload(blob){const href=URL.createObjectURL(blob),link=document.createElement('a');link.href=href;link.download=storyFileName();link.rel='noopener';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(href),4000)}
+function storyBlob(){if(!storyDrawing)storyDrawing=storyCard.storyCardBlob(card).catch(error=>{storyDrawing=null;throw error});return storyDrawing}
 // Warmed on press so the drawing is finished before the release, keeping the
 // share call inside the gesture Safari requires.
-story.addEventListener('pointerdown',()=>{storyCardBlob().catch(()=>{})});
-story.addEventListener('click',async()=>{if(storyBusy)return;storyBusy=true;clearTimeout(storySettle);storyLabel.textContent='…';let blob=null;
-try{blob=await storyCardBlob()}catch{storySay('Retry');storyBusy=false;return}
-try{const file=new File([blob],storyFileName(),{type:'image/jpeg'});if(storyShareable&&storyCanShare(file)){await navigator.share({files:[file],title:cardTitle,text:cardTitle+' · '+cardUrl});storySay(storyResting)}else{storyDownload(blob);storySay('Saved')}}
-catch(error){if(error&&error.name==='AbortError')storySay(storyResting);else{try{storyDownload(blob);storySay('Saved')}catch{storySay('Retry')}}}
+story.addEventListener('pointerdown',()=>{storyBlob().catch(()=>{})});
+story.addEventListener('click',async()=>{if(storyBusy)return;storyBusy=true;clearTimeout(storySettle);storyLabel.textContent='…';
+try{storySay(await storyCard.shareOrSaveStoryCard(await storyBlob(),card)==='saved'?'Saved':storyResting)}
+catch{storySay('Retry')}
 finally{storyBusy=false}});
 </script></body></html>`;
 }

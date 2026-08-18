@@ -1051,7 +1051,7 @@ input::placeholder {
   left: calc((100vw - min(1180px, 100vw - 44px)) / 2);
   width: min(680px, calc(min(1180px, 100vw - 44px) - 492px));
   display: grid;
-  grid-template-columns: 72px 1fr 55px 48px 48px 54px;
+  grid-template-columns: 72px 1fr 55px auto;
   align-items: center;
   gap: 9px;
   padding: 10px 15px 10px 10px;
@@ -1063,9 +1063,6 @@ input::placeholder {
     inset 0 1px rgba(255, 255, 255, 0.15);
   backdrop-filter: blur(12px);
   animation: player-up 0.85s 0.5s both;
-}
-.player-shell:has(.performance-entry[hidden]) {
-  grid-template-columns: 72px 1fr 55px 48px 54px;
 }
 .record {
   width: 68px;
@@ -1204,6 +1201,17 @@ input::placeholder {
   color: var(--ink);
   background: transparent;
   cursor: pointer;
+}
+.player-actions {
+  display: flex;
+  align-items: center;
+}
+.player-shell audio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 .player-action svg {
   width: 20px;
@@ -1622,7 +1630,7 @@ input::placeholder {
   }
   main {
     width: calc(100% - 24px);
-    margin-bottom: 130px;
+    margin-bottom: 178px;
   }
   .identity {
     margin-top: 5px;
@@ -1675,12 +1683,27 @@ input::placeholder {
   .player-shell {
     bottom: 12px;
     min-height: 72px;
-    grid-template-columns: 52px 1fr 43px 43px 43px 43px;
-    gap: 8px;
-    padding: 8px 12px 8px 8px;
+    grid-template-columns: 52px 1fr 43px;
+    grid-template-areas:
+      'record track play'
+      'actions actions actions';
+    border-radius: 30px;
+    column-gap: 8px;
+    row-gap: 2px;
+    padding: 8px 12px 6px 8px;
   }
-  .player-shell:has(.performance-entry[hidden]) {
-    grid-template-columns: 52px 1fr 43px 43px 43px;
+  .record {
+    grid-area: record;
+  }
+  .track {
+    grid-area: track;
+  }
+  .play {
+    grid-area: play;
+  }
+  .player-actions {
+    grid-area: actions;
+    justify-content: space-evenly;
   }
   .record {
     width: 50px;
@@ -1705,7 +1728,7 @@ input::placeholder {
     grid-template-columns: 1fr;
   }
   .performance {
-    padding: 64px 14px 100px;
+    padding: 64px 14px 148px;
     align-items: center;
   }
   .performance-close {

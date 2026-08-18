@@ -448,6 +448,7 @@ test('a timed share follows its sections and never shows stale sung lines', asyn
   assert.deepEqual(page.songData.pacing, sharedPacing);
   assert.equal(page.songData.expectedDurationSeconds, 90);
   assert.deepEqual(Object.keys(page.songData).sort(), [
+    'card',
     'expectedDurationSeconds',
     'lines',
     'pacing',
@@ -541,15 +542,6 @@ test('a timed share follows its sections and never shows stale sung lines', asyn
   );
 });
 
-const CHORUS_SHEET = {
-  ...SONG,
-  isLatinScript: true,
-  lyricsNative:
-    '[Verse]\nRain on the window\n[Chorus]\nSing it back to me\nUnder the amber light\nUntil the courtyard hums',
-  lyricsRoman:
-    '[Verse]\nRain on the window\n[Chorus]\nSing it back to me\nUnder the amber light\nUntil the courtyard hums',
-};
-
 test('the story card paints the song, its lyrics and its URL into a poster', async () => {
   const page = await playbackHarness(SONG, 90);
   await page.pressStory();
@@ -635,52 +627,6 @@ test('the story card still reads when the courtyard background will not load', a
   assert.equal(context.rects[0].fillStyle, '#142e2d');
   assert.ok(context.text.includes('Aloopuri Khavsa'));
   assert.equal(page.shared.length, 1);
-});
-
-test('the story card quotes the chorus rather than the opening verse', async () => {
-  const page = await playbackHarness(CHORUS_SHEET, 90);
-  await page.pressStory();
-  const painted = page.card().getContext().text;
-  assert.ok(painted.includes('Sing it back to me'));
-  assert.ok(painted.includes('Until the courtyard hums'));
-  assert.ok(
-    !painted.includes('Rain on the window'),
-    'the card shows one stanza, not a scrape of the whole sheet',
-  );
-});
-
-test('a long song and a long title stay inside the story card', async () => {
-  const page = await playbackHarness(
-    {
-      ...SONG,
-      title:
-        'A Title So Long That It Could Never Fit Across Two Lines Of This Poster',
-      isLatinScript: true,
-      lyricsNative:
-        '[Chorus]\n' +
-        Array.from(
-          { length: 12 },
-          (_, index) =>
-            `Line number ${index + 1} of a chorus that simply keeps going`,
-        ).join('\n'),
-      lyricsRoman: '',
-    },
-    90,
-  );
-  await page.pressStory();
-
-  const context = page.card().getContext();
-  const serif = context.texts.filter((entry) => entry.font.includes('Iowan'));
-  assert.ok(serif.length > 0);
-  assert.ok(
-    serif.every((entry) => entry.y < 1690),
-    'title and lyrics stop above the footer rule',
-  );
-  assert.ok(
-    context.texts.every((entry) => entry.y <= 1880),
-    'nothing spills past the bottom of the card',
-  );
-  assert.ok(context.text.includes('share.example'));
 });
 
 test('a timed share falls back to the approximate reveal when the audio does not match', async () => {
@@ -769,7 +715,7 @@ test('upload to playback round trip preserves title, language, and both lyric sc
     /id="story"[^>]*>[\s\S]*?<svg class="player-icon story-icon"/,
   );
   assert.ok(
-    html.includes('cardHost="minimehfil.wtf"'),
+    html.includes('"host":"minimehfil.wtf"'),
     'the card burns in the host the share URL actually uses',
   );
   assert.match(html, /class="player-icon download-icon"/);

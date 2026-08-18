@@ -12,9 +12,22 @@ import { Portal } from 'solid-js/web';
 import { effectiveFirstVocalRelease } from '../../lyrics/line-pacing.ts';
 import {
   activeTimelineEntry,
+  parseLyricSheet,
   type LyricTiming,
 } from '../../lyrics/lyric-sync.ts';
 import type { LyricsSheet, SongRequest } from '../../room/protocol.ts';
+import { FOLK_MODERN_BACKGROUND_PATH } from '../../shared/courtyard.ts';
+import {
+  storyCardHost,
+  storyFileName,
+  storyStanza,
+  type StoryCard,
+} from '../../shared/story-card.ts';
+import {
+  canShareStoryCard,
+  shareOrSaveStoryCard,
+  storyCardBlob,
+} from '../shared/story-card-canvas.ts';
 import { LyricPerformance } from '../shared/LyricPerformance.tsx';
 import { copyLink } from '../shared/copy-link.ts';
 import { createShareLabel } from '../shared/share-label.ts';
@@ -96,6 +109,12 @@ export function App() {
   const [performanceOpen, setPerformanceOpen] = createSignal(false);
   const [manualLyricsOpen, setManualLyricsOpen] = createSignal(false);
   const shareLabel = createShareLabel();
+  /**
+   * Whether this browser opens a share sheet for files. Probed once so the
+   * control says what it will do before it is pressed rather than after.
+   */
+  const storyShareable = canShareStoryCard();
+  const storyLabel = createShareLabel(storyShareable ? 'Story' : 'Card');
   /**
    * The status line that normally carries a link lives in main, which the open
    * performance view hides, so an uncopyable link is repeated where the Share
@@ -207,6 +226,61 @@ export function App() {
       ? sheet.language
       : `${sheet.language} · ${sheet.nativeScriptName}`;
   });
+  /**
+   * Everything the story card says, decided by the same functions the Worker's
+   * shared page calls, so a song looks the same wherever it is shared from.
+   * The link is carried in the share text only once the song has one; the card
+   * itself always points at this origin, which is where the song lives.
+   */
+  const storyCard = createMemo<StoryCard | null>(() => {
+    const sheet = activeLyrics();
+    if (!sheet) return null;
+    const parsed = parseLyricSheet(sheet);
+    const stanza = storyStanza(parsed.sections, parsed.lines);
+    if (stanza.length === 0) return null;
+    const url = roomSongUrl() ?? generation.shareUrl() ?? '';
+    return {
+      title: sheet.title,
+      label: languageLabel(),
+      url,
+      host: storyCardHost(url || location.origin),
+      fileName: storyFileName(sheet.title),
+      stanza,
+      backgroundUrl: FOLK_MODERN_BACKGROUND_PATH,
+    };
+  });
+  /**
+   * Drawing starts on press so it is finished by the release, which keeps the
+   * share call inside the gesture Safari requires.
+   */
+  let storyDrawing: Promise<Blob> | null = null;
+  let storyDrawn: StoryCard | null = null;
+  const drawStory = (card: StoryCard) => {
+    if (!storyDrawing || storyDrawn !== card) {
+      storyDrawn = card;
+      storyDrawing = storyCardBlob(card).catch((error: unknown) => {
+        storyDrawing = null;
+        throw error;
+      });
+    }
+    return storyDrawing;
+  };
+  const warmStory = () => {
+    const card = storyCard();
+    if (card) void drawStory(card).catch(() => undefined);
+  };
+  const makeStory = async () => {
+    const card = storyCard();
+    if (!card) return;
+    storyLabel.hold('…');
+    try {
+      const outcome = await shareOrSaveStoryCard(await drawStory(card), card);
+      if (outcome === 'saved') storyLabel.settle('Saved');
+      else storyLabel.reset();
+    } catch {
+      storyLabel.settle('Retry');
+    }
+  };
   const requestQueue = createMemo(() =>
     room
       .view()
@@ -1391,50 +1465,75 @@ export function App() {
             <path d="M8 7v10M16 7v10" />
           </svg>
         </button>
-        <button
-          id="view-performance"
-          class="player-action performance-entry"
-          type="button"
-          aria-label="View performance"
-          hidden={!performanceAvailable() || performanceOpen()}
-          onClick={(event) => openPerformance(event.currentTarget)}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 12s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5Z" />
-            <circle cx="12" cy="12" r="2.5" />
-          </svg>
-          <span>View</span>
-        </button>
-        <button
-          id="share"
-          class="share"
-          type="button"
-          aria-label="Share this song"
-          disabled={!roomSongUrl() && !generation.shareReference()}
-          onClick={() => void share()}
-        >
-          <svg class="player-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M9 8.5 12 5l3 3.5M12 5v10M7 11.5H5.5A1.5 1.5 0 0 0 4 13v4.5A1.5 1.5 0 0 0 5.5 19h13a1.5 1.5 0 0 0 1.5-1.5V13a1.5 1.5 0 0 0-1.5-1.5H17" />
-          </svg>
-          <span>{shareLabel.label()}</span>
-        </button>
-        <a
-          id="download"
-          class="download"
-          href={player.source() || '#'}
-          download="mehfil-song.mp3"
-          aria-disabled={!player.ready()}
-          aria-label="Save this song"
-        >
-          <svg
-            class="player-icon download-icon"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
+        <div class="player-actions">
+          <button
+            id="view-performance"
+            class="player-action performance-entry"
+            type="button"
+            aria-label="View performance"
+            hidden={!performanceAvailable() || performanceOpen()}
+            onClick={(event) => openPerformance(event.currentTarget)}
           >
-            <path d="M12 5v10M8.5 11.5 12 15l3.5-3.5M5 19h14" />
-          </svg>
-          <span>Save</span>
-        </a>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 12s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5Z" />
+              <circle cx="12" cy="12" r="2.5" />
+            </svg>
+            <span>View</span>
+          </button>
+          <button
+            id="share"
+            class="share"
+            type="button"
+            aria-label="Share this song"
+            disabled={!roomSongUrl() && !generation.shareReference()}
+            onClick={() => void share()}
+          >
+            <svg class="player-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 8.5 12 5l3 3.5M12 5v10M7 11.5H5.5A1.5 1.5 0 0 0 4 13v4.5A1.5 1.5 0 0 0 5.5 19h13a1.5 1.5 0 0 0 1.5-1.5V13a1.5 1.5 0 0 0-1.5-1.5H17" />
+            </svg>
+            <span>{shareLabel.label()}</span>
+          </button>
+          <button
+            id="story"
+            class="share"
+            type="button"
+            aria-label={
+              storyShareable
+                ? 'Share a story card for this song'
+                : 'Download a story card for this song'
+            }
+            disabled={!storyCard()}
+            onPointerDown={warmStory}
+            onClick={() => void makeStory()}
+          >
+            <svg
+              class="player-icon story-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path d="M8.6 3.6h6.8A2.6 2.6 0 0 1 18 6.2v11.6a2.6 2.6 0 0 1-2.6 2.6H8.6A2.6 2.6 0 0 1 6 17.8V6.2a2.6 2.6 0 0 1 2.6-2.6Z" />
+              <path d="m12 8.4 1.05 2.55L15.6 12l-2.55 1.05L12 15.6l-1.05-2.55L8.4 12l2.55-1.05L12 8.4Z" />
+            </svg>
+            <span>{storyLabel.label()}</span>
+          </button>
+          <a
+            id="download"
+            class="download"
+            href={player.source() || '#'}
+            download="mehfil-song.mp3"
+            aria-disabled={!player.ready()}
+            aria-label="Save this song"
+          >
+            <svg
+              class="player-icon download-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path d="M12 5v10M8.5 11.5 12 15l3.5-3.5M5 19h14" />
+            </svg>
+            <span>Save</span>
+          </a>
+        </div>
         <audio
           id="audio"
           ref={(element) => player.bindAudio(element)}
