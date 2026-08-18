@@ -14,14 +14,14 @@ sources are labeled as such. Written against the current contract in
    anything finer than segment start/end in seconds
    ([API reference](https://platform.minimax.io/docs/api-reference/music-cover-preprocess)).
    MiniMax's only word-level timestamp feature (`subtitle_enable` on Speech
-   2.6 T2A) times MiniMax's *own generated speech*, not arbitrary sung audio
+   2.6 T2A) times MiniMax's _own generated speech_, not arbitrary sung audio
    against a known sheet, so it cannot align our Music-3 output
    ([T2A subtitle docs, via search of platform.minimax.io](https://platform.minimax.io/docs/guides/speech-t2a-async)).
    MiniMax is not a path to finer timing; treat it as the permanent
    free/no-second-credential section-level fallback it already is.
 
 2. **Best fit for the existing plan: keep Plan 007's operator Mac as the
-   line-timing engine, but do forced alignment of the *known* lyric sheet
+   line-timing engine, but do forced alignment of the _known_ lyric sheet
    instead of open ASR.** Because Mini Mehfil already knows the exact,
    verbatim lyrics (`PRODUCT.md`: "Lyrics are sung literally"), the task is
    forced alignment, not transcription — a strictly easier, more robust
@@ -35,10 +35,10 @@ sources are labeled as such. Written against the current contract in
 
 3. **Concrete pipeline to prototype on the Mac, ranked by expected robustness
    for sung, code-switched, script-mixed lyrics:**
-   - **Primary: HTDemucs vocal separation → MMS forced-alignment (`torchaudio.pipelines.MMS_FA`, CTC forced-align) using the *known* lyric line/word sequence as the label string.** MMS_FA's acoustic model covers 1,100+ languages including Hindi and Gujarati (VERIFIED via [PyTorch docs](https://docs.pytorch.org/audio/2.8/tutorials/forced_alignment_for_multilingual_data_tutorial.html) and the underlying [Meta MMS paper](https://ai.meta.com/research/publications/scaling-speech-technology-to-1000-languages/): "a single multilingual automatic speech recognition model for 1,107 languages" and pretrained wav2vec2 models for 1,406 languages). This is forced *alignment*, not ASR — it never has to guess the words, only their timing, which matches Mini Mehfil's actual problem far better than the Whisper-transcription approach Plan 007 already tried and found imperfect on Gujarati (hallucination at 143s, mitigated only by pinning language + temperature 0, per `plans/007-local-mlx-timing-service.md`).
+   - **Primary: HTDemucs vocal separation → MMS forced-alignment (`torchaudio.pipelines.MMS_FA`, CTC forced-align) using the _known_ lyric line/word sequence as the label string.** MMS_FA's acoustic model covers 1,100+ languages including Hindi and Gujarati (VERIFIED via [PyTorch docs](https://docs.pytorch.org/audio/2.8/tutorials/forced_alignment_for_multilingual_data_tutorial.html) and the underlying [Meta MMS paper](https://ai.meta.com/research/publications/scaling-speech-technology-to-1000-languages/): "a single multilingual automatic speech recognition model for 1,107 languages" and pretrained wav2vec2 models for 1,406 languages). This is forced _alignment_, not ASR — it never has to guess the words, only their timing, which matches Mini Mehfil's actual problem far better than the Whisper-transcription approach Plan 007 already tried and found imperfect on Gujarati (hallucination at 143s, mitigated only by pinning language + temperature 0, per `plans/007-local-mlx-timing-service.md`).
    - **Fallback per-line refinement: WhisperX's wav2vec2 alignment stage** — already evaluated in Plan 007 as `KalebJS/whispermlx` and rejected only as a full-stack dependency, not on accuracy; WhisperX ships default aligners for `{en, fr, de, es, it}` and needs a Hugging Face CTC model for other languages (VERIFIED: [WhisperX README](https://github.com/m-bain/whisperX), `DEFAULT_ALIGN_MODELS_HF` in [`alignment.py`](https://github.com/m-bain/whisperX/blob/main/whisperx/alignment.py)) — Hindi/Gujarati would need an explicit HF model swap, unlike MMS_FA which covers them out of the box.
    - **Preprocessing that measurably matters:** run source separation before alignment. Music/vocal interference is the dominant error source in lyric alignment literature — a 2026 paper on Whisper-based automatic lyrics transcription reports that "models that align words to vocal tracks separated by Demucs outperform other methods and obtain competitive results with state-of-the-art approaches" ([arXiv:2506.15514](https://arxiv.org/pdf/2506.15514)), and the DALI dataset construction pipeline itself is built around time-aligned lyrics at note/word/line/paragraph granularity for exactly this reason ([DALI project, cited via arXiv:2506.15514](https://arxiv.org/pdf/2506.15514)).
-   - **Code-switched / dual-script matching:** since Mini Mehfil already carries both native-script and romanized lyric text, do NOT rely on the aligner's own tokenizer to handle script-mixing. Instead run the forced aligner against whichever script its acoustic model was trained on, then map the resulting phoneme/word timings back onto line boundaries in *both* scripts by index — this sidesteps romanization ambiguity entirely and requires no new alignment component. This is the standard "known-text forced alignment" pattern; robustness comes from having ground-truth text, not from clever fuzzy matching. (No primary source claims MMS/WhisperX do script transliteration internally — treat that mapping step as our own responsibility, UNVERIFIED against any library doing it for us.)
+   - **Code-switched / dual-script matching:** since Mini Mehfil already carries both native-script and romanized lyric text, do NOT rely on the aligner's own tokenizer to handle script-mixing. Instead run the forced aligner against whichever script its acoustic model was trained on, then map the resulting phoneme/word timings back onto line boundaries in _both_ scripts by index — this sidesteps romanization ambiguity entirely and requires no new alignment component. This is the standard "known-text forced alignment" pattern; robustness comes from having ground-truth text, not from clever fuzzy matching. (No primary source claims MMS/WhisperX do script transliteration internally — treat that mapping step as our own responsibility, UNVERIFIED against any library doing it for us.)
 
 4. **Second-best if Plan 007's Mac path stalls or the operator wants a zero-ops
    alternative: ElevenLabs' Forced Alignment API, operator-side optional key.**
@@ -50,7 +50,7 @@ sources are labeled as such. Written against the current contract in
    number confirmed from the page fetched — **UNVERIFIED, get the exact
    per-minute rate from ElevenLabs' pricing page before relying on it.** This
    is a legitimate operator-side secret (never required from end users) but
-   does not cover Gujarati, so it can only be a *tier-1* option alongside MMS,
+   does not cover Gujarati, so it can only be a _tier-1_ option alongside MMS,
    not a full replacement.
 
 5. **Ruled out for our stack, with reasons:**
@@ -74,7 +74,7 @@ sources are labeled as such. Written against the current contract in
      — output schema shows `segments[]` with a `vtt` field, no per-word
      array documented). It is also open ASR, not forced alignment of the
      known sheet, so it would still need a fuzzy-matching layer against our
-     lyric text. Useful only as a possible drop-in *replacement* for the
+     lyric text. Useful only as a possible drop-in _replacement_ for the
      MiniMax section call (same or better latency/cost, still section-grade),
      not a path to word-level timing.
    - **In-browser WASM/WebGPU (transformers.js / whisper-web)**: WebGPU
@@ -107,14 +107,14 @@ never needs to write them down anywhere Mini Mehfil stores.
 **`music_cover_preprocess` response fields — VERIFIED, all six documented
 fields** ([API reference](https://platform.minimax.io/docs/api-reference/music-cover-preprocess)):
 
-| Field | Description (as documented) |
-| --- | --- |
-| `cover_feature_id` | Unique identifier for the preprocessed audio features, valid 24 h |
+| Field              | Description (as documented)                                                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cover_feature_id` | Unique identifier for the preprocessed audio features, valid 24 h                                                                           |
 | `formatted_lyrics` | Structured lyrics extracted via ASR, tagged with section markers (`[Verse]`, `[Chorus]`, `[Bridge]`, etc.) — **no timing data of any kind** |
-| `structure_result` | JSON string of segment types with **start/end timestamps in seconds** — segment-level only |
-| `audio_duration` | Duration in seconds |
-| `trace_id` | Request tracking ID |
-| `base_resp` | Status object |
+| `structure_result` | JSON string of segment types with **start/end timestamps in seconds** — segment-level only                                                  |
+| `audio_duration`   | Duration in seconds                                                                                                                         |
+| `trace_id`         | Request tracking ID                                                                                                                         |
+| `base_resp`        | Status object                                                                                                                               |
 
 `formatted_lyrics` is text with section tags, not a timed transcript — it
 cannot be a source of line/word timing however it's parsed.
@@ -163,7 +163,7 @@ text directly.
   family per the MMS paper's language count, though I could not open a
   itemized per-language table in this session — **treat "Hindi/Gujarati
   specifically work well" as plausible-but-not-line-item-verified**; the
-  language *count* claim is primary-sourced, per-language *accuracy* is not.
+  language _count_ claim is primary-sourced, per-language _accuracy_ is not.
 - **WhisperX** — VERIFIED via its own README and source: "word-level
   timestamps via forced phoneme alignment" using wav2vec2, with default
   aligner models only for `{en, fr, de, es, it}`
@@ -330,7 +330,7 @@ idea as MMS_FA/WhisperX but hosted and Gujarati-incomplete.
 
 Where a hosted API is ASR-only (Groq, AssemblyAI, Deepgram, Workers AI
 Whisper), the standard approach is: transcribe with word timestamps, then
-align the *provider's own transcript* against the *known lyric sheet* using
+align the _provider's own transcript_ against the _known lyric sheet_ using
 edit-distance / DTW, and inherit timestamps for exactly-matched words. This
 is exactly the pattern the Jam-ALT/JamendoLyrics research line uses to
 convert word-level automatic transcripts into line-level ground truth: "word
@@ -401,8 +401,8 @@ artifact (section-only → line-level, still no lyric text stored).
 ## Open risks / unknowns
 
 - **MMS_FA per-language accuracy for Hindi/Gujarati sung vocals is
-  UNVERIFIED.** The 1,100+ language *count* is primary-sourced; a specific
-  word-error/timing-error number for Hindi or Gujarati *singing* (as opposed
+  UNVERIFIED.** The 1,100+ language _count_ is primary-sourced; a specific
+  word-error/timing-error number for Hindi or Gujarati _singing_ (as opposed
   to MMS's training data, largely read religious text) was not found in this
   session. This needs the same kind of benchmark corpus Plan 007 already
   specifies (Step 1), scored against forced-alignment boundary error, not
