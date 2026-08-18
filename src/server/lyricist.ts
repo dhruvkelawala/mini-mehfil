@@ -3,8 +3,8 @@ import { isRecord } from '../room/protocol.ts';
 // The lyricist: turns a handful of keywords into lyrics MiniMax can actually sing.
 //
 // This is the whole reason songs stopped coming out random. MiniMax sings the
-// `lyrics` field literally, so "Aloopuri Khavsa" was two words stretched over two
-// minutes. Here we expand keywords into a full structured song, and expand a vibe
+// `lyrics` field literally, so an idea like "chai at a railway station" was
+// stretched over two minutes. Here we expand keywords into a full structured song, and expand a vibe
 // like "hip hop, upbeat" into the detailed production prompt the music model wants.
 //
 // Wire format copied from pi-ai's MiniMax provider, then the 88 MB dependency was
@@ -31,13 +31,13 @@ export const LYRICS_MAX_CHARS = 3500;
 const SYSTEM_PROMPT = `You are a songwriter for a mehfil — an intimate live song gathering. You turn a few keywords into a complete, singable song.
 
 You will be given:
-- IDEA: a few words about the song's subject, usually typed in Latin letters no matter what language they belong to (e.g. "Aloopuri Khavsa" is Gujarati food written in Latin script).
+- IDEA: a few words about the song's subject, usually typed in Latin letters no matter what language they belong to (e.g. "aloo puri" is an Indian snack written in Latin script).
 - VIBE: a few words about the sound (e.g. "hip hop, upbeat").
 - LANGUAGE: either "auto" or an explicit language name.
 
 Your job:
 
-1. LANGUAGE. If LANGUAGE is "auto", infer the language from the IDEA. Words written in Latin letters are frequently a romanized non-English language — "Aloopuri Khavsa" is Gujarati, not English. Judge by the words themselves, not by the alphabet they are typed in. If the idea is genuinely English, use English. If LANGUAGE names a language explicitly, use that language and ignore your inference.
+1. LANGUAGE. If LANGUAGE is "auto", infer the language from the IDEA. Words written in Latin letters are frequently a romanized non-English language — "aloo puri" is Indian, not English. Judge by the words themselves, not by the alphabet they are typed in. If the idea is genuinely English, use English. If LANGUAGE names a language explicitly, use that language and ignore your inference.
 
 2. WRITE THE SONG in that language. Real lyrics with imagery and a point of view — never a description of a song, never placeholder text, never the keywords repeated. Requirements:
    - Use section tags on their own lines, exactly from this set the music model supports: [Intro] [Verse] [Pre Chorus] [Chorus] [Post Chorus] [Bridge] [Hook] [Interlude] [Build Up] [Break] [Inst] [Solo] [Transition] [Outro]. At minimum a [Verse] and a [Chorus]. Write "[Pre Chorus]" with a space, never "[Pre-Chorus]".

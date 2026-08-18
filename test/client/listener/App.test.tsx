@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { render, screen } from '@solidjs/testing-library';
+import { cleanup, render, screen } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { App } from '../../../src/client/listener/App.tsx';
 import {
@@ -16,6 +16,8 @@ import type {
   ListenerRoomController,
   ListenerSnapshot,
 } from '../../../src/client/listener/listener-room-controller.ts';
+
+afterEach(cleanup);
 
 function listenerController(
   snapshot: ListenerSnapshot | null,
@@ -50,6 +52,49 @@ describe('listener app', () => {
     name.setAttribute('value', 'Ada');
     screen.getByRole('button', { name: 'Join the mehfil' }).click();
     expect(connect).toHaveBeenCalled();
+  });
+
+  test('defaults song-request language to auto-detect even with English first in the dropdown', () => {
+    const snapshot: ListenerSnapshot = {
+      hostPresent: true,
+      listenerCount: 1,
+      queue: [],
+      currentRecording: null,
+      currentSong: {
+        shareId: 'song-reference',
+        title: 'Monsoon Song',
+        language: 'Hindi',
+        playback: { status: 'paused', positionMs: 0, changedAt: 1 },
+        lyrics: {
+          title: 'Monsoon Song',
+          language: 'Hindi',
+          nativeScriptName: 'Devanagari',
+          isLatinScript: false,
+          lyricsNative: '[Chorus]\nबारिश की रात',
+          lyricsRoman: '[Chorus]\nBaarish ki raat',
+        },
+      },
+      setlist: [],
+    };
+    const controller = listenerController(snapshot);
+    const { container } = render(() => (
+      <App roomId="ABCDEFGH" controller={controller} />
+    ));
+    const menu = container.querySelector<HTMLDetailsElement>('.room-menu');
+    expect(menu).not.toBeNull();
+    menu!.open = true;
+    const select = screen.getByLabelText('Language') as HTMLSelectElement;
+    expect(select.value).toBe('auto');
+    const idea = screen.getByLabelText(
+      "What's the song about?",
+    ) as HTMLTextAreaElement;
+    idea.value = 'chai at a railway station';
+    screen.getByRole('button', { name: 'Send request' }).click();
+    expect(controller.submitRequest).toHaveBeenCalledWith({
+      idea: 'chai at a railway station',
+      vibe: '',
+      language: 'auto',
+    });
   });
 
   test('renders one untimed primary line', () => {
