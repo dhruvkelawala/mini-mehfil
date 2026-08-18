@@ -271,11 +271,18 @@ export function normalizeLyricTiming(value: unknown): LyricTiming | null {
 }
 
 /**
- * Maps timing segments onto written sections by family in occurrence order —
- * never by the provider's transcribed text.
+ * Maps timing segments onto written sections by family — never by the
+ * provider's transcribed text. The match is an order-preserving alignment
+ * that maximizes how many written sections pair with provider segments, so
+ * one early cross-family coincidence cannot leap past the rest of the sheet.
+ * The provider often splits or repeats a sung section (two chorus segments
+ * for one written chorus, a final repeated chorus); segments left unmatched
+ * by the alignment inherit the nearest matched section of the same family,
+ * so repeats show the words they repeat instead of an empty stage.
  *
- * Returns `null` when the mapping is too weak to trust: fewer than two mapped
- * segments, or fewer than half of the non-silence segments mapped.
+ * Returns `null` when the alignment is too weak to trust: fewer than two
+ * matched segments, or fewer than half of the non-silence segments matched.
+ * Inherited repeats never count toward that confidence.
  *
  * Both arguments are `unknown` because they can arrive from stored JSON.
  */
@@ -300,34 +307,69 @@ export function buildSectionTimeline(
       return null;
     const parsed = candidates as unknown as LyricSection[];
 
-    let sectionCursor = 0;
-    let mappedCount = 0;
-    let timedSectionCount = 0;
-    const timeline = normalized.segments.map((segment): TimelineEntry => {
-      let sectionIndex: number | null = null;
-      if (segment.label !== 'silence') {
-        timedSectionCount += 1;
-        const match = parsed.findIndex(
-          (section, index) =>
-            index >= sectionCursor && section.family === segment.label,
-        );
-        const matched = match === -1 ? undefined : parsed[match];
-        if (matched) {
-          sectionIndex = matched.index;
-          sectionCursor = match + 1;
-          mappedCount += 1;
-        }
-      }
-      return {
-        start: segment.start,
-        end: segment.end,
-        label: segment.label,
-        sectionIndex,
-      };
-    });
+    const sung = normalized.segments
+      .map((segment, position) => ({ label: segment.label, position }))
+      .filter((segment) => segment.label !== 'silence');
 
-    if (mappedCount < 2 || mappedCount * 2 < timedSectionCount) return null;
-    return timeline;
+    // best[i][j] is the largest number of order-preserving family matches
+    // between sung segments i.. and written sections j.. .
+    const best = Array.from({ length: sung.length + 1 }, () =>
+      new Array<number>(parsed.length + 1).fill(0),
+    );
+    for (let i = sung.length - 1; i >= 0; i -= 1) {
+      for (let j = parsed.length - 1; j >= 0; j -= 1) {
+        let candidate = Math.max(best[i + 1]![j]!, best[i]![j + 1]!);
+        if (sung[i]!.label === parsed[j]!.family)
+          candidate = Math.max(candidate, 1 + best[i + 1]![j + 1]!);
+        best[i]![j] = candidate;
+      }
+    }
+
+    const assigned = new Array<number | null>(normalized.segments.length).fill(
+      null,
+    );
+    for (let i = 0, j = 0; i < sung.length && j < parsed.length;) {
+      if (
+        sung[i]!.label === parsed[j]!.family &&
+        best[i]![j] === 1 + best[i + 1]![j + 1]!
+      ) {
+        assigned[sung[i]!.position] = parsed[j]!.index;
+        i += 1;
+        j += 1;
+      } else if (best[i + 1]![j]! >= best[i]![j + 1]!) {
+        i += 1;
+      } else {
+        j += 1;
+      }
+    }
+
+    const mappedCount = best[0]![0]!;
+    if (mappedCount < 2 || mappedCount * 2 < sung.length) return null;
+
+    // Unmatched sung segments are provider splits or repeats: give them the
+    // nearest matched section of the same family, looking back then ahead.
+    const lastByFamily = new Map<string, number>();
+    for (const { label, position } of sung) {
+      const index = assigned[position] ?? null;
+      if (index !== null) lastByFamily.set(label, index);
+      else if (lastByFamily.has(label))
+        assigned[position] = lastByFamily.get(label)!;
+    }
+    const nextByFamily = new Map<string, number>();
+    for (let at = sung.length - 1; at >= 0; at -= 1) {
+      const { label, position } = sung[at]!;
+      const index = assigned[position] ?? null;
+      if (index !== null) nextByFamily.set(label, index);
+      else if (nextByFamily.has(label))
+        assigned[position] = nextByFamily.get(label)!;
+    }
+
+    return normalized.segments.map((segment, position) => ({
+      start: segment.start,
+      end: segment.end,
+      label: segment.label,
+      sectionIndex: assigned[position] ?? null,
+    }));
   } catch {
     return null;
   }
