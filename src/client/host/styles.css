@@ -1323,6 +1323,16 @@ input::placeholder {
   background: #e6a653;
   box-shadow: 0 0 14px rgba(230, 166, 83, 0.5);
 }
+.share-notice {
+  display: inline-block;
+  max-width: 100%;
+  color: #f4d9a8;
+  font:
+    500 clamp(13px, 1.6vw, 16px)/1.45 'Avenir Next',
+    'Gill Sans',
+    sans-serif;
+  overflow-wrap: anywhere;
+}
 .performance .peek {
   width: min(360px, 100%);
   margin: 24px auto 0;

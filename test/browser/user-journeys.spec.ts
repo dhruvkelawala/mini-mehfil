@@ -804,15 +804,17 @@ test('shared playback refreshes progress and lyrics between media events', async
   await expect(page.getByRole('slider', { name: 'Seek' })).toHaveValue('50');
   await expect(page.locator('.lyric-line:not([hidden])')).not.toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Copy this song link' }).click();
-  await expect(
-    page.getByRole('button', { name: 'Copy this song link' }),
-  ).toContainText('Copied');
+  const shareButton = page.getByRole('button', { name: 'Copy this song link' });
+  await shareButton.click();
+  await expect(shareButton).toContainText('Copied');
   expect(
     await page.evaluate(
       () => (window as typeof window & { __copiedText?: string }).__copiedText,
     ),
   ).toBe(`http://127.0.0.1:4387/s/${sharedSongId}`);
+  // The outcome is a report, not a resting state: a button stuck on "Copied"
+  // reads as broken the next time someone wants the link.
+  await expect(shareButton).toContainText('Share');
 });
 
 test('the shared page invites the listener to make their own song', async ({
@@ -879,4 +881,5 @@ test('the host shares the song the room is playing', async ({ page }) => {
       () => (window as typeof window & { __copiedText?: string }).__copiedText,
     ),
   ).toBe(`https://rooms.example.test/s/${sharedSongId}`);
+  await expect(shareButton).toContainText('Share');
 });

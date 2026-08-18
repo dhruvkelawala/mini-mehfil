@@ -536,8 +536,12 @@ textarea {
 .player-shell audio {
   display: none;
 }
+.share-notice {
+  color: var(--amber);
+  overflow-wrap: anywhere;
+}
 .player-share {
-  width: 46px;
+  min-width: 46px;
   min-height: 46px;
   display: grid;
   row-gap: 3px;
@@ -564,6 +568,7 @@ textarea {
 }
 .player-share span {
   font-size: 8px;
+  white-space: nowrap;
   line-height: 1;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -663,7 +668,7 @@ textarea {
     grid-template-columns: 50px minmax(0, 1fr) auto 40px;
   }
   .player-share {
-    width: 40px;
+    min-width: 40px;
   }
   .record {
     width: 50px;
