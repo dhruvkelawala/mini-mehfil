@@ -35,7 +35,6 @@ export interface StoryFrame {
   activeLine: number;
 }
 
-/** Meta asks for up to 20 seconds; a Story cuts anything longer. */
 /**
  * Meta's Sharing to Stories doc asks for up to 20 seconds. Instagram itself
  * takes longer clips and splits them, so the lengths on offer run past that;
@@ -397,6 +396,17 @@ function tapSong(audio: HTMLMediaElement): SongTap {
   const tap = { context, destination };
   taps.set(audio, tap);
   return tap;
+}
+
+/**
+ * Makes a previously recorded-from element audible again. Once
+ * `createMediaElementSource` exists the element sounds only through its
+ * `AudioContext`, and a suspended context plays silence — so scrubbing after
+ * one recording would be mute without this.
+ */
+export function ensureSongAudible(audio: HTMLMediaElement): void {
+  const tap = taps.get(audio);
+  if (tap && tap.context.state === 'suspended') void tap.context.resume();
 }
 
 export interface StoryVideoOptions {
