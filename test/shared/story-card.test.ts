@@ -6,18 +6,8 @@ import { parseLyricSheet } from '../../src/lyrics/lyric-sync.ts';
 import {
   storyCardHost,
   storyFileName,
-  storyParts,
   storyStanza,
 } from '../../src/shared/story-card.ts';
-
-function partsOf(lyrics: string) {
-  const sheet = parseLyricSheet({
-    isLatinScript: true,
-    lyricsNative: lyrics,
-    lyricsRoman: lyrics,
-  });
-  return storyParts(sheet.sections);
-}
 
 function stanzaOf(lyrics: string): string[] {
   const sheet = parseLyricSheet({
@@ -105,63 +95,4 @@ test('the painted host comes from the origin, and never throws on a bad one', ()
   assert.equal(storyCardHost('http://localhost:4173'), 'localhost:4173');
   assert.equal(storyCardHost('not a url'), 'minimehfil.wtf');
   assert.equal(storyCardHost(''), 'minimehfil.wtf');
-});
-
-test('every sung part of the song is offered, in the order it is sung', () => {
-  const parts = partsOf(
-    '[Intro]\nOoh\n[Verse]\nRain on the window\n[Chorus]\nSing it back to me',
-  );
-  assert.deepEqual(
-    parts.map((part) => part.label),
-    ['Intro', 'Verse', 'Chorus'],
-  );
-  assert.deepEqual(parts[2]?.stanza, [
-    { primary: 'Sing it back to me', secondary: '' },
-  ]);
-});
-
-test('parts that share a name are numbered so a person can tell them apart', () => {
-  assert.deepEqual(
-    partsOf(
-      '[Verse]\nRain on the window\n[Chorus]\nSing it back\n[Verse]\nUnder amber light',
-    ).map((part) => part.label),
-    ['Verse 1', 'Chorus', 'Verse 2'],
-  );
-});
-
-test('a part carries the index of the section it plays', () => {
-  const parts = partsOf('[Verse]\nRain on the window\n[Chorus]\nSing it back');
-  assert.deepEqual(
-    parts.map((part) => part.sectionIndex),
-    [0, 1],
-  );
-});
-
-test('an instrumental section is never offered as a part', () => {
-  assert.deepEqual(
-    partsOf('[Verse]\nRain on the window\n[Inst]\n[Chorus]\nSing it back').map(
-      (part) => part.label,
-    ),
-    ['Verse', 'Chorus'],
-  );
-});
-
-test('a sheet with no cues still offers one part to record', () => {
-  const parts = partsOf('Rain on the window\nUnder amber light');
-  assert.equal(parts.length, 1);
-  assert.equal(parts[0]?.label, 'The song');
-  assert.equal(parts[0]?.stanza.length, 2);
-});
-
-test('a sheet with nothing sung offers no parts at all', () => {
-  assert.deepEqual(partsOf(''), []);
-});
-
-test('a part is named as the sheet wrote it, in title case', () => {
-  assert.deepEqual(
-    partsOf('[PRE CHORUS]\nAlmost there\n[hook]\nSing it back').map(
-      (part) => part.label,
-    ),
-    ['Pre Chorus', 'Hook'],
-  );
 });

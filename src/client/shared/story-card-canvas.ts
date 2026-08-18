@@ -36,8 +36,14 @@ export interface StoryFrame {
 }
 
 /** Meta asks for up to 20 seconds; a Story cuts anything longer. */
-const CLIP_MAX_SECONDS = 20;
-const CLIP_MIN_SECONDS = 8;
+/**
+ * Meta's Sharing to Stories doc asks for up to 20 seconds. Instagram itself
+ * takes longer clips and splits them, so the lengths on offer run past that;
+ * 20 stays the one documented to arrive whole.
+ */
+export const STORY_CLIP_LENGTHS = [10, 15, 20, 30];
+const CLIP_MAX_SECONDS = 30;
+const CLIP_MIN_SECONDS = 5;
 
 /** How far the courtyard drifts across a clip, as a fraction of its size. */
 const SCENE_DRIFT = 0.06;
@@ -334,9 +340,10 @@ export function drawStoryCard(
 export function storyClipAt(
   startSeconds: number,
   durationSeconds: number,
+  wantedSeconds = CLIP_MAX_SECONDS,
 ): StoryClip {
   const duration = Number.isFinite(durationSeconds) ? durationSeconds : 0;
-  const longest = Math.min(CLIP_MAX_SECONDS, duration);
+  const longest = Math.min(wantedSeconds, CLIP_MAX_SECONDS, duration);
   const start = Math.min(
     Math.max(0, startSeconds),
     Math.max(0, duration - longest),
@@ -347,35 +354,6 @@ export function storyClipAt(
 /** True when a stretch of song is long enough to be worth recording. */
 export function isRecordableClip(clip: StoryClip): boolean {
   return clip.seconds >= CLIP_MIN_SECONDS;
-}
-
-/**
- * Which part of the song is being sung at a moment.
- *
- * With a trusted timeline this is exact. Without one the parts are assumed to
- * run evenly, which is a guess — but a guess that moves as a person scrubs, so
- * the words on the card still travel with the song rather than standing still.
- */
-export function storyPartAt(
-  timeline:
-    { start: number; end: number; sectionIndex: number | null }[] | null,
-  sectionIndexes: (number | null)[],
-  atSeconds: number,
-  durationSeconds: number,
-): number {
-  if (sectionIndexes.length === 0) return -1;
-  if (timeline) {
-    const entry = timeline.find(
-      (value) => value.start <= atSeconds && atSeconds < value.end,
-    );
-    const found =
-      entry == null ? -1 : sectionIndexes.indexOf(entry.sectionIndex);
-    if (found >= 0) return found;
-  }
-  const duration = Number.isFinite(durationSeconds) ? durationSeconds : 0;
-  if (duration <= 0) return 0;
-  const at = Math.floor((atSeconds / duration) * sectionIndexes.length);
-  return Math.min(sectionIndexes.length - 1, Math.max(0, at));
 }
 
 /**
@@ -428,6 +406,12 @@ export interface StoryVideoOptions {
   audio: HTMLMediaElement;
   clipStart: number;
   seconds: number;
+  /**
+   * When the song's own timing is trusted, the moment each stanza line is
+   * sung. The card then lights the line the singer is on rather than dividing
+   * the clip evenly and hoping.
+   */
+  lineStarts?: number[];
   onProgress?: (fraction: number) => void;
 }
 
@@ -447,7 +431,8 @@ export interface StoryVideoOptions {
 export async function recordStoryVideo(
   options: StoryVideoOptions,
 ): Promise<Blob> {
-  const { canvas, card, audio, clipStart, seconds, onProgress } = options;
+  const { canvas, card, audio, clipStart, seconds, lineStarts, onProgress } =
+    options;
   const type = storyVideoType();
   if (!type) throw new Error('This browser cannot record a story video.');
 
@@ -498,10 +483,15 @@ export async function recordStoryVideo(
       const tick = () => {
         const elapsed = audio.currentTime - clipStart;
         const progress = Math.min(1, Math.max(0, elapsed / seconds));
-        const activeLine = Math.min(
-          card.stanza.length - 1,
-          Math.floor(progress * card.stanza.length),
-        );
+        const activeLine = lineStarts?.length
+          ? lineStarts.reduce(
+              (at, start, index) => (audio.currentTime >= start ? index : at),
+              0,
+            )
+          : Math.min(
+              card.stanza.length - 1,
+              Math.floor(progress * card.stanza.length),
+            );
         drawStoryCard(canvas, card, image, { progress, activeLine });
         onProgress?.(progress);
         if (progress >= 1 || audio.ended) {

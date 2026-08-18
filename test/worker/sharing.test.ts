@@ -153,6 +153,7 @@ class Element {
     this.className = '';
     this.value = 0;
     this.clicks = 0;
+    this.dataset = {};
     this.style = {};
   }
   addEventListener(type, listener) {
@@ -270,10 +271,8 @@ async function playbackHarness(metadata, mediaDuration, options = {}) {
     ['#story-canvas', new Element()],
     ['#story-bar', new Element()],
     ['#story-note', new Element()],
-    ['#story-track', new Element()],
-    ['#story-bands', new Element()],
-    ['#story-window', new Element()],
     ['#story-where', new Element()],
+    ['#story-lengths', new Element()],
     ['#story-progress', new Element()],
     ['#story-go', new Element()],
     ['#story-close', new Element()],
@@ -464,7 +463,6 @@ test('a timed share follows its sections and never shows stale sung lines', asyn
     'expectedDurationSeconds',
     'lines',
     'pacing',
-    'parts',
     'sections',
     'timeline',
   ]);
