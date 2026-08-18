@@ -338,18 +338,23 @@ export function storyClip(
     { start: number; end: number; sectionIndex: number | null }[] | null,
   sectionIndex: number | null,
   durationSeconds: number,
+  partIndex = 0,
+  partCount = 1,
 ): StoryClip {
   const duration = Number.isFinite(durationSeconds) ? durationSeconds : 0;
   const entry =
     timeline && sectionIndex !== null
       ? timeline.find((value) => value.sectionIndex === sectionIndex)
       : undefined;
+  // Without a trusted timeline the parts are spread evenly across the song.
+  // It is a guess, but it is a guess that moves when the person picks.
+  const guessed =
+    partCount > 1
+      ? (duration * partIndex) / partCount
+      : duration * CLIP_UNTIMED_START;
   const start = entry
     ? entry.start
-    : Math.max(
-        0,
-        Math.min(duration * CLIP_UNTIMED_START, duration - CLIP_MAX_SECONDS),
-      );
+    : Math.max(0, Math.min(guessed, duration - CLIP_MAX_SECONDS));
   const wanted = entry
     ? Math.max(CLIP_MIN_SECONDS, entry.end - entry.start)
     : CLIP_MAX_SECONDS;
