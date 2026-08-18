@@ -814,3 +814,69 @@ test('shared playback refreshes progress and lyrics between media events', async
     ),
   ).toBe(`http://127.0.0.1:4387/s/${sharedSongId}`);
 });
+
+test('the shared page invites the listener to make their own song', async ({
+  page,
+}) => {
+  await page.goto(`/s/${sharedSongId}`);
+  // The performance overlay is fixed across the whole viewport, so the topbar
+  // has to sit above it or this invitation is unclickable.
+  await page.getByRole('link', { name: 'Make your own song' }).click();
+  await expect(page).toHaveURL('http://127.0.0.1:4387/');
+});
+
+test('the host shares the song the room is playing', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText(value: string) {
+          (window as typeof window & { __copiedText?: string }).__copiedText =
+            value;
+          return Promise.resolve();
+        },
+      },
+    });
+    HTMLMediaElement.prototype.load = function () {
+      this.dispatchEvent(new Event('loadedmetadata'));
+    };
+    HTMLMediaElement.prototype.play = function () {
+      this.dispatchEvent(new Event('play'));
+      return Promise.resolve();
+    };
+  });
+
+  const state = createRoomState({
+    roomId: 'ABCDEFGH',
+    openedAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+  });
+  state.hostPresent = true;
+  state.currentSong = {
+    requestId: null,
+    shareId: sharedSongId,
+    title: 'Timed Rain',
+    language: 'English',
+    startedAt: Date.now(),
+    lyrics: timedLyrics,
+    playback: { status: 'paused', positionMs: 0, changedAt: Date.now() },
+  };
+  await installWebSocketHarness(page, { host: projectHostFixture(state) });
+  await page.goto('/');
+  await page
+    .getByRole('button', { name: 'Open this mehfil to friends' })
+    .click();
+  await expect(page.locator('#track-title')).toHaveText('Timed Rain');
+
+  // The room published this song when it was recorded, so sharing it is a copy
+  // of the link the setlist already shows, not a second trip to the service.
+  const shareButton = page.getByRole('button', { name: 'Share this song' });
+  await expect(shareButton).toBeEnabled();
+  await shareButton.click();
+  await expect(shareButton).toContainText('Copied');
+  expect(
+    await page.evaluate(
+      () => (window as typeof window & { __copiedText?: string }).__copiedText,
+    ),
+  ).toBe(`https://rooms.example.test/s/${sharedSongId}`);
+});
