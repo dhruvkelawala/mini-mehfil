@@ -420,7 +420,10 @@ describe('section timeline mapping', () => {
     ]);
   });
 
-  test('a leading repeat inherits the section it repeats from ahead', () => {
+  test('an opening segment before the first anchor stays unmapped', () => {
+    // Words are only inherited between or after alignment anchors. Before the
+    // first anchor there is no evidence the written sheet has started, so an
+    // unmatched opening segment shows nothing instead of guessing ahead.
     const parsed = sections('[Verse]\nOne\n[Chorus]\nHook');
     const timeline = buildSectionTimeline(
       parsed,
@@ -430,7 +433,132 @@ describe('section timeline mapping', () => {
         { start: 20, end: 30, label: 'chorus' },
       ]),
     );
-    expect(timeline?.map((entry) => entry.sectionIndex)).toEqual([1, 0, 1]);
+    expect(timeline?.map((entry) => entry.sectionIndex)).toEqual([null, 0, 1]);
+  });
+
+  test('does not guess words for a mislabeled opening while healing interior gaps', () => {
+    // Real structure from the 2026-08-18 "London Lights" share: the provider
+    // labeled the opening instrumental 'chorus' and heard no intro at all.
+    // The opening segment must stay unmapped (empty stage over intro music),
+    // while the real first chorus, bracketed by anchors, still inherits.
+    const parsed = sections(
+      [
+        '[Intro]',
+        'Open',
+        '[Verse]',
+        'One',
+        '[Pre Chorus]',
+        'Rise',
+        '[Chorus]',
+        'Hook',
+        '[Verse 2]',
+        'Two',
+        '[Pre Chorus 2]',
+        'Rise again',
+        '[Chorus 2]',
+        'Hook again',
+        '[Bridge]',
+        'Turn',
+        '[Outro]',
+        'Close',
+      ].join('\n'),
+    );
+    const timeline = buildSectionTimeline(
+      parsed,
+      timingOf([
+        { start: 0, end: 11.52, label: 'chorus' },
+        { start: 11.52, end: 30.361, label: 'verse' },
+        { start: 30.361, end: 44.042, label: 'chorus' },
+        { start: 44.042, end: 65.643, label: 'verse' },
+        { start: 65.643, end: 79.443, label: 'chorus' },
+        { start: 79.443, end: 92.884, label: 'chorus' },
+        { start: 92.884, end: 115.902, label: 'chorus' },
+      ]),
+    );
+    expect(timeline?.map((entry) => entry.sectionIndex)).toEqual([
+      null, // mislabeled opening: no anchor yet, show nothing
+      1, // verse
+      3, // real first chorus, healed between anchors
+      2, // verse-family near miss: pre-chorus words during verse two
+      3, // chorus
+      3, // chorus repeat
+      6, // final written chorus
+    ]);
+  });
+
+  test('a lone segment between anchors adopts the lone written section between them', () => {
+    // Real structure from the 2026-08-18 "The Group Chat Blues" share: the
+    // provider labeled the sung bridge 'chorus', so no family match exists.
+    // Lyrics are sung verbatim, so the one written section the alignment left
+    // between two anchors must be what the one unmatched segment between the
+    // same anchors is singing, whatever the provider called it.
+    const parsed = sections(
+      [
+        '[Verse]',
+        'One',
+        '[Pre Chorus]',
+        'Rise',
+        '[Chorus]',
+        'Hook',
+        '[Verse 2]',
+        'Two',
+        '[Chorus 2]',
+        'Hook again',
+        '[Bridge]',
+        'Turn',
+        '[Outro]',
+        'Close',
+      ].join('\n'),
+    );
+    const timeline = buildSectionTimeline(
+      parsed,
+      timingOf([
+        { start: 0, end: 20.041, label: 'intro' },
+        { start: 20.041, end: 39.842, label: 'verse' },
+        { start: 39.842, end: 54.722, label: 'verse' },
+        { start: 54.722, end: 81.963, label: 'chorus' },
+        { start: 81.963, end: 99.244, label: 'verse' },
+        { start: 99.244, end: 116.765, label: 'chorus' },
+        { start: 116.765, end: 136.445, label: 'chorus' },
+        { start: 136.445, end: 149.646, label: 'outro' },
+      ]),
+    );
+    expect(timeline?.map((entry) => entry.sectionIndex)).toEqual([
+      null, // intro music with no written intro
+      0, // verse
+      1, // pre chorus
+      2, // chorus
+      3, // verse 2
+      4, // chorus 2
+      5, // the sung bridge the provider heard as another chorus
+      6, // outro
+    ]);
+  });
+
+  test('a sandwiched section is not family evidence for later repeats', () => {
+    // The sandwich rule distrusts the provider label by construction, so its
+    // assignment must not seed family inheritance: a trailing chorus repeat
+    // inherits the chorus, not the bridge that a mislabeled chorus adopted.
+    const parsed = sections(
+      '[Verse]\nOne\n[Chorus]\nHook\n[Bridge]\nTurn\n[Outro]\nClose',
+    );
+    const timeline = buildSectionTimeline(
+      parsed,
+      timingOf([
+        { start: 0, end: 10, label: 'verse' },
+        { start: 10, end: 20, label: 'chorus' },
+        { start: 20, end: 30, label: 'chorus' },
+        { start: 30, end: 40, label: 'outro' },
+        { start: 40, end: 50, label: 'chorus' },
+      ]),
+    );
+    expect(timeline?.map((entry) => entry.sectionIndex)).toEqual([
+      0, // verse
+      1, // chorus
+      2, // sandwiched: the sung bridge the provider heard as chorus
+      3, // outro
+      1, // trailing repeat inherits the chorus, not the bridge
+    ]);
   });
 
   test('keeps unmappable segments only when at least two and half of non-silence segments map', () => {

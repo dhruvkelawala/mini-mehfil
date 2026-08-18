@@ -366,12 +366,14 @@ export function buildSectionTimeline(
     const assigned = new Array<number | null>(normalized.segments.length).fill(
       null,
     );
+    let firstAnchor = Number.POSITIVE_INFINITY;
     for (let i = 0, j = 0; i < sung.length && j < parsed.length;) {
       if (
         sung[i]!.label === parsed[j]!.family &&
         best[i]![j] === 1 + best[i + 1]![j + 1]!
       ) {
         assigned[sung[i]!.position] = parsed[j]!.index;
+        if (sung[i]!.position < firstAnchor) firstAnchor = sung[i]!.position;
         i += 1;
         j += 1;
       } else if (best[i + 1]![j]! >= best[i]![j + 1]!) {
@@ -384,21 +386,44 @@ export function buildSectionTimeline(
     const mappedCount = best[0]![0]!;
     if (mappedCount < 2 || mappedCount * 2 < sung.length) return null;
 
+    // Lyrics are sung verbatim, so a written section the alignment could not
+    // match was still sung somewhere between its neighbors. When exactly one
+    // unmatched sung segment sits between two aligned segments whose sections
+    // sandwich exactly one unmatched written section, pair them positionally
+    // even though the provider used a different label for it.
+    // A sandwiched assignment contradicts its provider label by construction,
+    // so it is display-only: it must never become family evidence.
+    const sandwiched = new Set<number>();
+    for (let at = 1; at < sung.length - 1; at += 1) {
+      const position = sung[at]!.position;
+      if (assigned[position] !== null) continue;
+      const before = assigned[sung[at - 1]!.position] ?? null;
+      const after = assigned[sung[at + 1]!.position] ?? null;
+      if (before === null || after === null || after - before !== 2) continue;
+      assigned[position] = before + 1;
+      sandwiched.add(position);
+    }
+
     // Unmatched sung segments are provider splits or repeats: give them the
     // nearest matched section of the same family, looking back then ahead.
+    // Segments before the first anchor never inherit — with no earlier match
+    // there is no evidence the written sheet has started, and a mislabeled
+    // opening (an instrumental heard as 'chorus') must not display words.
     const lastByFamily = new Map<string, number>();
     for (const { label, position } of sung) {
       const index = assigned[position] ?? null;
-      if (index !== null) lastByFamily.set(label, index);
-      else if (lastByFamily.has(label))
+      if (index !== null) {
+        if (!sandwiched.has(position)) lastByFamily.set(label, index);
+      } else if (lastByFamily.has(label))
         assigned[position] = lastByFamily.get(label)!;
     }
     const nextByFamily = new Map<string, number>();
     for (let at = sung.length - 1; at >= 0; at -= 1) {
       const { label, position } = sung[at]!;
       const index = assigned[position] ?? null;
-      if (index !== null) nextByFamily.set(label, index);
-      else if (nextByFamily.has(label))
+      if (index !== null) {
+        if (!sandwiched.has(position)) nextByFamily.set(label, index);
+      } else if (position > firstAnchor && nextByFamily.has(label))
         assigned[position] = nextByFamily.get(label)!;
     }
 
