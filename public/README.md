@@ -12,9 +12,11 @@ the Worker-rendered room and share pages need must be linked absolutely at
 
 ## Tab icon
 
-The mark is the Devanagari **म** under an amber eighth note, cream on the
-courtyard night green. `favicon.svg` is the source of truth and the file to
-edit; the other two are rasterized from it.
+The mark is the Devanagari **म** alone, cream on the courtyard night green,
+40px tall and dead-centered on the 64px tile. One letter, nothing else: at
+favicon sizes a single confident glyph beats any composition.
+`favicon.svg` is the source of truth and the file to edit; the other two are
+rasterized from it.
 
 The glyph is a **path, not text**. A favicon renders on machines that may have
 no Devanagari font installed, where a `font-family` reference would show tofu.
@@ -50,9 +52,9 @@ rsvg-convert -w 180 -h 180 /tmp/icon-square.svg -o public/apple-touch-icon.png
 ```
 
 Check the result at 16px before committing, zoomed with nearest-neighbour so
-you see real pixels. Two things break there and nowhere else: the counter of
-**म** fills in if the glyph is too light or too small, and the note merges into
-the shirorekha if the gap between them drops below about 6px of the 64px tile.
+you see real pixels. One thing breaks there and nowhere else: the counter of
+**म** fills in if the glyph is too light or too small. Keep the Bold weight
+and don't shrink it below ~37px of the 64px tile.
 
 ```bash
 rsvg-convert -w 16 -h 16 public/favicon.svg -o /tmp/icon-16.png
