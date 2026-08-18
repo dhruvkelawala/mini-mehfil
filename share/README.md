@@ -60,9 +60,14 @@ HTML, a public environment file, or Wrangler's plaintext `vars` section.
 `MEHFIL_PUBLIC_URL` is a non-secret Worker variable set in `wrangler.jsonc`; it
 keeps playback metadata on the canonical production Vercel origin.
 
-Once a stable public PNG or JPEG is deployed, set `SHARE_PREVIEW_IMAGE_URL` as a
-Worker variable to its absolute HTTPS URL. Shared pages then include it in their
-Open Graph and Twitter player metadata.
+`SHARE_PREVIEW_IMAGE_URL` is the second non-secret Worker variable. It points at
+`https://minimehfil.wtf/og/mini-mehfil-card.jpg`, the 1200x630 card committed at
+`public/og/` and served from the Vercel origin, and shared pages put it in their
+`og:image` and `twitter:image` tags. Shared pages advertise a
+`summary_large_image` card rather than a player card, which X renders only for
+approved domains; the `og:audio` tags remain for readers that use them. Point the
+variable at a different absolute HTTPS URL to change the card, and rerun
+`pnpm run worker:types` after editing `vars`.
 
 The share lifecycle rule applies to both the MP3 and JSON object, so expired shares
 fail with the same polite missing-song page. Change the retention period to suit

@@ -6,6 +6,9 @@
   "compatibility_date": "2026-08-11",
   "vars": {
     "MEHFIL_PUBLIC_URL": "https://minimehfil.wtf",
+    // Committed at public/og/mini-mehfil-card.jpg and served from the Vercel
+    // origin; the Worker only links to it. See public/og/README.md.
+    "SHARE_PREVIEW_IMAGE_URL": "https://minimehfil.wtf/og/mini-mehfil-card.jpg",
   },
   "assets": {
     "directory": "../dist/listener",

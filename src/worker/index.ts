@@ -6,7 +6,6 @@ export { MehfilRoom } from './mehfil-room.ts';
 
 interface WorkerEnv extends Env {
   MEHFIL_SHARE_SECRET?: string;
-  SHARE_PREVIEW_IMAGE_URL?: string;
 }
 
 export default {
@@ -22,7 +21,7 @@ export default {
       rateLimit,
       uploadSecret: env.MEHFIL_SHARE_SECRET ?? '',
       publicBaseUrl: env.MEHFIL_PUBLIC_URL,
-      previewImageUrl: env.SHARE_PREVIEW_IMAGE_URL ?? '',
+      previewImageUrl: env.SHARE_PREVIEW_IMAGE_URL,
     });
     const routeRoomRequest = createRoomRouter({
       directory: createDurableRoomDirectory(env.ROOMS),

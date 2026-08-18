@@ -69,6 +69,22 @@ test('serves the app', async () => {
   });
 });
 
+test('serves the social preview card as an image, not as opaque bytes', async () => {
+  // Responses carry nosniff, so a crawler drops a card served as
+  // application/octet-stream and the shared link loses its picture.
+  const root = mkdtempSync(join(tmpdir(), 'mini-mehfil-card-'));
+  writeFileSync(join(root, 'card.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  await withServer(
+    global.fetch,
+    async (base) => {
+      const response = await fetch(`${base}/card.jpg`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), 'image/jpeg');
+    },
+    { staticRoot: root },
+  );
+});
+
 test('serves the app root when diagnostics use a query string', async () => {
   await withServer(global.fetch, async (base) => {
     const response = await fetch(`${base}/?mediaDebug=1`);
