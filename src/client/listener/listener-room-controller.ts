@@ -20,6 +20,7 @@ export interface ListenerSnapshot {
   hostPresent: boolean;
   listenerCount: number;
   queue: Array<{ id: string; status: string; mine: boolean }>;
+  recordingQueue: string[];
   currentRecording: {
     requestId: string;
     startedAt: number;
@@ -86,7 +87,10 @@ function parseSnapshot(value: unknown): ListenerSnapshot | null {
     typeof value.hostPresent !== 'boolean' ||
     typeof value.listenerCount !== 'number' ||
     !Array.isArray(value.queue) ||
-    !Array.isArray(value.setlist)
+    !Array.isArray(value.setlist) ||
+    (value.recordingQueue !== undefined &&
+      (!Array.isArray(value.recordingQueue) ||
+        !value.recordingQueue.every((item) => typeof item === 'string')))
   ) {
     return null;
   }
@@ -102,6 +106,11 @@ function parseSnapshot(value: unknown): ListenerSnapshot | null {
     }
     queue.push({ id: item.id, status: item.status, mine: item.mine });
   }
+  const recordingQueue = Array.isArray(value.recordingQueue)
+    ? value.recordingQueue.filter(
+        (requestId): requestId is string => typeof requestId === 'string',
+      )
+    : queue.filter((item) => item.status === 'queued').map((item) => item.id);
   const setlist: ListenerSnapshot['setlist'] = [];
   for (const item of value.setlist) {
     if (
@@ -134,6 +143,7 @@ function parseSnapshot(value: unknown): ListenerSnapshot | null {
     hostPresent: value.hostPresent,
     listenerCount: value.listenerCount,
     queue,
+    recordingQueue,
     currentRecording,
     currentSong,
     setlist,

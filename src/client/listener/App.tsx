@@ -91,7 +91,9 @@ export function App(props: {
         </div>
         <div class="listener-label">Listener</div>
       </header>
-      <main class="room-layout">
+      <main
+        class={`room-layout ${controller.snapshot()?.currentSong ? 'has-song' : ''}`}
+      >
         <section
           class={`identity ${controller.snapshot()?.currentSong ? 'has-song' : ''}`}
           aria-labelledby="brand-title"

@@ -54,11 +54,56 @@ describe('listener app', () => {
     expect(connect).toHaveBeenCalled();
   });
 
+  test('presents requests with the host recording workflow hierarchy', () => {
+    const controller = listenerController({
+      hostPresent: true,
+      listenerCount: 2,
+      queue: [
+        { id: 'recording', status: 'recording', mine: true },
+        { id: 'waiting', status: 'pending', mine: false },
+        { id: 'queued-first', status: 'queued', mine: false },
+        { id: 'queued-second', status: 'queued', mine: true },
+        { id: 'declined', status: 'declined', mine: true },
+      ],
+      recordingQueue: ['queued-second', 'queued-first'],
+      currentRecording: { requestId: 'recording', startedAt: 1 },
+      currentSong: null,
+      setlist: [{ shareId: 'song-reference', title: 'Monsoon Song' }],
+    });
+
+    render(() => <App roomId="ABCDEFGH" controller={controller} />);
+
+    expect(screen.getByRole('heading', { name: 'Requests' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Recording now' })).toBeTruthy();
+    expect(
+      document.querySelector('.listener-recording-now strong')?.textContent,
+    ).toBe('Your request');
+    expect(screen.getByRole('region', { name: 'Up next' })).toBeTruthy();
+    expect(
+      Array.from(
+        document.querySelectorAll(
+          '.listener-up-next .listener-request-copy strong',
+        ),
+      ).map((element) => element.textContent),
+    ).toEqual(['Your request', 'Listener request']);
+    expect(
+      screen.getByRole('region', { name: 'Waiting on host' }),
+    ).toBeTruthy();
+    expect(screen.getByText('Waiting for host')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Not selected' })).toBeTruthy();
+    expect(screen.getByText('Not selected by host')).toBeTruthy();
+    expect(
+      screen.getByRole<HTMLAnchorElement>('link', { name: 'Monsoon Song' })
+        .pathname,
+    ).toBe('/s/song-reference');
+  });
+
   test('renders one untimed primary line', () => {
     const controller = listenerController({
       hostPresent: true,
       listenerCount: 1,
       queue: [],
+      recordingQueue: [],
       currentRecording: null,
       currentSong: {
         shareId: 'song-reference',
@@ -77,6 +122,9 @@ describe('listener app', () => {
       setlist: [],
     });
     render(() => <App roomId="ABCDEFGH" controller={controller} />);
+    expect(
+      document.querySelector('.room-layout')?.classList.contains('has-song'),
+    ).toBe(true);
     expect(
       screen.getAllByRole('heading', { name: 'Monsoon Song' }),
     ).toHaveLength(2);
@@ -112,6 +160,7 @@ describe('listener app', () => {
       hostPresent: true,
       listenerCount: 1,
       queue: [],
+      recordingQueue: [],
       currentRecording: null,
       currentSong: {
         shareId: 'song-reference',
