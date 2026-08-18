@@ -386,6 +386,20 @@ export function buildSectionTimeline(
     const mappedCount = best[0]![0]!;
     if (mappedCount < 2 || mappedCount * 2 < sung.length) return null;
 
+    // Lyrics are sung verbatim, so a written section the alignment could not
+    // match was still sung somewhere between its neighbors. When exactly one
+    // unmatched sung segment sits between two aligned segments whose sections
+    // sandwich exactly one unmatched written section, pair them positionally
+    // even though the provider used a different label for it.
+    for (let at = 1; at < sung.length - 1; at += 1) {
+      const position = sung[at]!.position;
+      if (assigned[position] !== null) continue;
+      const before = assigned[sung[at - 1]!.position] ?? null;
+      const after = assigned[sung[at + 1]!.position] ?? null;
+      if (before === null || after === null || after - before !== 2) continue;
+      assigned[position] = before + 1;
+    }
+
     // Unmatched sung segments are provider splits or repeats: give them the
     // nearest matched section of the same family, looking back then ahead.
     // Segments before the first anchor never inherit — with no earlier match

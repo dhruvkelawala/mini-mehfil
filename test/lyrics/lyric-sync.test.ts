@@ -486,6 +486,55 @@ describe('section timeline mapping', () => {
     ]);
   });
 
+  test('a lone segment between anchors adopts the lone written section between them', () => {
+    // Real structure from the 2026-08-18 "The Group Chat Blues" share: the
+    // provider labeled the sung bridge 'chorus', so no family match exists.
+    // Lyrics are sung verbatim, so the one written section the alignment left
+    // between two anchors must be what the one unmatched segment between the
+    // same anchors is singing, whatever the provider called it.
+    const parsed = sections(
+      [
+        '[Verse]',
+        'One',
+        '[Pre Chorus]',
+        'Rise',
+        '[Chorus]',
+        'Hook',
+        '[Verse 2]',
+        'Two',
+        '[Chorus 2]',
+        'Hook again',
+        '[Bridge]',
+        'Turn',
+        '[Outro]',
+        'Close',
+      ].join('\n'),
+    );
+    const timeline = buildSectionTimeline(
+      parsed,
+      timingOf([
+        { start: 0, end: 20.041, label: 'intro' },
+        { start: 20.041, end: 39.842, label: 'verse' },
+        { start: 39.842, end: 54.722, label: 'verse' },
+        { start: 54.722, end: 81.963, label: 'chorus' },
+        { start: 81.963, end: 99.244, label: 'verse' },
+        { start: 99.244, end: 116.765, label: 'chorus' },
+        { start: 116.765, end: 136.445, label: 'chorus' },
+        { start: 136.445, end: 149.646, label: 'outro' },
+      ]),
+    );
+    expect(timeline?.map((entry) => entry.sectionIndex)).toEqual([
+      null, // intro music with no written intro
+      0, // verse
+      1, // pre chorus
+      2, // chorus
+      3, // verse 2
+      4, // chorus 2
+      5, // the sung bridge the provider heard as another chorus
+      6, // outro
+    ]);
+  });
+
   test('keeps unmappable segments only when at least two and half of non-silence segments map', () => {
     const parsed = sections('[Verse]\nFirst\n[Chorus]\nHook');
 
