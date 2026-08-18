@@ -136,6 +136,51 @@ describe('listener app', () => {
     ).toBe('/s/song-reference');
   });
 
+  test('defaults song-request language to auto-detect even with English first in the dropdown', () => {
+    const snapshot: ListenerSnapshot = {
+      hostPresent: true,
+      listenerCount: 1,
+      queue: [],
+      recordingQueue: [],
+      currentRecording: null,
+      currentSong: {
+        shareId: 'song-reference',
+        title: 'Monsoon Song',
+        language: 'Hindi',
+        playback: { status: 'paused', positionMs: 0, changedAt: 1 },
+        lyrics: {
+          title: 'Monsoon Song',
+          language: 'Hindi',
+          nativeScriptName: 'Devanagari',
+          isLatinScript: false,
+          lyricsNative: '[Chorus]\nबारिश की रात',
+          lyricsRoman: '[Chorus]\nBaarish ki raat',
+        },
+      },
+      setlist: [],
+    };
+    const submitRequest = vi.fn();
+    const controller = { ...listenerController(snapshot), submitRequest };
+    const { container } = render(() => (
+      <App roomId="ABCDEFGH" controller={controller} />
+    ));
+    const menu = container.querySelector<HTMLDetailsElement>('.room-menu');
+    expect(menu).not.toBeNull();
+    menu!.open = true;
+    const select = screen.getByLabelText<HTMLSelectElement>('Language');
+    expect(select.value).toBe('auto');
+    const idea = screen.getByLabelText<HTMLTextAreaElement>(
+      "What's the song about?",
+    );
+    idea.value = 'chai at a railway station';
+    screen.getByRole('button', { name: 'Send request' }).click();
+    expect(submitRequest).toHaveBeenCalledWith({
+      idea: 'chai at a railway station',
+      vibe: '',
+      language: 'auto',
+    });
+  });
+
   test('renders one untimed primary line', () => {
     const controller = listenerController({
       hostPresent: true,

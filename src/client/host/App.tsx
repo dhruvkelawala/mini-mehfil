@@ -37,6 +37,7 @@ import {
 } from './vocal-onset.ts';
 
 const languages = [
+  'English',
   'auto',
   'Gujarati',
   'Hindi',
@@ -45,7 +46,6 @@ const languages = [
   'Bengali',
   'Marathi',
   'Urdu',
-  'English',
   'Spanish',
   'French',
   'Arabic',
@@ -810,7 +810,7 @@ export function App() {
               type="text"
               maxlength="400"
               required
-              placeholder="Aloopuri Khavsa"
+              placeholder="chai at a railway station"
               value={idea()}
               onInput={(event) => setIdea(event.currentTarget.value)}
               disabled={generation.generating()}

@@ -353,6 +353,86 @@ describe('section timeline mapping', () => {
     ]);
   });
 
+  test('aligns provider repeats without skipping written sections', () => {
+    // Real structure from the 2026-08-18 "room song goes silent mid-way"
+    // incident: the provider heard five choruses and two bridges where the
+    // sheet wrote two choruses and one bridge, and the old greedy cursor
+    // matched the second chorus against the final written chorus, mapping
+    // nothing between 97 s and 174 s.
+    const parsed = sections(
+      [
+        '[Intro]',
+        'Open',
+        '[Verse]',
+        'One',
+        '[Pre Chorus]',
+        'Rise',
+        '[Chorus]',
+        'Hook',
+        '[Verse 2]',
+        'Two',
+        '[Pre Chorus 2]',
+        'Rise again',
+        '[Chorus 2]',
+        'Hook again',
+        '[Bridge]',
+        'Turn',
+        '[Outro]',
+        'Close',
+      ].join('\n'),
+    );
+
+    const timeline = buildSectionTimeline(
+      parsed,
+      timingOf([
+        { start: 0, end: 23.521, label: 'intro' },
+        { start: 23.521, end: 48.122, label: 'verse' },
+        { start: 48.122, end: 72.603, label: 'verse' },
+        { start: 72.603, end: 84.603, label: 'chorus' },
+        { start: 84.603, end: 97.324, label: 'chorus' },
+        { start: 97.324, end: 121.925, label: 'verse' },
+        { start: 121.925, end: 146.526, label: 'verse' },
+        { start: 146.526, end: 159.006, label: 'chorus' },
+        { start: 159.006, end: 174.367, label: 'chorus' },
+        { start: 174.367, end: 186.487, label: 'bridge' },
+        { start: 186.487, end: 198.848, label: 'bridge' },
+        { start: 198.848, end: 211.568, label: 'chorus' },
+        { start: 211.568, end: 232.689, label: 'outro' },
+        { start: 232.689, end: 235.067, label: 'silence' },
+      ]),
+    );
+
+    expect(timeline?.map((entry) => entry.sectionIndex)).toEqual([
+      0, // intro
+      1, // verse
+      2, // pre chorus sung as a verse family
+      3, // chorus
+      3, // provider split the same chorus into a second segment
+      4, // verse 2
+      5, // pre chorus 2
+      6, // chorus 2
+      6, // repeated chorus 2
+      7, // bridge
+      7, // repeated bridge
+      6, // final repeated chorus
+      8, // outro
+      null, // silence
+    ]);
+  });
+
+  test('a leading repeat inherits the section it repeats from ahead', () => {
+    const parsed = sections('[Verse]\nOne\n[Chorus]\nHook');
+    const timeline = buildSectionTimeline(
+      parsed,
+      timingOf([
+        { start: 0, end: 10, label: 'chorus' },
+        { start: 10, end: 20, label: 'verse' },
+        { start: 20, end: 30, label: 'chorus' },
+      ]),
+    );
+    expect(timeline?.map((entry) => entry.sectionIndex)).toEqual([1, 0, 1]);
+  });
+
   test('keeps unmappable segments only when at least two and half of non-silence segments map', () => {
     const parsed = sections('[Verse]\nFirst\n[Chorus]\nHook');
 
