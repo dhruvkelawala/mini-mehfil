@@ -76,21 +76,22 @@ describe('listener app', () => {
       },
       setlist: [],
     };
-    const controller = listenerController(snapshot);
+    const submitRequest = vi.fn();
+    const controller = { ...listenerController(snapshot), submitRequest };
     const { container } = render(() => (
       <App roomId="ABCDEFGH" controller={controller} />
     ));
     const menu = container.querySelector<HTMLDetailsElement>('.room-menu');
     expect(menu).not.toBeNull();
     menu!.open = true;
-    const select = screen.getByLabelText('Language') as HTMLSelectElement;
+    const select = screen.getByLabelText<HTMLSelectElement>('Language');
     expect(select.value).toBe('auto');
-    const idea = screen.getByLabelText(
+    const idea = screen.getByLabelText<HTMLTextAreaElement>(
       "What's the song about?",
-    ) as HTMLTextAreaElement;
+    );
     idea.value = 'chai at a railway station';
     screen.getByRole('button', { name: 'Send request' }).click();
-    expect(controller.submitRequest).toHaveBeenCalledWith({
+    expect(submitRequest).toHaveBeenCalledWith({
       idea: 'chai at a railway station',
       vibe: '',
       language: 'auto',

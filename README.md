@@ -2,7 +2,7 @@
 
 A tiny local song room for [MiniMax Music 3](https://platform.minimax.io/docs/api-reference/music-generation), inspired by the immersive single-room feeling of [saloon.wtf](https://saloon.wtf/). The name is a pun on MiniMax: a _mehfil_ is an intimate gathering for music, and this one is mini.
 
-Type a few keywords in any language — `chai at a railway station`, `monsoon in Mumbai`, `first day of a new job` — and a lyricist model writes a full structured song in the language it detects, then MiniMax Music 3 records it in front of you. Lyrics stay hidden unless you press the button that says _don't press me_.
+Type a few keywords in any language — `aloo puri`, `monsoon in Mumbai`, `first day of a new job` — and a lyricist model writes a full structured song in the language it detects, then MiniMax Music 3 records it in front of you. Lyrics stay hidden unless you press the button that says _don't press me_.
 
 ## Run
 
