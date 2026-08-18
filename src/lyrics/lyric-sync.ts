@@ -366,12 +366,14 @@ export function buildSectionTimeline(
     const assigned = new Array<number | null>(normalized.segments.length).fill(
       null,
     );
+    let firstAnchor = Number.POSITIVE_INFINITY;
     for (let i = 0, j = 0; i < sung.length && j < parsed.length;) {
       if (
         sung[i]!.label === parsed[j]!.family &&
         best[i]![j] === 1 + best[i + 1]![j + 1]!
       ) {
         assigned[sung[i]!.position] = parsed[j]!.index;
+        if (sung[i]!.position < firstAnchor) firstAnchor = sung[i]!.position;
         i += 1;
         j += 1;
       } else if (best[i + 1]![j]! >= best[i]![j + 1]!) {
@@ -386,6 +388,9 @@ export function buildSectionTimeline(
 
     // Unmatched sung segments are provider splits or repeats: give them the
     // nearest matched section of the same family, looking back then ahead.
+    // Segments before the first anchor never inherit — with no earlier match
+    // there is no evidence the written sheet has started, and a mislabeled
+    // opening (an instrumental heard as 'chorus') must not display words.
     const lastByFamily = new Map<string, number>();
     for (const { label, position } of sung) {
       const index = assigned[position] ?? null;
@@ -398,7 +403,7 @@ export function buildSectionTimeline(
       const { label, position } = sung[at]!;
       const index = assigned[position] ?? null;
       if (index !== null) nextByFamily.set(label, index);
-      else if (nextByFamily.has(label))
+      else if (position > firstAnchor && nextByFamily.has(label))
         assigned[position] = nextByFamily.get(label)!;
     }
 

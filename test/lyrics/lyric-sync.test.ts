@@ -420,7 +420,10 @@ describe('section timeline mapping', () => {
     ]);
   });
 
-  test('a leading repeat inherits the section it repeats from ahead', () => {
+  test('an opening segment before the first anchor stays unmapped', () => {
+    // Words are only inherited between or after alignment anchors. Before the
+    // first anchor there is no evidence the written sheet has started, so an
+    // unmatched opening segment shows nothing instead of guessing ahead.
     const parsed = sections('[Verse]\nOne\n[Chorus]\nHook');
     const timeline = buildSectionTimeline(
       parsed,
@@ -430,7 +433,57 @@ describe('section timeline mapping', () => {
         { start: 20, end: 30, label: 'chorus' },
       ]),
     );
-    expect(timeline?.map((entry) => entry.sectionIndex)).toEqual([1, 0, 1]);
+    expect(timeline?.map((entry) => entry.sectionIndex)).toEqual([null, 0, 1]);
+  });
+
+  test('does not guess words for a mislabeled opening while healing interior gaps', () => {
+    // Real structure from the 2026-08-18 "London Lights" share: the provider
+    // labeled the opening instrumental 'chorus' and heard no intro at all.
+    // The opening segment must stay unmapped (empty stage over intro music),
+    // while the real first chorus, bracketed by anchors, still inherits.
+    const parsed = sections(
+      [
+        '[Intro]',
+        'Open',
+        '[Verse]',
+        'One',
+        '[Pre Chorus]',
+        'Rise',
+        '[Chorus]',
+        'Hook',
+        '[Verse 2]',
+        'Two',
+        '[Pre Chorus 2]',
+        'Rise again',
+        '[Chorus 2]',
+        'Hook again',
+        '[Bridge]',
+        'Turn',
+        '[Outro]',
+        'Close',
+      ].join('\n'),
+    );
+    const timeline = buildSectionTimeline(
+      parsed,
+      timingOf([
+        { start: 0, end: 11.52, label: 'chorus' },
+        { start: 11.52, end: 30.361, label: 'verse' },
+        { start: 30.361, end: 44.042, label: 'chorus' },
+        { start: 44.042, end: 65.643, label: 'verse' },
+        { start: 65.643, end: 79.443, label: 'chorus' },
+        { start: 79.443, end: 92.884, label: 'chorus' },
+        { start: 92.884, end: 115.902, label: 'chorus' },
+      ]),
+    );
+    expect(timeline?.map((entry) => entry.sectionIndex)).toEqual([
+      null, // mislabeled opening: no anchor yet, show nothing
+      1, // verse
+      3, // real first chorus, healed between anchors
+      2, // verse-family near miss: pre-chorus words during verse two
+      3, // chorus
+      3, // chorus repeat
+      6, // final written chorus
+    ]);
   });
 
   test('keeps unmappable segments only when at least two and half of non-silence segments map', () => {
