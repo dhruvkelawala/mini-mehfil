@@ -33,6 +33,12 @@ export interface StoryFrame {
   progress: number;
   /** The stanza line being sung, or -1 before any of them. */
   activeLine: number;
+  /**
+   * How many lines carry the light, from `activeLine` down. One while the
+   * song plays; two while a person is choosing where the clip starts, so the
+   * opening of what they picked reads at a glance.
+   */
+  activeSpan?: number;
 }
 
 /**
@@ -301,7 +307,9 @@ export function drawStoryCard(
   for (const [index, entry] of stanza.entries()) {
     // On the still card every line is equal. On the moving one the line being
     // sung carries the frame and the rest step back.
-    const singing = !frame || frame.activeLine === index;
+    const span = frame?.activeSpan ?? 1;
+    const singing =
+      !frame || (index >= frame.activeLine && index < frame.activeLine + span);
     setFont(context, '500', PRIMARY_SIZE, SERIF);
     context.fillStyle = singing ? '#fff8ec' : RESTING_LINE;
     for (const text of entry.primary) {

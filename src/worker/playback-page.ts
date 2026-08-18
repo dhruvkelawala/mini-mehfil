@@ -171,7 +171,10 @@ const storyShareable=storyCard.canShareStoryCard(),storyResting=storyShareable?'
 const storyLines=sections.length?sections.flatMap(section=>section.lines.filter(line=>!line.cue)):lines.filter(line=>!line.cue);
 const storyRecordable=storyShareable&&storyLines.length>0&&Boolean(storyCard.storyVideoType());
 const STORY_WINDOW_LINES=5;
-let storyDrawing=null,storyBusy=false,storySettle=0,storyVideo=null,storyClip={start:0,seconds:0},storyWanted=20,storyLineStarts=[],storyScrub=null,storyFrame=0,storyChips=[],storyMoved=false,storyListen=0;
+let storyDrawing=null,storyBusy=false,storySettle=0,storyVideo=null,storyClip={start:0,seconds:0},storyWanted=20,storyLineStarts=[],storyScrub=null,storyFrame=0,storyFrameArg=null,storyChips=[],storyMoved=false,storyPreviewFrame=0,storyPreviewTimer=0;
+// While choosing, the first two lines of the clip carry the light, so the
+// opening of what was picked reads at a glance.
+const START_FRAME={progress:0,activeLine:0,activeSpan:2};
 storyLabel.textContent=storyResting;
 story.setAttribute('aria-label',(storyShareable?'Share a story for ':'Download a story card for ')+card.title);
 // The Share control returns to its resting caption; this one keeps step with it.
@@ -181,7 +184,7 @@ function storyBlob(){if(!storyDrawing)storyDrawing=storyCard.storyCardBlob(card)
 // share call inside the gesture Safari requires.
 story.addEventListener('pointerdown',()=>{storyBlob().catch(()=>{})});
 function songDuration(){return Number.isFinite(audio.duration)&&audio.duration>0?audio.duration:0}
-function drawPreview(){if(storyFrame)return;storyFrame=requestAnimationFrame(()=>{storyFrame=0;const image=storyCard.readyStoryBackground(card.backgroundUrl);storyCard.drawStoryCard(stageCanvas,card,image)})}
+function drawPreview(frame){storyFrameArg=frame??null;if(storyFrame)return;storyFrame=requestAnimationFrame(()=>{storyFrame=0;const image=storyCard.readyStoryBackground(card.backgroundUrl);storyCard.drawStoryCard(stageCanvas,card,image,storyFrameArg??undefined)})}
 // Which sung line is heard at a moment, by the song's own pacing where it is
 // trusted and by even spacing where it is not.
 function lineIndexAt(seconds){const duration=songDuration();if(timeline&&pacing.length){let at=0;pacing.forEach((entry,index)=>{if(seconds>=entry.start)at=index});return Math.min(storyLines.length-1,at)}
@@ -194,7 +197,7 @@ const first=lineIndexAt(storyClip.start),last=timeline&&pacing.length?lineIndexA
 const window=storyLines.slice(first,Math.min(storyLines.length,Math.max(first+1,Math.min(last+1,first+STORY_WINDOW_LINES))));
 card={...card,stanza:window.map(line=>({primary:line.primary,secondary:line.secondary}))};
 storyLineStarts=timeline&&pacing.length?window.map((line,at)=>lineStartAt(first+at)):[];
-storyDrawing=null;drawPreview();
+storyDrawing=null;drawPreview(START_FRAME);
 stageCanvas.setAttribute('aria-valuenow',String(Math.round(duration>0?(storyClip.start/duration)*100:0)));
 stageCanvas.setAttribute('aria-valuetext',formatTime(storyClip.start)+' to '+formatTime(storyClip.start+storyClip.seconds));
 // Nothing else on screen says the card can be dragged, so the line that will
@@ -203,33 +206,36 @@ stageWhere.textContent=storyMoved?formatTime(storyClip.start)+' – '+formatTime
 stageGo.textContent=storyClip.seconds>=1?'Record '+Math.round(storyClip.seconds)+'s':'Record';
 storyChips.forEach(chip=>{chip.setAttribute('aria-pressed',Number(chip.dataset.seconds)===storyWanted?'true':'false');chip.disabled=Number(chip.dataset.seconds)>songDuration()});
 stageNote.hidden=true;stageProgress.hidden=true;stageGo.hidden=false}
-function buildLengths(){if(storyChips.length)return;storyChips=storyCard.STORY_CLIP_LENGTHS.map(seconds=>{const chip=document.createElement('button');chip.type='button';chip.className='story-length';chip.textContent=seconds+'s';chip.dataset.seconds=String(seconds);chip.setAttribute('aria-pressed','false');chip.addEventListener('click',()=>{if(storyBusy)return;storyWanted=seconds;storyMoved=true;showFrom(storyClip.start)});stageLengths.append(chip);return chip})}
+function buildLengths(){if(storyChips.length)return;storyChips=storyCard.STORY_CLIP_LENGTHS.map(seconds=>{const chip=document.createElement('button');chip.type='button';chip.className='story-length';chip.textContent=seconds+'s';chip.dataset.seconds=String(seconds);chip.setAttribute('aria-pressed','false');chip.addEventListener('click',()=>{if(storyBusy)return;stopClipPreview();storyWanted=seconds;storyMoved=true;showFrom(storyClip.start);scheduleClipPreview()});stageLengths.append(chip);return chip})}
 // The card is the scrubber: dragging it walks the song, and the words move
 // with it. A full card of travel is about a minute regardless of how long the
 // song is, so a drag feels the same on a two-minute song and a six-minute one.
 const SCRUB_SECONDS_PER_CARD=60;
-let storySeekAt=0;
-// Seeks are throttled: seeking on every move never lets the decoder produce a
-// sound, which is a silent scrub, not a slow one.
-function scrubSeek(force){const now=Date.now();if(!force&&now-storySeekAt<250)return;storySeekAt=now;
-if(audio.readyState>0){audio.currentTime=storyClip.start;if(audio.paused)audio.play().catch(()=>{})}}
+function stopClipPreview(){cancelAnimationFrame(storyPreviewFrame);storyPreviewFrame=0;clearTimeout(storyPreviewTimer);storyPreviewTimer=0;audio.pause()}
+// Once the scrub settles, the chosen clip plays through once with the light
+// following the singer — the story exactly as it will be recorded.
+function playClipPreview(){stopClipPreview();if(!(audio.readyState>0))return;
+const clip=storyClip;storyCard.ensureSongAudible(audio);audio.currentTime=clip.start;audio.play().catch(()=>{});
+const tick=()=>{const elapsed=audio.currentTime-clip.start;
+if(elapsed>=clip.seconds){stopClipPreview();drawPreview(START_FRAME);return}
+const active=storyLineStarts.length?storyLineStarts.reduce((at,start,index)=>audio.currentTime>=start?index:at,0):Math.min(card.stanza.length-1,Math.floor(Math.max(0,elapsed)/clip.seconds*card.stanza.length));
+drawPreview({progress:Math.max(0,Math.min(1,elapsed/clip.seconds)),activeLine:active});
+storyPreviewFrame=requestAnimationFrame(tick)};
+storyPreviewFrame=requestAnimationFrame(tick)}
+// Debounced under WebKit's gesture-forwarding window, so the play that fires
+// after the pause is still treated as user-initiated.
+function scheduleClipPreview(){clearTimeout(storyPreviewTimer);storyPreviewTimer=setTimeout(playClipPreview,450)}
 function scrubBy(event){if(!storyScrub)return;const box=stageCanvas.getBoundingClientRect();if(!box.height)return;
 const rate=Math.min(songDuration(),SCRUB_SECONDS_PER_CARD)/box.height;
-showFrom(storyScrub.start+(event.clientY-storyScrub.y)*rate);scrubSeek(false)}
-stageCanvas.addEventListener('pointerdown',event=>{if(storyBusy)return;storyScrub={y:event.clientY,start:storyClip.start};stageCanvas.setPointerCapture(event.pointerId);storyMoved=true;stageWhere.hidden=false;
-// The press is the gesture: play must start here, and a previously recorded
-// element only sounds again once its audio context is resumed.
-storyCard.ensureSongAudible(audio);scrubSeek(true)});
+stopClipPreview();showFrom(storyScrub.start+(event.clientY-storyScrub.y)*rate);scheduleClipPreview()}
+stageCanvas.addEventListener('pointerdown',event=>{if(storyBusy)return;stopClipPreview();storyScrub={y:event.clientY,start:storyClip.start};stageCanvas.setPointerCapture(event.pointerId);storyMoved=true;stageWhere.hidden=false;storyCard.ensureSongAudible(audio)});
 stageCanvas.addEventListener('pointermove',scrubBy);
-stageCanvas.addEventListener('pointerup',()=>{if(!storyScrub)return;storyScrub=null;scrubSeek(true);
-// The release plays the clip from its start for a moment, so what was chosen
-// is heard as it will be recorded.
-clearTimeout(storyListen);storyListen=setTimeout(()=>audio.pause(),1600)});
-stageCanvas.addEventListener('pointercancel',()=>{storyScrub=null;audio.pause()});
-stageCanvas.addEventListener('keydown',event=>{const step=event.key==='ArrowUp'||event.key==='ArrowLeft'?-5:event.key==='ArrowDown'||event.key==='ArrowRight'?5:0;if(!step||storyBusy)return;event.preventDefault();showFrom(storyClip.start+step)});
-function closeStage(){stage.hidden=true;storyVideo=null;stageNote.hidden=true;stageProgress.hidden=true;stageBar.style.width='0%';clearTimeout(storyListen);audio.pause()}
+stageCanvas.addEventListener('pointerup',()=>{if(!storyScrub)return;storyScrub=null;scheduleClipPreview()});
+stageCanvas.addEventListener('pointercancel',()=>{storyScrub=null;stopClipPreview()});
+stageCanvas.addEventListener('keydown',event=>{const step=event.key==='ArrowUp'||event.key==='ArrowLeft'?-5:event.key==='ArrowDown'||event.key==='ArrowRight'?5:0;if(!step||storyBusy)return;event.preventDefault();stopClipPreview();showFrom(storyClip.start+step);scheduleClipPreview()});
+function closeStage(){stage.hidden=true;storyVideo=null;stageNote.hidden=true;stageProgress.hidden=true;stageBar.style.width='0%';stopClipPreview()}
 stageClose.addEventListener('click',closeStage);
-async function record(){clearTimeout(storyListen);audio.pause();const clip=storyClip;if(!storyCard.isRecordableClip(clip)){stageNote.hidden=false;stageNote.textContent='There is not enough song left here to record.';return}
+async function record(){stopClipPreview();const clip=storyClip;if(!storyCard.isRecordableClip(clip)){stageNote.hidden=false;stageNote.textContent='There is not enough song left here to record.';return}
 stageGo.hidden=true;stageLengths.hidden=true;stageWhere.hidden=true;stageProgress.hidden=false;stageNote.hidden=false;stageNote.textContent='Keep this open · '+Math.round(clip.seconds)+'s';
 try{const blob=await storyCard.recordStoryVideo({canvas:stageCanvas,card,audio,clipStart:clip.start,seconds:clip.seconds,lineStarts:storyLineStarts,onProgress:value=>{stageBar.style.width=(value*100).toFixed(1)+'%';stageNote.textContent='Keep this open · '+Math.ceil(clip.seconds*(1-value))+'s'}});
 storyVideo=new File([blob],card.videoFileName,{type:blob.type||'video/mp4'});
@@ -248,7 +254,7 @@ function openStage(){audio.pause();buildLengths();storyMoved=false;
 // Opens where the card already was, so the first thing seen is the card a
 // person would have got anyway.
 const entry=timeline&&card.sectionIndex!==null?timeline.find(value=>value.sectionIndex===card.sectionIndex):null;
-storyCard.loadStoryBackground(card.backgroundUrl).then(()=>{showFrom(entry?entry.start:songDuration()*0.3)}).catch(()=>{});
+storyCard.loadStoryBackground(card.backgroundUrl).then(()=>{if(!storyMoved)showFrom(entry?entry.start:songDuration()*0.3)}).catch(()=>{});
 showFrom(entry?entry.start:songDuration()*0.3);stage.hidden=false}
 story.addEventListener('click',async()=>{if(storyBusy)return;storyBusy=true;clearTimeout(storySettle);
 try{if(storyRecordable)openStage();else await stillCard()}
