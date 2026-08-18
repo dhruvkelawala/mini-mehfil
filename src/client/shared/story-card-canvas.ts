@@ -38,8 +38,6 @@ export interface StoryFrame {
 /** Meta asks for up to 20 seconds; a Story cuts anything longer. */
 const CLIP_MAX_SECONDS = 20;
 const CLIP_MIN_SECONDS = 8;
-/** An untimed song opens here rather than on its intro. */
-const CLIP_UNTIMED_START = 0.3;
 
 /** How far the courtyard drifts across a clip, as a fraction of its size. */
 const SCENE_DRIFT = 0.06;
@@ -333,35 +331,51 @@ export function drawStoryCard(
  * Decided in the browser rather than on the server, because only the browser
  * knows how long the recording actually is.
  */
-export function storyClip(
-  timeline:
-    { start: number; end: number; sectionIndex: number | null }[] | null,
-  sectionIndex: number | null,
+export function storyClipAt(
+  startSeconds: number,
   durationSeconds: number,
-  partIndex = 0,
-  partCount = 1,
 ): StoryClip {
   const duration = Number.isFinite(durationSeconds) ? durationSeconds : 0;
-  const entry =
-    timeline && sectionIndex !== null
-      ? timeline.find((value) => value.sectionIndex === sectionIndex)
-      : undefined;
-  // Without a trusted timeline the parts are spread evenly across the song.
-  // It is a guess, but it is a guess that moves when the person picks.
-  const guessed =
-    partCount > 1
-      ? (duration * partIndex) / partCount
-      : duration * CLIP_UNTIMED_START;
-  const start = entry
-    ? entry.start
-    : Math.max(0, Math.min(guessed, duration - CLIP_MAX_SECONDS));
-  const wanted = entry
-    ? Math.max(CLIP_MIN_SECONDS, entry.end - entry.start)
-    : CLIP_MAX_SECONDS;
-  return {
-    start,
-    seconds: Math.max(0, Math.min(wanted, CLIP_MAX_SECONDS, duration - start)),
-  };
+  const longest = Math.min(CLIP_MAX_SECONDS, duration);
+  const start = Math.min(
+    Math.max(0, startSeconds),
+    Math.max(0, duration - longest),
+  );
+  return { start, seconds: Math.max(0, Math.min(longest, duration - start)) };
+}
+
+/** True when a stretch of song is long enough to be worth recording. */
+export function isRecordableClip(clip: StoryClip): boolean {
+  return clip.seconds >= CLIP_MIN_SECONDS;
+}
+
+/**
+ * Which part of the song is being sung at a moment.
+ *
+ * With a trusted timeline this is exact. Without one the parts are assumed to
+ * run evenly, which is a guess — but a guess that moves as a person scrubs, so
+ * the words on the card still travel with the song rather than standing still.
+ */
+export function storyPartAt(
+  timeline:
+    { start: number; end: number; sectionIndex: number | null }[] | null,
+  sectionIndexes: (number | null)[],
+  atSeconds: number,
+  durationSeconds: number,
+): number {
+  if (sectionIndexes.length === 0) return -1;
+  if (timeline) {
+    const entry = timeline.find(
+      (value) => value.start <= atSeconds && atSeconds < value.end,
+    );
+    const found =
+      entry == null ? -1 : sectionIndexes.indexOf(entry.sectionIndex);
+    if (found >= 0) return found;
+  }
+  const duration = Number.isFinite(durationSeconds) ? durationSeconds : 0;
+  if (duration <= 0) return 0;
+  const at = Math.floor((atSeconds / duration) * sectionIndexes.length);
+  return Math.min(sectionIndexes.length - 1, Math.max(0, at));
 }
 
 /**
