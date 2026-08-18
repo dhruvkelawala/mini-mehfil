@@ -1,5 +1,11 @@
 import { expect, test } from '@playwright/test';
 
+import {
+  isRecord,
+  isString,
+  type JsonRecord,
+  type JsonValue,
+} from '../../src/room/primitives.ts';
 import type { RoomState } from '../../src/room/protocol.ts';
 import { projectRoomState } from '../../src/room/state.ts';
 import {
@@ -61,7 +67,7 @@ test('a lost paid response is recovered without a second paid POST', async ({
   page,
 }) => {
   let generatePosts = 0;
-  const timingBodies: Array<Record<string, unknown>> = [];
+  const timingBodies: Array<JsonRecord> = [];
   await page.route('**/api/generate', async (route) => {
     generatePosts += 1;
     await route.fulfill({
@@ -83,9 +89,9 @@ test('a lost paid response is recovered without a second paid POST', async ({
     });
   });
   await page.route('**/api/analyze-timing', async (route) => {
-    timingBodies.push(
-      route.request().postDataJSON() as Record<string, unknown>,
-    );
+    // SAFETY: the analyze-timing POST body is the app's own serialized
+    // payload; the test only compares its source and token fields.
+    timingBodies.push(route.request().postDataJSON() as JsonRecord);
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
@@ -135,6 +141,8 @@ test('a host authenticates before receiving room state', async ({ page }) => {
     .click();
   await expect(page.getByText('connected')).toBeVisible();
   const firstFrame = await page.evaluate(() => {
+    // SAFETY: the WebSocket harness installed by installWebSocketHarness
+    // exposes __mehfilSockets on window via addInitScript.
     const fixtureWindow = window as typeof window & {
       __mehfilSockets: Array<{ sent: string[] }>;
     };
@@ -157,10 +165,12 @@ test('the missing-token warning clears after a recording is queued', async ({
   await expect(page.getByText('connected')).toBeVisible();
   await page.evaluate(
     (snapshot) => {
+      // SAFETY: the WebSocket harness installed by installWebSocketHarness
+      // defines __mehfilSockets on window with a serverMessage method.
       const fixtureWindow = window as typeof window & {
         __mehfilSockets: Array<{
           sent: string[];
-          serverMessage(value: unknown): void;
+          serverMessage(value: JsonValue): void;
         }>;
       };
       fixtureWindow.__mehfilSockets[0]?.serverMessage({
@@ -213,6 +223,8 @@ test('the missing-token warning clears after a recording is queued', async ({
   await expect
     .poll(() =>
       page.evaluate(() => {
+        // SAFETY: the WebSocket harness installed by installWebSocketHarness
+        // exposes __mehfilSockets on window via addInitScript.
         const fixtureWindow = window as typeof window & {
           __mehfilSockets: Array<{ sent: string[] }>;
         };
@@ -234,8 +246,10 @@ test('a refreshed host does not claim queued paid work before its token is prese
     .click();
   await expect(page.getByText('connected')).toBeVisible();
   await page.evaluate(() => {
+    // SAFETY: the WebSocket harness installed by installWebSocketHarness
+    // defines __mehfilSockets on window with a serverMessage method.
     const fixtureWindow = window as typeof window & {
-      __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
+      __mehfilSockets: Array<{ serverMessage(value: JsonValue): void }>;
     };
     fixtureWindow.__mehfilSockets[0]?.serverMessage({
       type: 'snapshot',
@@ -275,6 +289,8 @@ test('a refreshed host does not claim queued paid work before its token is prese
   });
   const recordingStarts = () =>
     page.evaluate(() => {
+      // SAFETY: the WebSocket harness installed by installWebSocketHarness
+      // exposes __mehfilSockets on window via addInitScript.
       const fixtureWindow = window as typeof window & {
         __mehfilSockets: Array<{ sent: string[] }>;
       };
@@ -286,8 +302,10 @@ test('a refreshed host does not claim queued paid work before its token is prese
   await page.getByLabel(/MiniMax token/).fill('sk-fixture-secret-token');
   await expect.poll(recordingStarts).toBe(1);
   await page.evaluate(() => {
+    // SAFETY: the WebSocket harness installed by installWebSocketHarness
+    // defines __mehfilSockets on window with a serverMessage method.
     const fixtureWindow = window as typeof window & {
-      __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
+      __mehfilSockets: Array<{ serverMessage(value: JsonValue): void }>;
     };
     fixtureWindow.__mehfilSockets[0]?.serverMessage({
       type: 'snapshot',
@@ -358,6 +376,8 @@ test('background recordings stay sequential and switch playback only when select
     paidInFlight -= 1;
   });
   await page.route('**/api/share', async (route) => {
+    // SAFETY: the app's share POST body sends the song title; the fixture
+    // only reads it to pick which share id to return.
     const body = route.request().postDataJSON() as { title?: string };
     const shareId =
       body.title === 'Request C' ? 'cccccccccccccccc' : 'bbbbbbbbbbbbbbbb';
@@ -456,12 +476,19 @@ test('background recordings stay sequential and switch playback only when select
       startedAt: song.startedAt,
     })),
   });
-  const serverMessage = async (target: typeof page, state: unknown) => {
+  const serverMessage = async (
+    target: typeof page,
+    state: RoomState | ReturnType<typeof listenerState>,
+  ) => {
     const snapshot =
+      // SAFETY: the host branch of the ternary is only ever called with the
+      // hostState() RoomState literal built above.
       target === page ? projectHostFixture(state as RoomState) : state;
     await target.evaluate((nextState) => {
+      // SAFETY: the WebSocket harness installed by installWebSocketHarness
+      // defines __mehfilSockets on window with a serverMessage method.
       const fixtureWindow = window as typeof window & {
-        __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
+        __mehfilSockets: Array<{ serverMessage(value: JsonValue): void }>;
       };
       fixtureWindow.__mehfilSockets[0]?.serverMessage({
         type: 'snapshot',
@@ -475,28 +502,18 @@ test('background recordings stay sequential and switch playback only when select
   }
   const sentFrames = (target: typeof page): Promise<SentFrame[]> =>
     target.evaluate(() => {
+      // SAFETY: the WebSocket harness installed by installWebSocketHarness
+      // exposes __mehfilSockets on window via addInitScript.
       const fixtureWindow = window as typeof window & {
         __mehfilSockets: Array<{ sent: string[] }>;
       };
       return (fixtureWindow.__mehfilSockets[0]?.sent ?? []).flatMap((frame) => {
-        const parsed: unknown = JSON.parse(frame);
-        if (
-          typeof parsed !== 'object' ||
-          parsed === null ||
-          !('type' in parsed) ||
-          typeof parsed.type !== 'string'
-        ) {
-          return [];
-        }
-        return [
-          {
-            type: parsed.type,
-            ...('coordinatorId' in parsed &&
-            typeof parsed.coordinatorId === 'string'
-              ? { coordinatorId: parsed.coordinatorId }
-              : {}),
-          },
-        ];
+        const parsed: JsonValue = JSON.parse(frame);
+        if (!isRecord(parsed) || !isString(parsed.type)) return [];
+        const sent: SentFrame = { type: parsed.type };
+        if (isString(parsed.coordinatorId))
+          sent.coordinatorId = parsed.coordinatorId;
+        return [sent];
       });
     });
 
@@ -648,8 +665,10 @@ test('a listener joins, resumes, renders synchronized lyrics, and stops on expir
   ).toBeVisible();
   await expect(page.getByText('बारिश की रात')).toBeVisible();
   await page.evaluate(() => {
+    // SAFETY: the WebSocket harness installed by installWebSocketHarness
+    // defines __mehfilSockets on window with a serverMessage method.
     const fixtureWindow = window as typeof window & {
-      __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
+      __mehfilSockets: Array<{ serverMessage(value: JsonValue): void }>;
     };
     fixtureWindow.__mehfilSockets[0]?.serverMessage({
       type: 'error',
@@ -666,6 +685,9 @@ test('host and listener share the live lyric performance', async ({
 }) => {
   const installMediaClock = async (target: typeof page) => {
     await target.addInitScript(() => {
+      // SAFETY: the defineProperties calls below read and write
+      // __mediaCurrentTime / __mediaPaused on window, establishing the
+      // properties this cast declares.
       const media = window as typeof window & {
         __mediaCurrentTime?: number;
         __mediaPaused?: boolean;
@@ -794,6 +816,8 @@ test('host and listener share the live lyric performance', async ({
 
   for (const target of [page, listener]) {
     await target.evaluate(() => {
+      // SAFETY: the media-clock init script installed above defines
+      // __mediaCurrentTime on window.
       (
         window as typeof window & { __mediaCurrentTime?: number }
       ).__mediaCurrentTime = 70;
@@ -814,6 +838,9 @@ test('listener playback advances its progress, lyrics, and record between room u
   page,
 }) => {
   await page.addInitScript(() => {
+    // SAFETY: the defineProperties calls below read and write
+    // __mediaCurrentTime / __mediaPaused on window, establishing the
+    // properties this cast declares.
     const media = window as typeof window & {
       __mediaCurrentTime?: number;
       __mediaPaused?: boolean;
@@ -848,8 +875,10 @@ test('listener playback advances its progress, lyrics, and record between room u
   await page.getByLabel('Your name').fill('Listener');
   await page.getByRole('button', { name: 'Join the mehfil' }).click();
   await page.evaluate(() => {
+    // SAFETY: the WebSocket harness installed by installWebSocketHarness
+    // defines __mehfilSockets on window with a serverMessage method.
     const fixtureWindow = window as typeof window & {
-      __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
+      __mehfilSockets: Array<{ serverMessage(value: JsonValue): void }>;
     };
     fixtureWindow.__mehfilSockets[0]?.serverMessage({
       type: 'snapshot',
@@ -890,6 +919,8 @@ test('listener playback advances its progress, lyrics, and record between room u
   await expect(page.getByText('Playing with the host')).toBeVisible();
 
   await page.evaluate(() => {
+    // SAFETY: the media-clock init script installed above defines
+    // __mediaCurrentTime on window.
     (
       window as typeof window & { __mediaCurrentTime?: number }
     ).__mediaCurrentTime = 70;

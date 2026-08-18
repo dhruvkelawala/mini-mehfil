@@ -6,12 +6,19 @@ import { test } from 'vitest';
 
 import type { writeLyrics as writeLyricsFunction } from '../../src/server/lyricist.ts';
 import { writeLyrics } from '../../src/server/lyricist.ts';
+import {
+  isNumber,
+  isRecord,
+  isString,
+  type JsonRecord,
+  type JsonValue,
+} from '../../src/room/primitives.ts';
 
 type WriteLyrics = typeof writeLyricsFunction;
 type CapturedRequest = {
   url: string | undefined;
   headers: http.IncomingHttpHeaders;
-  body: Record<string, unknown>;
+  body: JsonRecord;
 };
 
 // The lyricist reads its API base from the environment at import time, so the mock
@@ -27,14 +34,13 @@ async function withMockAnthropic(
       body += chunk.toString('utf8');
     });
     req.on('end', () => {
-      const parsed: unknown = JSON.parse(body);
-      assert.ok(
-        typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed),
-      );
+      const parsed: JsonValue | undefined = JSON.parse(body);
+      const record = isRecord(parsed) ? parsed : null;
+      assert.ok(record);
       requests.push({
         url: req.url,
         headers: req.headers,
-        body: parsed as Record<string, unknown>,
+        body: record,
       });
       handler(res);
     });
@@ -42,6 +48,8 @@ async function withMockAnthropic(
   await new Promise<void>((resolve) =>
     server.listen(0, '127.0.0.1', () => resolve()),
   );
+  // SAFETY: the server is listening on a TCP socket, so address() returns an
+  // AddressInfo object (never a pipe path or null).
   const address = server.address() as AddressInfo;
   process.env.MINIMAX_ANTHROPIC_BASE = `http://127.0.0.1:${address.port}`;
   try {
@@ -94,19 +102,16 @@ test('speaks the Anthropic Messages protocol the way pi-ai did', async () => {
       assert.equal(req.headers['x-api-key'], 'sk-test');
       assert.equal(req.headers['anthropic-version'], '2023-06-01');
       assert.equal(req.body.model, 'MiniMax-M3');
-      assert.equal(typeof req.body.max_tokens, 'number');
-      if (typeof req.body.system !== 'string')
-        throw new Error('Missing system prompt');
-      assert.match(req.body.system, /songwriter/);
+      assert.ok(isNumber(req.body.max_tokens));
+      const system = req.body.system;
+      if (!isString(system)) throw new Error('Missing system prompt');
+      assert.match(system, /songwriter/);
       // Thinking blocks are ignored, the fenced JSON is parsed, both scripts survive.
       assert.equal(result.language, 'Gujarati');
       assert.match(result.lyricsNative, /સાંજ/);
       assert.match(result.lyricsRoman, /saanj/);
-      assert.ok(typeof result.usage === 'object' && result.usage !== null);
-      assert.equal(
-        (result.usage as Record<string, unknown>).output_tokens,
-        400,
-      );
+      assert.ok(isRecord(result.usage));
+      assert.equal(isRecord(result.usage) && result.usage.output_tokens, 400);
     },
   );
 });
@@ -120,7 +125,7 @@ test('surfaces an upstream auth error with its real message', async () => {
     async (writeLyrics) => {
       await assert.rejects(
         () => writeLyrics({ token: 'sk-bad', idea: 'anything' }),
-        (error: unknown) =>
+        (error) =>
           error instanceof Error &&
           'status' in error &&
           error.status === 401 &&

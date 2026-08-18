@@ -7,6 +7,7 @@ import {
   type HostLyrics,
   type StatusResponse,
 } from '../../../src/client/host/generation-recovery.ts';
+import type { JsonRecord } from '../../../src/room/primitives.ts';
 
 const JOB_ID = 'AbCdEfGhIjKlMnOpQrStUvWx';
 const SHEET: HostLyrics = {
@@ -45,8 +46,12 @@ const settle = () => new Promise<void>((resolve) => queueMicrotask(resolve));
 describe('generation recovery parity', () => {
   test('job IDs use 18 cryptographic bytes and match the exact contract', () => {
     let requested = 0;
+    // SAFETY: the stub implements the only Crypto member createJobId
+    // exercises (getRandomValues) with the exact lib signature.
     const cryptoSource = {
       getRandomValues<T extends ArrayBufferView | null>(array: T): T {
+        // SAFETY: createJobId always passes a freshly allocated Uint8Array of
+        // the requested byte length, so the stub may fill it to assert that.
         const bytes = array as Uint8Array;
         requested = bytes.length;
         bytes.set(Array.from({ length: 18 }, (_, index) => index));
@@ -63,9 +68,10 @@ describe('generation recovery parity', () => {
       storage,
       now: () => Date.parse('2026-08-15T12:00:00Z'),
     });
+    const lyricSheet = { ...SHEET, token: 'secret' };
     coordinator.save({
       jobId: JOB_ID,
-      lyricSheet: { ...SHEET, token: 'secret' } as HostLyrics,
+      lyricSheet,
     });
     expect(coordinator.read()).toEqual({
       version: 1,
@@ -130,7 +136,7 @@ describe('generation recovery parity', () => {
   test('polling is visible-only, single-loop, bounded, and finalizes once', async () => {
     let visible = false;
     const scheduled: Array<{ callback: () => void; delay: number }> = [];
-    const completed: Record<string, unknown>[] = [];
+    const completed: JsonRecord[] = [];
     const responses: StatusResponse[] = [
       { ok: true, status: 200, value: { status: 'pending' } },
       { ok: true, status: 200, value: { status: 'pending' } },

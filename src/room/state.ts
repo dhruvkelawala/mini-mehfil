@@ -4,9 +4,11 @@ import type {
   RoomErrorCode,
   RoomEvent,
   RoomState,
+  SetlistSong,
   TransitionResult,
 } from './protocol.ts';
 import { isRecord } from './protocol.ts';
+import { isString, type JsonValue } from './primitives.ts';
 import { normalizeLyricTiming } from '../lyrics/lyric-sync.ts';
 
 export const ROOM_LIMITS = Object.freeze({
@@ -50,31 +52,32 @@ const ok = (
   effects,
 });
 const clean = (
-  value: unknown,
+  value: JsonValue | undefined,
   max: number,
   required = false,
 ): string | null => {
-  const text =
-    typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
+  const text = isString(value) ? value.trim().replace(/\s+/g, ' ') : '';
   return (!required || text) && text.length <= max ? text : null;
 };
 
-function cleanLyrics(sheet: unknown): LyricsSheet | null {
+function cleanLyrics(sheet: JsonValue | undefined): LyricsSheet | null {
   if (!isRecord(sheet)) return null;
   const title = clean(sheet.title, 120, true);
   const language = clean(sheet.language, 80, true);
   const nativeScriptName = clean(sheet.nativeScriptName, 80);
+  const lyricsNativeRaw = sheet.lyricsNative;
   const lyricsNative =
-    typeof sheet.lyricsNative === 'string' &&
-    sheet.lyricsNative.trim() &&
-    sheet.lyricsNative.length <= 5000
-      ? sheet.lyricsNative
+    isString(lyricsNativeRaw) &&
+    lyricsNativeRaw.trim() &&
+    lyricsNativeRaw.length <= 5000
+      ? lyricsNativeRaw
       : null;
+  const lyricsRomanRaw = sheet.lyricsRoman;
   const lyricsRoman =
-    typeof sheet.lyricsRoman === 'string' &&
-    sheet.lyricsRoman.trim() &&
-    sheet.lyricsRoman.length <= 5000
-      ? sheet.lyricsRoman
+    isString(lyricsRomanRaw) &&
+    lyricsRomanRaw.trim() &&
+    lyricsRomanRaw.length <= 5000
+      ? lyricsRomanRaw
       : null;
   if (
     title === null ||
@@ -370,15 +373,15 @@ export function transitionRoom(
         return fail(state, 'invalid-song');
       }
       const next = structuredClone(state);
-      const readySong = {
+      const readySong: SetlistSong = {
         requestId: null,
         shareId: event.shareId,
         title: lyrics.title,
         language: lyrics.language,
         startedAt: event.startedAt,
         lyrics,
-        ...(event.lyricTiming === undefined ? {} : { lyricTiming }),
       };
+      if (event.lyricTiming !== undefined) readySong.lyricTiming = lyricTiming;
       next.setlist = next.setlist.filter(
         (song) => song.shareId !== event.shareId,
       );
@@ -386,6 +389,7 @@ export function transitionRoom(
       next.setlist = next.setlist.slice(-ROOM_LIMITS.setlist);
       next.currentSong = {
         ...readySong,
+        lyrics,
         playback: {
           status: 'paused',
           positionMs: 0,
@@ -419,15 +423,15 @@ export function transitionRoom(
       const request = state.queue[index];
       if (!request) return fail(state, 'invalid-transition');
       const next = structuredClone(state);
-      const readySong = {
+      const readySong: SetlistSong = {
         requestId: event.requestId,
         shareId: event.shareId,
         title: lyrics.title,
         language: lyrics.language,
         startedAt: event.startedAt,
         lyrics,
-        ...(event.lyricTiming === undefined ? {} : { lyricTiming }),
       };
+      if (event.lyricTiming !== undefined) readySong.lyricTiming = lyricTiming;
       next.setlist = next.setlist.filter(
         (song) => song.requestId !== event.requestId,
       );
@@ -436,6 +440,7 @@ export function transitionRoom(
       if (!next.currentSong) {
         next.currentSong = {
           ...readySong,
+          lyrics,
           playback: {
             status: 'paused',
             positionMs: 0,

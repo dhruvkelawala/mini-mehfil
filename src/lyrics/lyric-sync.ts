@@ -7,6 +7,13 @@
  * a new `mode`/`version` pair rather than by mutating `minimax-section-asr`.
  */
 
+import {
+  isRecord,
+  isString,
+  isNumber,
+  type JsonValue,
+} from '../room/primitives.ts';
+
 const FAMILY_BY_TAG = new Map<string, SectionFamily>([
   ['intro', 'intro'],
   ['verse', 'verse'],
@@ -59,7 +66,7 @@ export interface LyricSheetInput {
   lyricsRoman?: string;
 }
 
-export interface LyricLine {
+export type LyricLine = {
   /** True for a bracketed section cue such as `[Chorus]`. */
   cue: boolean;
   /** Normalized cue tag of the owning section, or `null` for an implicit one. */
@@ -70,58 +77,58 @@ export interface LyricLine {
   /** Romanized companion line, or `''` when there is nothing to show. */
   secondary: string;
   sectionIndex: number;
-}
+};
 
-export interface LyricSection {
+export type LyricSection = {
   index: number;
   tag: string | null;
   family: SectionFamily;
   lines: LyricLine[];
-}
+};
 
-export interface ParsedLyricSheet {
+export type ParsedLyricSheet = {
   lines: LyricLine[];
   sections: LyricSection[];
-}
+};
 
-export interface LyricTimingSegment {
+export type LyricTimingSegment = {
   start: number;
   end: number;
   label: TimingLabel;
-}
+};
 
-export interface LyricTiming {
+export type LyricTiming = {
   version: 1;
   mode: 'minimax-section-asr';
   durationSeconds: number;
   segments: LyricTimingSegment[];
-}
+};
 
-export interface TimelineEntry {
+export type TimelineEntry = {
   start: number;
   end: number;
   label: TimingLabel;
   /** Index into the parsed sections, or `null` when nothing maps. */
   sectionIndex: number | null;
-}
+};
 
 /**
  * MiniMax Music 3 may return finer section names such as `pre-chorus` even
  * though the public timing contract stores only the stable display families.
  */
-function normalizedTimingLabel(value: unknown): TimingLabel | null {
-  if (typeof value !== 'string') return null;
+function normalizedTimingLabel(
+  value: JsonValue | undefined,
+): TimingLabel | null {
+  if (!isString(value)) return null;
   const tag = value
     .trim()
     .toLowerCase()
     .replace(/[-_]+/g, ' ')
     .replace(/\s+/g, ' ');
   if (tag === 'pre chorus') return 'verse';
+  // SAFETY: TIMING_LABELS.has(tag) verified the label is one of the seven
+  // TimingLabel discriminants before this narrowing.
   return TIMING_LABELS.has(tag) ? (tag as TimingLabel) : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 interface ScriptSection {
@@ -129,8 +136,8 @@ interface ScriptSection {
   spoken: string[];
 }
 
-function scriptSections(value: unknown): ScriptSection[] {
-  if (typeof value !== 'string') return [];
+function scriptSections(value: JsonValue | undefined): ScriptSection[] {
+  if (!isString(value)) return [];
   const sections: ScriptSection[] = [];
   let current: ScriptSection | null = null;
   for (const sourceLine of value.split('\n')) {
@@ -155,7 +162,7 @@ function scriptSections(value: unknown): ScriptSection[] {
  * Normalizes a cue's bracket-free text into a tag and its timing family.
  * `[Pre-Chorus 2]` becomes tag `pre chorus 2` in family `verse`.
  */
-function cueDetails(text: string): { tag: string; family: SectionFamily } {
+function cueDetails(text: string) {
   const tag = text
     .trim()
     .toLowerCase()
@@ -173,7 +180,9 @@ function cueDetails(text: string): { tag: string; family: SectionFamily } {
  * text. Romanized cue wording remains preferred while native text remains the
  * primary sung line whenever it is available.
  */
-export function parseLyricSheet(sheet: unknown): ParsedLyricSheet {
+export function parseLyricSheet(
+  sheet: JsonValue | undefined,
+): ParsedLyricSheet {
   const empty: ParsedLyricSheet = { lines: [], sections: [] };
   try {
     if (!isRecord(sheet)) return empty;
@@ -251,14 +260,16 @@ export function parseLyricSheet(sheet: unknown): ParsedLyricSheet {
  * Validates an untrusted timing artifact and returns a freshly allocated copy
  * with unknown properties stripped, or `null` when anything is out of contract.
  */
-export function normalizeLyricTiming(value: unknown): LyricTiming | null {
+export function normalizeLyricTiming(
+  value: JsonValue | undefined,
+): LyricTiming | null {
   try {
     if (!isRecord(value)) return null;
     if (value.version !== 1 || value.mode !== 'minimax-section-asr')
       return null;
     const durationSeconds = value.durationSeconds;
     if (
-      typeof durationSeconds !== 'number' ||
+      !isNumber(durationSeconds) ||
       !Number.isFinite(durationSeconds) ||
       durationSeconds <= 0 ||
       durationSeconds > MAX_TIMING_DURATION_SECONDS
@@ -273,14 +284,14 @@ export function normalizeLyricTiming(value: unknown): LyricTiming | null {
 
     const segments: LyricTimingSegment[] = [];
     let previousEnd = 0;
-    for (const candidate of value.segments as unknown[]) {
+    for (const candidate of value.segments) {
       if (!isRecord(candidate)) return null;
       const { start, end } = candidate;
       const label = normalizedTimingLabel(candidate.label);
       if (!label) return null;
       if (
-        typeof start !== 'number' ||
-        typeof end !== 'number' ||
+        !isNumber(start) ||
+        !isNumber(end) ||
         !Number.isFinite(start) ||
         !Number.isFinite(end)
       )
@@ -308,6 +319,18 @@ export function normalizeLyricTiming(value: unknown): LyricTiming | null {
   }
 }
 
+type SectionRef = { index: number; family: SectionFamily };
+
+function isSectionRef(value: JsonValue | undefined): value is SectionRef {
+  return (
+    isRecord(value) &&
+    isNumber(value.index) &&
+    Number.isInteger(value.index) &&
+    value.index >= 0 &&
+    isString(value.family)
+  );
+}
+
 /**
  * Maps timing segments onto written sections by family — never by the
  * provider's transcribed text. The match is an order-preserving alignment
@@ -322,28 +345,20 @@ export function normalizeLyricTiming(value: unknown): LyricTiming | null {
  * matched segments, or fewer than half of the non-silence segments matched.
  * Inherited repeats never count toward that confidence.
  *
- * Both arguments are `unknown` because they can arrive from stored JSON.
+ * Both arguments arrive as stored JSON, so they are validated here at the
+ * boundary rather than by their callers.
  */
 export function buildSectionTimeline(
-  sections: unknown,
-  timing: unknown,
+  sections: JsonValue | undefined,
+  timing: JsonValue | undefined,
 ): TimelineEntry[] | null {
   try {
     const normalized = normalizeLyricTiming(timing);
     if (!normalized || !Array.isArray(sections)) return null;
-    const candidates = sections as unknown[];
-    if (
-      !candidates.every(
-        (section) =>
-          isRecord(section) &&
-          Number.isInteger(section.index) &&
-          typeof section.index === 'number' &&
-          section.index >= 0 &&
-          typeof section.family === 'string',
-      )
-    )
-      return null;
-    const parsed = candidates as unknown as LyricSection[];
+    const parsed = sections.filter((section): section is SectionRef =>
+      isSectionRef(section),
+    );
+    if (parsed.length !== sections.length) return null;
 
     const sung = normalized.segments
       .map((segment, position) => ({ label: segment.label, position }))
@@ -413,6 +428,28 @@ export function buildSectionTimeline(
   }
 }
 
+function isTimelineEntry(value: JsonValue | undefined): value is TimelineEntry {
+  if (!isRecord(value)) return false;
+  const { start, end, label, sectionIndex } = value;
+  if (!isString(label) || !TIMING_LABELS.has(label)) return false;
+  if (
+    !isNumber(start) ||
+    !isNumber(end) ||
+    !Number.isFinite(start) ||
+    !Number.isFinite(end)
+  )
+    return false;
+  if (start < 0 || start >= end) return false;
+  if (
+    sectionIndex !== null &&
+    (!isNumber(sectionIndex) ||
+      !Number.isInteger(sectionIndex) ||
+      sectionIndex < 0)
+  )
+    return false;
+  return true;
+}
+
 /**
  * Finds the half-open `[start, end)` entry covering `currentTime`.
  *
@@ -420,37 +457,23 @@ export function buildSectionTimeline(
  * forward one and no cursor can drift out of sync with the media clock.
  */
 export function activeTimelineEntry(
-  timeline: unknown,
+  timeline: JsonValue | undefined,
   currentTime: number,
 ): TimelineEntry | null {
   try {
     if (!Number.isFinite(currentTime) || currentTime < 0) return null;
     if (!Array.isArray(timeline) || !timeline.length) return null;
-    const entries = timeline as unknown[];
+    const entries = timeline.filter((entry): entry is TimelineEntry =>
+      isTimelineEntry(entry),
+    );
+    if (entries.length !== timeline.length) return null;
     let previousEnd = 0;
     for (const entry of entries) {
-      if (!isRecord(entry)) return null;
-      const { start, end, label, sectionIndex } = entry;
-      if (typeof label !== 'string' || !TIMING_LABELS.has(label)) return null;
-      if (
-        typeof start !== 'number' ||
-        typeof end !== 'number' ||
-        !Number.isFinite(start) ||
-        !Number.isFinite(end)
-      )
-        return null;
-      if (start < 0 || start >= end || start < previousEnd) return null;
-      if (
-        sectionIndex !== null &&
-        (!Number.isInteger(sectionIndex) ||
-          typeof sectionIndex !== 'number' ||
-          sectionIndex < 0)
-      )
-        return null;
-      previousEnd = end;
+      if (entry.start < previousEnd) return null;
+      previousEnd = entry.end;
     }
     return (
-      (entries as TimelineEntry[]).find(
+      entries.find(
         (entry) => entry.start <= currentTime && currentTime < entry.end,
       ) ?? null
     );

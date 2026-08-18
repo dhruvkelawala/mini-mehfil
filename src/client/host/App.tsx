@@ -210,6 +210,9 @@ export function App() {
 
   const openPerformance = (opener?: HTMLElement | null) => {
     if (!performanceAvailable()) return;
+    // SAFETY: document.activeElement is always an HTMLElement or SVGElement,
+    // both of which expose focus(); the cast only narrows the static Element
+    // type to the focusable union used for restoration.
     performanceOpener =
       opener ?? (document.activeElement as HTMLElement | null);
     setPerformanceOpen(true);
@@ -636,7 +639,7 @@ export function App() {
             onClick={() =>
               void room
                 .open()
-                .catch((error: unknown) =>
+                .catch((error) =>
                   setRoomError(
                     error instanceof Error
                       ? error.message

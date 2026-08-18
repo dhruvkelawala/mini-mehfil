@@ -30,9 +30,9 @@ test('direct entry port rejects missing and invalid explicit values', () => {
 });
 
 test('exports an HTTP server for serverless runtimes', () => {
-  assert.equal(typeof serverModule.listen, 'function');
-  assert.equal(typeof serverModule.emit, 'function');
-  assert.equal(typeof createServer, 'function');
+  assert.equal(serverModule.listen instanceof Function, true);
+  assert.equal(serverModule.emit instanceof Function, true);
+  assert.equal(createServer instanceof Function, true);
 });
 
 function fixtureRoot() {
@@ -355,14 +355,14 @@ test('analysis returns discriminated terminal outcomes for untrusted results', a
   };
 
   for (const [name, entry] of Object.entries(unusable)) {
-    const reply = typeof entry === 'function' ? entry : entry.reply;
+    const reply = entry.reply ?? entry;
     const outcome = await analyzeWith(async (url) => {
       if (url !== 'https://mock.minimax.test/v1/music_cover_preprocess')
         throw new Error(`Unexpected URL: ${url}`);
       return reply();
     });
     assert.equal(outcome.status, 'unavailable', name);
-    if (typeof entry !== 'function') {
+    if (entry.expected) {
       assert.equal(outcome.reason, entry.expected.reason, name);
       assert.equal(outcome.retryable, entry.expected.retryable, name);
     } else if (name === 'an upstream status code') {

@@ -236,5 +236,8 @@ export function vocalGateSeconds(
   );
   if (!entry) return null;
   const latest = entry.start + Math.min(8, (entry.end - entry.start) / 2);
+  // SAFETY: the guard above returned on null and every non-finite value, so
+  // onsetSeconds is a finite number here; Number.isFinite does not narrow its
+  // parameter type, which is why the assertion is required.
   return Math.max(entry.start, Math.min(onsetSeconds as number, latest));
 }

@@ -1,7 +1,14 @@
 declare const __MEHFIL_REPLAY__: boolean;
 
 function replayBuild(): boolean {
-  return typeof __MEHFIL_REPLAY__ !== 'undefined' && __MEHFIL_REPLAY__;
+  // __MEHFIL_REPLAY__ is a Vite build-time `define`: normal builds leave the
+  // identifier unsubstituted (reading it throws ReferenceError), while the
+  // replay build inlines the literal `true`/`false`.
+  try {
+    return Boolean(__MEHFIL_REPLAY__);
+  } catch {
+    return false;
+  }
 }
 
 /** HTTPS in production; loopback HTTP only in the explicit replay build. */

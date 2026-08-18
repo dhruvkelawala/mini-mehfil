@@ -2,6 +2,12 @@ import { createSignal, getOwner, onCleanup } from 'solid-js';
 
 import { normalizeLyricTiming } from '../../lyrics/lyric-sync.ts';
 import {
+  isBoolean,
+  isRecord,
+  isString,
+  type JsonValue,
+} from '../../room/primitives.ts';
+import {
   TIMING_FAILURE_REASONS,
   type TimingAnalysisOutcome,
   type TimingFailureReason,
@@ -41,14 +47,11 @@ export interface TimingAnalysisController {
   cancel(): void;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isFailureReason(value: unknown): value is TimingFailureReason {
+function isFailureReason(
+  value: JsonValue | undefined,
+): value is TimingFailureReason {
   return (
-    typeof value === 'string' &&
-    (TIMING_FAILURE_REASONS as readonly string[]).includes(value)
+    isString(value) && TIMING_FAILURE_REASONS.some((reason) => reason === value)
   );
 }
 
@@ -64,7 +67,9 @@ function mayRetry(
   );
 }
 
-function parseOutcome(value: unknown): TimingAnalysisOutcome | null {
+function parseOutcome(
+  value: JsonValue | undefined,
+): TimingAnalysisOutcome | null {
   if (!isRecord(value)) return null;
   if (value.status === 'ready') {
     const timing = normalizeLyricTiming(value.timing);
@@ -73,7 +78,7 @@ function parseOutcome(value: unknown): TimingAnalysisOutcome | null {
   if (
     value.status === 'unavailable' &&
     isFailureReason(value.reason) &&
-    typeof value.retryable === 'boolean'
+    isBoolean(value.retryable)
   ) {
     return {
       status: 'unavailable',
@@ -124,7 +129,7 @@ export function createHttpTimingAnalysisPort(
         }),
         signal: input.signal,
       });
-      let value: unknown;
+      let value: JsonValue | undefined;
       try {
         value = await response.json();
       } catch {

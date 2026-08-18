@@ -62,9 +62,11 @@ export function App(props: {
     event.preventDefault();
     if (!requestForm) return;
     const data = new FormData(requestForm);
+    const isFormText = (value: FormDataEntryValue | null): value is string =>
+      typeof value === 'string';
     const field = (name: string, fallback = '') => {
       const value = data.get(name);
-      return typeof value === 'string' ? value : fallback;
+      return isFormText(value) ? value : fallback;
     };
     controller.submitRequest({
       idea: field('idea'),

@@ -2,6 +2,12 @@ import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import { extname, resolve } from 'node:path';
 
+import {
+  isRecord,
+  isString,
+  type JsonRecord,
+  type JsonValue,
+} from '../../src/room/primitives.ts';
 import { roomPage } from '../../src/worker/room-page.ts';
 import { createRoomRouter } from '../../src/worker/rooms.ts';
 import {
@@ -15,9 +21,12 @@ const port = Number(portFlag >= 0 ? process.argv[portFlag + 1] : 4387);
 const localOrigin = `http://127.0.0.1:${port}`;
 const generatedAudio = '49443304000000000000';
 const sharedSongId = 'AbCdEfGhIjKlMnOp';
-const jobRecords = new Map<string, Record<string, unknown>>();
+const jobRecords = new Map<string, JsonRecord>();
 const replayAudioPath = process.env.MEHFIL_REPLAY_AUDIO?.trim() ?? '';
 const replayAudio = replayAudioPath ? await readFile(replayAudioPath) : null;
+// SAFETY: sync-replay-song.json is a checked-in fixture whose structure is
+// fixed (durationSeconds, lyrics, timing.segments); the worker's timing
+// endpoint serializes those same fields back into its response.
 const replaySong = JSON.parse(
   await readFile(resolve('test/fixtures/sync-replay-song.json'), 'utf8'),
 ) as {
@@ -45,36 +54,45 @@ const replayTimingHeld = new Promise<void>((resolveTiming) => {
   releaseReplayTiming = resolveTiming;
 });
 
-const json = (value: unknown, status = 200): Response =>
+const json = (value: JsonValue, status = 200): Response =>
   new Response(JSON.stringify(value), {
     status,
     headers: { 'content-type': 'application/json' },
   });
 
+function isStringBody(value: BodyInit | null | undefined): value is string {
+  return typeof value === 'string';
+}
+
 function requestBody(body: BodyInit | null | undefined): string {
-  if (typeof body !== 'string') throw new Error('Fixture expected a JSON body');
+  if (!isStringBody(body)) throw new Error('Fixture expected a JSON body');
   return body;
+}
+
+function isUrlLike(value: string | URL | Request): value is string | URL {
+  return typeof value === 'string' || value instanceof URL;
 }
 
 async function fakeFetchResponse(
   input: string | URL | Request,
   init?: RequestInit,
 ) {
-  const url = new URL(
-    typeof input === 'string' || input instanceof URL ? input : input.url,
-  );
+  const url = new URL(isUrlLike(input) ? input : input.url);
   if (url.pathname === '/v1/music_generation') {
     replayState.generationRequests += 1;
-    const body = JSON.parse(requestBody(init?.body)) as { jobId?: string };
-    return json({
-      jobId: body.jobId,
+    const body: JsonValue = JSON.parse(requestBody(init?.body));
+    const payload: JsonRecord = {
       data: {
         audio: replayAudio
           ? `${localOrigin}/__fixture/song.mp3`
           : generatedAudio,
       },
-      share_ref: body.jobId,
-    });
+    };
+    if (isRecord(body) && isString(body.jobId)) {
+      payload.jobId = body.jobId;
+      payload.share_ref = body.jobId;
+    }
+    return json(payload);
   }
   if (url.pathname === '/v1/music_cover_preprocess') {
     replayState.timingRequests += 1;
@@ -115,6 +133,8 @@ async function fakeFetchResponse(
     url.pathname,
   );
   if (job) {
+    // SAFETY: the regex above has a mandatory capture group that can only
+    // match [A-Za-z0-9_-]{24}, so job[1] is always a non-empty string.
     const jobId = job[1] as string;
     if (init?.method === 'POST') {
       const record = { jobId, status: 'pending', createdAt: Date.now() };
@@ -122,10 +142,9 @@ async function fakeFetchResponse(
       return json(record, 201);
     }
     if (init?.method === 'PUT') {
-      const update = JSON.parse(requestBody(init.body)) as Record<
-        string,
-        unknown
-      >;
+      // SAFETY: the PUT body is the app's own generation-job record update;
+      // every field is a JSON value and is merged verbatim into the record.
+      const update = JSON.parse(requestBody(init.body)) as JsonRecord;
       const record = { jobId, ...update };
       jobRecords.set(jobId, record);
       return json(record);
@@ -177,8 +196,7 @@ const app = createServer({
   allowLocalHttpAudioSource: Boolean(replayAudio),
 });
 const appHandler = app.listeners('request')[0];
-if (typeof appHandler !== 'function')
-  throw new Error('Fixture app has no handler');
+if (appHandler == null) throw new Error('Fixture app has no handler');
 
 const listenerRoot = resolve('dist/listener');
 const listenerAsset = {
@@ -222,6 +240,9 @@ const shareStorage: ShareStorage = {
     Promise.resolve(
       id === sharedSongId ? (storedShare?.metadata ?? sharedMetadata) : null,
     ),
+  // SAFETY: the fixture only fills the fields the share handler reads
+  // (body, size, etag, httpMetadata); the handler never touches the rest
+  // of R2ObjectBody, so a partial shape stands in for the full object.
   getAudio: (id) =>
     Promise.resolve(
       id === sharedSongId
@@ -286,14 +307,14 @@ const handleRequest = async (
     const requestedEnd = range?.[2] ? Number(range[2]) : replayAudio.length - 1;
     const end = Math.min(requestedEnd, replayAudio.length - 1);
     const body = replayAudio.subarray(start, end + 1);
-    response.writeHead(range ? 206 : 200, {
+    const headers: http.OutgoingHttpHeaders = {
       'content-type': 'audio/mpeg',
       'content-length': body.byteLength,
       'accept-ranges': 'bytes',
-      ...(range
-        ? { 'content-range': `bytes ${start}-${end}/${replayAudio.length}` }
-        : {}),
-    });
+    };
+    if (range)
+      headers['content-range'] = `bytes ${start}-${end}/${replayAudio.length}`;
+    response.writeHead(range ? 206 : 200, headers);
     if (request.method === 'HEAD') response.end();
     else response.end(body);
     return;
@@ -318,6 +339,8 @@ const handleRequest = async (
   const origin = `http://${request.headers.host ?? `127.0.0.1:${port}`}`;
   const webRequest = new Request(new URL(request.url ?? '/', origin), {
     method: request.method ?? 'GET',
+    // SAFETY: request.headers is an IncomingHttpHeaders whose values are
+    // strings or string arrays — the exact shapes HeadersInit accepts.
     headers: request.headers as HeadersInit,
   });
   const roomResponse = await routeRoomRequest(webRequest);

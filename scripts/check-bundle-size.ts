@@ -2,6 +2,8 @@ import { gzipSync } from 'node:zlib';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { isRecord, isString, type JsonValue } from '../src/room/primitives.ts';
+
 interface ManifestChunk {
   file: string;
   isEntry?: boolean;
@@ -15,32 +17,37 @@ interface Budget {
   css: number;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+function parseManifestChunk(
+  surface: string,
+  key: string,
+  value: JsonValue | undefined,
+): ManifestChunk {
+  if (!isRecord(value))
+    throw new Error(`Invalid chunk ${key} in ${surface} manifest.`);
+  const file = value.file;
+  if (!isString(file))
+    throw new Error(`Invalid chunk ${key} in ${surface} manifest.`);
+  const chunk: ManifestChunk = { file };
+  if (value.isEntry === true) chunk.isEntry = true;
+  const imports = value.imports;
+  if (Array.isArray(imports) && imports.every((item) => isString(item))) {
+    chunk.imports = imports;
+  }
+  const css = value.css;
+  if (Array.isArray(css) && css.every((item) => isString(item))) {
+    chunk.css = css;
+  }
+  return chunk;
 }
 
-function manifest(surface: string): Record<string, ManifestChunk> {
-  const raw: unknown = JSON.parse(
+function manifest(surface: string) {
+  const raw: JsonValue = JSON.parse(
     readFileSync(resolve(`dist/${surface}/.vite/manifest.json`), 'utf8'),
   );
   if (!isRecord(raw)) throw new Error(`Invalid ${surface} Vite manifest.`);
   const chunks: Record<string, ManifestChunk> = {};
   for (const [key, value] of Object.entries(raw)) {
-    if (!isRecord(value) || typeof value.file !== 'string') {
-      throw new Error(`Invalid chunk ${key} in ${surface} manifest.`);
-    }
-    chunks[key] = {
-      file: value.file,
-      ...(value.isEntry === true ? { isEntry: true } : {}),
-      ...(Array.isArray(value.imports) &&
-      value.imports.every((item) => typeof item === 'string')
-        ? { imports: value.imports }
-        : {}),
-      ...(Array.isArray(value.css) &&
-      value.css.every((item) => typeof item === 'string')
-        ? { css: value.css }
-        : {}),
-    };
+    chunks[key] = parseManifestChunk(surface, key, value);
   }
   return chunks;
 }
@@ -49,7 +56,7 @@ function gzipBytes(pathname: string): number {
   return gzipSync(readFileSync(pathname)).byteLength;
 }
 
-function measure(surface: string): { javascript: number; css: number } {
+function measure(surface: string) {
   const chunks = manifest(surface);
   const entry = Object.entries(chunks).find(([, chunk]) => chunk.isEntry);
   if (!entry) throw new Error(`${surface} manifest has no entry.`);

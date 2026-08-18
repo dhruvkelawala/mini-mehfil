@@ -1,14 +1,33 @@
-export type JsonRecord = Record<string, unknown>;
+export type JsonValue =
+  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
-export function isRecord(value: unknown): value is JsonRecord {
+export type JsonRecord = Record<string, JsonValue>;
+
+export function isRecord(value: JsonValue | undefined): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function isString(value: JsonValue | undefined): value is string {
+  return typeof value === 'string';
+}
+
+export function isNumber(value: JsonValue | undefined): value is number {
+  return typeof value === 'number';
+}
+
+export function isFiniteNumber(value: JsonValue | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+export function isBoolean(value: JsonValue | undefined): value is boolean {
+  return typeof value === 'boolean';
 }
 
 export const ROOM_ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const ROOM_ID_SOURCE = `[${ROOM_ID_ALPHABET}]{8}`;
 export const ROOM_ID_PATTERN = new RegExp(`^${ROOM_ID_SOURCE}$`);
 
-export function isRoomId(value: unknown): value is string {
+export function isRoomId(value: JsonValue | undefined): value is string {
   return typeof value === 'string' && ROOM_ID_PATTERN.test(value);
 }
 

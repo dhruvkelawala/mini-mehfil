@@ -1,4 +1,9 @@
-import { randomBase64Url } from '../../room/primitives.ts';
+import {
+  isString,
+  randomBase64Url,
+  type JsonRecord,
+  type JsonValue,
+} from '../../room/primitives.ts';
 import { isRecord, type LyricsSheet } from '../../room/protocol.ts';
 
 export const GENERATION_STORAGE_KEY = 'mini-mehfil:generation:v1';
@@ -6,16 +11,16 @@ export const JOB_PATTERN = /^[A-Za-z0-9_-]{24}$/;
 const TTL_MS = 24 * 60 * 60 * 1000;
 const BACKOFF = [2_000, 3_000, 5_000] as const;
 
-export interface HostLyrics extends LyricsSheet {
+export type HostLyrics = LyricsSheet & {
   languageCode: string;
   prompt: string;
-}
+};
 
-export interface RoomGenerationContext {
+export type RoomGenerationContext = {
   kind: 'room-recording';
   roomId: string;
   requestId: string;
-}
+};
 
 export type GenerationContext = RoomGenerationContext | null;
 
@@ -35,7 +40,7 @@ export interface ActiveGeneration extends PendingGeneration {
 export interface StatusResponse {
   ok: boolean;
   status: number;
-  value: Record<string, unknown>;
+  value: JsonRecord;
 }
 
 export interface RecoveryCoordinator {
@@ -66,70 +71,66 @@ interface CoordinatorOptions {
   fetchStatus?: (jobId: string) => Promise<StatusResponse>;
   onRequest?: (pending: ActiveGeneration) => void;
   onResponse?: (response: StatusResponse, pending: ActiveGeneration) => void;
-  onPending?: (
-    value: Record<string, unknown>,
-    pending: ActiveGeneration,
-  ) => void;
-  onComplete?: (
-    value: Record<string, unknown>,
-    pending: ActiveGeneration,
-  ) => void;
-  onFailed?: (
-    value: Record<string, unknown>,
-    pending: ActiveGeneration,
-  ) => void;
-  onExpired?: (
-    value: Record<string, unknown>,
-    pending: ActiveGeneration,
-  ) => void;
+  onPending?: (value: JsonRecord, pending: ActiveGeneration) => void;
+  onComplete?: (value: JsonRecord, pending: ActiveGeneration) => void;
+  onFailed?: (value: JsonRecord, pending: ActiveGeneration) => void;
+  onExpired?: (value: JsonRecord, pending: ActiveGeneration) => void;
   onRetryable?: (
     error: { status: number; message: string },
     pending: ActiveGeneration,
   ) => void;
 }
 
-function cleanSheet(value: unknown): HostLyrics | null {
+function cleanSheet(value: JsonValue | undefined): HostLyrics | null {
   if (!isRecord(value)) return null;
   const sheet: HostLyrics = {
-    title: typeof value.title === 'string' ? value.title : '',
-    language: typeof value.language === 'string' ? value.language : '',
-    languageCode:
-      typeof value.languageCode === 'string' ? value.languageCode : '',
-    nativeScriptName:
-      typeof value.nativeScriptName === 'string' ? value.nativeScriptName : '',
+    title: isString(value.title) ? value.title : '',
+    language: isString(value.language) ? value.language : '',
+    languageCode: isString(value.languageCode) ? value.languageCode : '',
+    nativeScriptName: isString(value.nativeScriptName)
+      ? value.nativeScriptName
+      : '',
     isLatinScript: value.isLatinScript === true,
-    lyricsNative:
-      typeof value.lyricsNative === 'string' ? value.lyricsNative : '',
-    lyricsRoman: typeof value.lyricsRoman === 'string' ? value.lyricsRoman : '',
-    prompt: typeof value.prompt === 'string' ? value.prompt : '',
+    lyricsNative: isString(value.lyricsNative) ? value.lyricsNative : '',
+    lyricsRoman: isString(value.lyricsRoman) ? value.lyricsRoman : '',
+    prompt: isString(value.prompt) ? value.prompt : '',
   };
   return sheet.title && (sheet.lyricsNative || sheet.lyricsRoman)
     ? sheet
     : null;
 }
 
-function cleanContext(value: unknown): GenerationContext | undefined {
+function cleanContext(
+  value: JsonValue | undefined,
+): GenerationContext | undefined {
   if (value === undefined || value === null) return null;
+  if (!isRecord(value) || value.kind !== 'room-recording') return undefined;
+  const roomId = value.roomId;
+  const requestId = value.requestId;
   if (
-    !isRecord(value) ||
-    value.kind !== 'room-recording' ||
-    typeof value.roomId !== 'string' ||
-    !/^[A-Za-z0-9_-]{8}$/.test(value.roomId) ||
-    typeof value.requestId !== 'string' ||
-    !value.requestId ||
-    value.requestId.length > 120
+    !isString(roomId) ||
+    !/^[A-Za-z0-9_-]{8}$/.test(roomId) ||
+    !isString(requestId) ||
+    !requestId ||
+    requestId.length > 120
   ) {
     return undefined;
   }
   return {
     kind: 'room-recording',
-    roomId: value.roomId,
-    requestId: value.requestId,
+    roomId,
+    requestId,
   };
 }
 
+function canGetRandomValues(source: Crypto): source is Crypto & {
+  getRandomValues<T extends ArrayBufferView | null>(array: T): T;
+} {
+  return typeof source.getRandomValues === 'function';
+}
+
 export function createJobId(cryptoSource: Crypto = crypto): string {
-  if (typeof cryptoSource.getRandomValues !== 'function')
+  if (!canGetRandomValues(cryptoSource))
     throw new Error('Secure randomness is unavailable.');
   return randomBase64Url(18, cryptoSource);
 }
@@ -172,7 +173,7 @@ export function readPendingGeneration(
   storage: Storage,
   now: () => number = Date.now,
 ): PendingGeneration | null {
-  let value: unknown;
+  let value: JsonValue | undefined;
   try {
     value = JSON.parse(storage.getItem(GENERATION_STORAGE_KEY) ?? 'null');
   } catch {
@@ -209,12 +210,11 @@ export function createRecoveryCoordinator(
   const storage = options.storage ?? null;
   const now = options.now ?? Date.now;
   const cryptoSource =
-    options.cryptoSource ?? (typeof crypto === 'undefined' ? null : crypto);
+    options.cryptoSource ?? (!('crypto' in globalThis) ? null : crypto);
   const visibility =
     options.visibility ??
     (() =>
-      typeof document === 'undefined' ||
-      document.visibilityState === 'visible');
+      !('document' in globalThis) || document.visibilityState === 'visible');
   const schedule = options.schedule ?? setTimeout;
   const cancelSchedule = options.cancelSchedule ?? clearTimeout;
   const fetchStatus =
@@ -223,7 +223,7 @@ export function createRecoveryCoordinator(
       const response = await fetch(
         `/api/generation-status?id=${encodeURIComponent(jobId)}`,
       );
-      let value: unknown;
+      let value: JsonValue | undefined;
       try {
         value = await response.json();
       } catch {
@@ -280,10 +280,9 @@ export function createRecoveryCoordinator(
         options.onRetryable?.(
           {
             status: response.status,
-            message:
-              typeof response.value.error === 'string'
-                ? response.value.error
-                : 'Recording recovery is temporarily unavailable.',
+            message: isString(response.value.error)
+              ? response.value.error
+              : 'Recording recovery is temporarily unavailable.',
           },
           snapshot,
         );

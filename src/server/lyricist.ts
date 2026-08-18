@@ -1,4 +1,9 @@
-import { isRecord } from '../room/protocol.ts';
+import {
+  isRecord,
+  isString,
+  type JsonRecord,
+  type JsonValue,
+} from '../room/primitives.ts';
 
 // The lyricist: turns a handful of keywords into lyrics MiniMax can actually sing.
 //
@@ -65,8 +70,6 @@ Your job:
 Reply with ONLY a JSON object, no markdown fence and no commentary:
 {"title":"","language":"","languageCode":"","nativeScriptName":"","isLatinScript":false,"lyricsNative":"","lyricsRoman":"","prompt":""}`;
 
-type JsonRecord = Record<string, unknown>;
-
 export interface WriteLyricsOptions {
   token: string;
   idea: string;
@@ -76,7 +79,7 @@ export interface WriteLyricsOptions {
   signal?: AbortSignal;
 }
 
-export interface LyricsResult {
+export type LyricsResult = {
   title: string;
   language: string;
   languageCode: string;
@@ -85,17 +88,21 @@ export interface LyricsResult {
   lyricsNative: string;
   lyricsRoman: string;
   prompt: string;
-  usage: unknown;
-}
+  usage?: JsonValue | null;
+};
 
 function extractText(response: JsonRecord | null): string {
-  if (typeof response?.content === 'string') return response.content;
-  if (!Array.isArray(response?.content)) return '';
-  return response.content
+  const content = response?.content;
+  if (isString(content)) return content;
+  if (!Array.isArray(content)) return '';
+  return content
     .filter(
       (block): block is JsonRecord => isRecord(block) && block.type === 'text',
     )
-    .map((block) => (typeof block.text === 'string' ? block.text : ''))
+    .map((block) => {
+      const text = block.text;
+      return isString(text) ? text : '';
+    })
     .join('');
 }
 
@@ -107,14 +114,16 @@ function parseJsonLoosely(text: string): JsonRecord | null {
     .replace(/\s*```$/, '')
     .trim();
   try {
-    const value: unknown = JSON.parse(withoutFence);
+    const value: JsonValue | undefined = JSON.parse(withoutFence);
     return isRecord(value) ? value : null;
   } catch {
     const start = withoutFence.indexOf('{');
     const end = withoutFence.lastIndexOf('}');
     if (start === -1 || end <= start) return null;
     try {
-      const value: unknown = JSON.parse(withoutFence.slice(start, end + 1));
+      const value: JsonValue | undefined = JSON.parse(
+        withoutFence.slice(start, end + 1),
+      );
       return isRecord(value) ? value : null;
     } catch {
       return null;
@@ -122,8 +131,8 @@ function parseJsonLoosely(text: string): JsonRecord | null {
   }
 }
 
-function asString(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
+function asString(value: JsonValue | undefined): string {
+  return isString(value) ? value.trim() : '';
 }
 
 export async function writeLyrics({
@@ -151,7 +160,7 @@ export async function writeLyrics({
 
   const apiBase =
     process.env.MINIMAX_ANTHROPIC_BASE || 'https://api.minimax.io/anthropic';
-  const upstream = await fetch(`${apiBase}/v1/messages`, {
+  const init: RequestInit = {
     method: 'POST',
     headers: {
       'x-api-key': token,
@@ -164,13 +173,14 @@ export async function writeLyrics({
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: request }],
     }),
-    ...(signal ? { signal } : {}),
-  });
+  };
+  if (signal) init.signal = signal;
+  const upstream = await fetch(`${apiBase}/v1/messages`, init);
 
   const raw = await upstream.text();
   let response: JsonRecord | null;
   try {
-    const parsed: unknown = JSON.parse(raw);
+    const parsed: JsonValue | undefined = JSON.parse(raw);
     response = isRecord(parsed) ? parsed : null;
   } catch {
     response = null;
@@ -186,9 +196,7 @@ export async function writeLyrics({
       baseResponse.status_msg ||
       `The lyricist request failed (${upstream.status}).`;
     throw Object.assign(
-      new Error(
-        typeof message === 'string' ? message : 'The lyricist request failed.',
-      ),
+      new Error(isString(message) ? message : 'The lyricist request failed.'),
       { status: upstream.status === 401 ? 401 : 502 },
     );
   }

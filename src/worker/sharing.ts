@@ -2,8 +2,14 @@ import {
   normalizeLyricTiming,
   type LyricTiming,
 } from '../lyrics/lyric-sync.ts';
-import { base64Url, randomBase64Url } from '../room/primitives.ts';
-import { isRecord } from '../room/protocol.ts';
+import {
+  base64Url,
+  isNumber,
+  isRecord,
+  isString,
+  randomBase64Url,
+  type JsonValue,
+} from '../room/primitives.ts';
 import { constantTimeEqual, sha256 } from '../room/transport.ts';
 import { playbackPage } from './playback-page.ts';
 import type { PlaybackSong } from './playback-page.ts';
@@ -20,12 +26,12 @@ const JOB_TTL_MS = 24 * 60 * 60 * 1000;
 const PENDING_JOB_TTL_MS = 5 * 60 * 1000;
 const REPOSITORY_URL = 'https://github.com/dhruvkelawala/mini-mehfil';
 
-interface SongMetadata extends PlaybackSong {
+type SongMetadata = PlaybackSong & {
   createdAt: string;
   lyricTiming: LyricTiming | null;
-}
+};
 
-interface GenerationJob {
+type GenerationJob = {
   version: 1;
   jobId: string;
   status: 'pending' | 'complete' | 'failed';
@@ -36,14 +42,14 @@ interface GenerationJob {
   traceId?: string;
   lyricTiming?: LyricTiming;
   error?: { code: string; message: string };
-}
+};
 
-interface JobResult {
+type JobResult = {
   created?: boolean;
   conflict?: boolean;
-  record?: unknown;
+  record?: JsonValue;
   etag?: string;
-}
+};
 
 interface SharedAudio {
   audio: ArrayBuffer;
@@ -76,20 +82,20 @@ interface ShareHandlerOptions {
   now?: () => number;
 }
 
-function errorDetails(error: unknown): { message: string; status?: number } {
-  if (!(error instanceof Error)) return { message: String(error) };
-  const status =
-    isRecord(error) && typeof error.status === 'number'
-      ? error.status
-      : undefined;
-  return {
-    message: error.message,
-    ...(status === undefined ? {} : { status }),
-  };
+type ErrorDetails = { message: string; status?: number };
+
+function errorDetails(value: JsonValue | undefined): ErrorDetails {
+  if (!(value instanceof Error)) return { message: String(value) };
+  const details: ErrorDetails = { message: value.message };
+  if (isRecord(value)) {
+    const status = value.status;
+    if (isNumber(status)) details.status = status;
+  }
+  return details;
 }
 
 function json(
-  value: unknown,
+  value: JsonValue,
   status = 200,
   headers: HeadersInit = {},
 ): Response {
@@ -173,10 +179,10 @@ function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 }
 
 function validateMetadata(raw: FormDataEntryValue | null): SongMetadata {
-  if (typeof raw !== 'string' || raw.length > 16 * 1024) {
+  if (raw == null || raw instanceof File || raw.length > 16 * 1024) {
     throw new Error('Invalid song details.');
   }
-  let value: unknown;
+  let value: JsonValue;
   try {
     value = JSON.parse(raw);
   } catch {
@@ -186,7 +192,7 @@ function validateMetadata(raw: FormDataEntryValue | null): SongMetadata {
 
   const text = (key: string, max: number, required = false): string => {
     const candidate = value[key];
-    const entry = typeof candidate === 'string' ? candidate.trim() : '';
+    const entry = isString(candidate) ? candidate.trim() : '';
     if ((required && !entry) || entry.length > max)
       throw new Error('Invalid song details.');
     return entry;
@@ -231,7 +237,7 @@ function pendingJob(jobId: string, now: number): GenerationJob {
   };
 }
 
-function validAudioSource(source: unknown): source is string {
+function validAudioSource(source: JsonValue | undefined): source is string {
   if (typeof source !== 'string' || !source || source.length > 32 * 1024)
     return false;
   if (/^(?:0x)?[0-9a-f]+$/i.test(source))
@@ -244,20 +250,22 @@ function validAudioSource(source: unknown): source is string {
   }
 }
 
-function validStoredJob(value: unknown, jobId: string): GenerationJob | null {
+function validStoredJob(
+  value: JsonValue | undefined,
+  jobId: string,
+): GenerationJob | null {
+  if (!isRecord(value)) return null;
+  const version = value.version;
+  const storedJobId = value.jobId;
+  const status = value.status;
   if (
-    !isRecord(value) ||
-    value.version !== JOB_VERSION ||
-    value.jobId !== jobId ||
-    (value.status !== 'pending' &&
-      value.status !== 'complete' &&
-      value.status !== 'failed')
+    version !== JOB_VERSION ||
+    storedJobId !== jobId ||
+    (status !== 'pending' && status !== 'complete' && status !== 'failed')
   )
     return null;
-  const parseIsoDate = (entry: unknown) =>
-    typeof entry === 'string' && Number.isFinite(Date.parse(entry))
-      ? entry
-      : null;
+  const parseIsoDate = (entry: JsonValue | undefined) =>
+    isString(entry) && Number.isFinite(Date.parse(entry)) ? entry : null;
   const createdAt = parseIsoDate(value.createdAt);
   const updatedAt = parseIsoDate(value.updatedAt);
   const expiresAt = parseIsoDate(value.expiresAt);
@@ -265,45 +273,37 @@ function validStoredJob(value: unknown, jobId: string): GenerationJob | null {
   const record: GenerationJob = {
     version: JOB_VERSION,
     jobId,
-    status: value.status,
+    status,
     createdAt,
     updatedAt,
     expiresAt,
   };
-  if (value.status === 'complete') {
-    if (!validAudioSource(value.source)) return null;
-    record.source = value.source;
-    if (
-      typeof value.traceId === 'string' &&
-      /^[A-Za-z0-9._:-]{1,200}$/.test(value.traceId)
-    )
-      record.traceId = value.traceId;
+  if (status === 'complete') {
+    const source = value.source;
+    if (!validAudioSource(source)) return null;
+    record.source = source;
+    const traceId = value.traceId;
+    if (isString(traceId) && /^[A-Za-z0-9._:-]{1,200}$/.test(traceId))
+      record.traceId = traceId;
     const lyricTiming = normalizeLyricTiming(value.lyricTiming);
     if (lyricTiming) record.lyricTiming = lyricTiming;
   }
-  if (value.status === 'failed') {
+  if (status === 'failed') {
     const error = isRecord(value.error) ? value.error : null;
-    if (
-      !error ||
-      typeof error.code !== 'string' ||
-      typeof error.message !== 'string'
-    )
+    if (!error) return null;
+    const code = error.code;
+    const message = error.message;
+    if (!isString(code) || !isString(message)) return null;
+    if (!code || code.length > 80 || !message || message.length > 500)
       return null;
-    if (
-      !error.code ||
-      error.code.length > 80 ||
-      !error.message ||
-      error.message.length > 500
-    )
-      return null;
-    record.error = { code: error.code, message: error.message };
+    record.error = { code, message };
   }
   return record;
 }
 
 function terminalJob(
   current: GenerationJob,
-  input: unknown,
+  input: JsonValue | undefined,
   now: number,
 ): GenerationJob {
   if (!isRecord(input)) {
@@ -312,41 +312,44 @@ function terminalJob(
       { status: 400 },
     );
   }
+  const status = input.status;
   const base: GenerationJob = {
     version: JOB_VERSION,
     jobId: current.jobId,
-    status: input.status === 'complete' ? 'complete' : 'failed',
+    status: status === 'complete' ? 'complete' : 'failed',
     createdAt: current.createdAt,
     updatedAt: new Date(now).toISOString(),
     expiresAt: current.expiresAt,
   };
-  if (input.status === 'complete') {
-    if (!validAudioSource(input.source))
+  if (status === 'complete') {
+    const source = input.source;
+    if (!validAudioSource(source))
       throw Object.assign(new Error('A valid audio source is required.'), {
         status: 400,
       });
-    base.source = input.source;
-    if (typeof input.traceId === 'string') {
-      const traceId = input.traceId.trim();
-      if (/^[A-Za-z0-9._:-]{1,200}$/.test(traceId)) base.traceId = traceId;
+    base.source = source;
+    const traceId = input.traceId;
+    if (isString(traceId)) {
+      const trimmed = traceId.trim();
+      if (/^[A-Za-z0-9._:-]{1,200}$/.test(trimmed)) base.traceId = trimmed;
     }
     const lyricTiming = normalizeLyricTiming(input.lyricTiming);
     if (lyricTiming) base.lyricTiming = lyricTiming;
     return base;
   }
-  if (input.status === 'failed') {
+  if (status === 'failed') {
     const error = isRecord(input.error) ? input.error : {};
-    const code =
-      typeof error.code === 'string' ? error.code.trim().slice(0, 80) : '';
-    const message =
-      typeof error.message === 'string'
-        ? error.message.trim().slice(0, 500)
-        : '';
-    if (!code || !message)
+    const code = error.code;
+    const message = error.message;
+    const trimmedCode = isString(code) ? code.trim().slice(0, 80) : '';
+    const trimmedMessage = isString(message)
+      ? message.trim().slice(0, 500)
+      : '';
+    if (!trimmedCode || !trimmedMessage)
       throw Object.assign(new Error('A stable public error is required.'), {
         status: 400,
       });
-    base.error = { code, message };
+    base.error = { code: trimmedCode, message: trimmedMessage };
     return base;
   }
   throw Object.assign(
@@ -399,7 +402,7 @@ async function settleAbandonedJob(
   return await storage.getJob(jobId);
 }
 
-async function readJobJson(request: Request): Promise<unknown> {
+async function readJobJson(request: Request): Promise<JsonValue> {
   const declared = Number(request.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > MAX_JOB_JSON_BYTES)
     throw Object.assign(new Error('Job update is too large.'), { status: 413 });
@@ -468,7 +471,7 @@ export function createR2Storage(bucket: R2Bucket): ShareStorage {
       const object = await bucket.get(`shares/${id}.json`);
       if (!object) return null;
       try {
-        const value: unknown = JSON.parse(await object.text());
+        const value: JsonValue = JSON.parse(await object.text());
         if (!isRecord(value)) return null;
         const fields = [
           'title',
@@ -478,8 +481,7 @@ export function createR2Storage(bucket: R2Bucket): ShareStorage {
           'lyricsRoman',
           'createdAt',
         ];
-        if (!fields.every((field) => typeof value[field] === 'string'))
-          return null;
+        if (!fields.every((field) => isString(value[field]))) return null;
         return {
           title: String(value.title),
           language: String(value.language),
@@ -519,17 +521,18 @@ export function createR2Storage(bucket: R2Bucket): ShareStorage {
       );
       if (!object) return { created: false };
       const etag = conditionalEtag(object);
-      return { created: true, record, ...(etag ? { etag } : {}) };
+      const claimed: JobResult = { created: true, record };
+      if (etag) claimed.etag = etag;
+      return claimed;
     },
     async getJob(id: string) {
       const object = await bucket.get(`jobs/${id}.json`);
       if (!object) return null;
       try {
         const etag = conditionalEtag(object);
-        return {
-          record: JSON.parse(await object.text()),
-          ...(etag ? { etag } : {}),
-        };
+        const job: JobResult = { record: JSON.parse(await object.text()) };
+        if (etag) job.etag = etag;
+        return job;
       } catch {
         return null;
       }
@@ -553,11 +556,9 @@ export function createR2Storage(bucket: R2Bucket): ShareStorage {
       );
       if (!object) return { conflict: true };
       const nextEtag = conditionalEtag(object);
-      return {
-        conflict: false,
-        record,
-        ...(nextEtag ? { etag: nextEtag } : {}),
-      };
+      const transitioned: JobResult = { conflict: false, record };
+      if (nextEtag) transitioned.etag = nextEtag;
+      return transitioned;
     },
   };
 }
@@ -651,7 +652,11 @@ export function createShareHandler({
         }
         return json(next);
       } catch (error) {
-        const details = errorDetails(error);
+        // SAFETY: the job branch only throws Error instances (R2 storage
+        // errors, DOMException, or this handler's own status-carrying Error)
+        // whose enumerable fields are JSON values; errorDetails re-validates
+        // the shape with instanceof/isRecord before reading any field.
+        const details = errorDetails(error as JsonValue | undefined);
         return json(
           { error: details.message || 'Generation job request failed.' },
           details.status ?? 503,
@@ -706,7 +711,10 @@ export function createShareHandler({
           body: exactArrayBuffer(body),
         }).formData();
       } catch (error) {
-        const details = errorDetails(error);
+        // SAFETY: reading the multipart body only throws Error instances
+        // (readBody's status-carrying Error, DOMException, TypeError);
+        // errorDetails re-validates with instanceof/isRecord before use.
+        const details = errorDetails(error as JsonValue | undefined);
         return json(
           {
             error:
@@ -718,7 +726,7 @@ export function createShareHandler({
         );
       }
       const audio = form.get('audio');
-      if (!audio || typeof audio === 'string')
+      if (!audio || !(audio instanceof File))
         return json({ error: 'Add an MP3 recording.' }, 400);
       const contentType = String(audio.type || '').toLowerCase();
       if (!ALLOWED_AUDIO_TYPES.has(contentType))
@@ -730,7 +738,12 @@ export function createShareHandler({
       try {
         metadata = validateMetadata(form.get('metadata'));
       } catch (error) {
-        return json({ error: errorDetails(error).message }, 400);
+        // SAFETY: validateMetadata throws only the plain Error it constructs
+        // itself, so the asserted shape is limited to that single Error.
+        return json(
+          { error: errorDetails(error as JsonValue | undefined).message },
+          400,
+        );
       }
       const id = await idGenerator(idempotencyKey, uploadSecret);
       if (!ID_PATTERN.test(id))

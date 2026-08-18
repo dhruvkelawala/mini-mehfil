@@ -1,11 +1,20 @@
 import { createSignal } from 'solid-js';
 
+import {
+  isBoolean,
+  isNumber,
+  isRecord,
+  isString,
+  type JsonRecord,
+  type JsonValue,
+} from '../../room/primitives.ts';
+
 export interface MediaDiagnostics {
   available: () => boolean;
   visible: () => boolean;
   headline: () => string;
   report: () => string;
-  recordFailure(error: unknown, media?: HTMLMediaElement | null): void;
+  recordFailure(error: Error | null, media?: HTMLMediaElement | null): void;
   open(): void;
   close(): void;
   clear(): void;
@@ -25,6 +34,24 @@ const NETWORK_STATES = [
   'NETWORK_NO_SOURCE',
 ] as const;
 
+/** Sanitized, JSON-safe shape for one recorded playback failure. */
+export type DiagnosticErrorDetails = {
+  name: string;
+  message: string;
+  code?: number;
+  stack?: string;
+};
+
+const isErrorMessage = (value: Error | string | null): value is string =>
+  typeof value === 'string';
+
+/** True when an Error carries a numeric DOM/MediaError-style code. */
+function isErrorCodeNumber(
+  source: Error & { code?: unknown },
+): source is Error & { code: number } {
+  return 'code' in source && typeof source.code === 'number';
+}
+
 export function redactDiagnosticUrl(
   value: string,
   baseUrl = location.href,
@@ -41,61 +68,56 @@ export function redactDiagnosticUrl(
 }
 
 export function normalizeDiagnosticError(
-  error: unknown,
+  error: Error | string | null,
   baseUrl: string,
-): { name: string; message: string; code?: number; stack?: string } {
+): DiagnosticErrorDetails {
   const source =
     error instanceof Error
       ? error
-      : new Error(typeof error === 'string' ? error : 'Unknown error');
+      : new Error(isErrorMessage(error) ? error : 'Unknown error');
   const redact = (value: string) =>
     value.replace(/https?:\/\/[^\s"'<>]+/gi, (url) =>
       redactDiagnosticUrl(url, baseUrl),
     );
-  const code =
-    'code' in source && typeof source.code === 'number'
-      ? source.code
-      : undefined;
-  return {
+  const details: DiagnosticErrorDetails = {
     name: source.name || 'Error',
     message: redact(source.message),
-    ...(code === undefined ? {} : { code }),
-    ...(source.stack ? { stack: redact(source.stack) } : {}),
   };
+  if (isErrorCodeNumber(source)) details.code = source.code;
+  if (source.stack) details.stack = redact(source.stack);
+  return details;
 }
 
 export function safeDiagnosticDetails(
-  value: unknown,
+  value: JsonValue | undefined,
   baseUrl: string,
   key = '',
-): unknown {
-  if (value === null || typeof value === 'number' || typeof value === 'boolean')
-    return value;
+): JsonValue {
+  if (value === undefined) return '[undefined]';
+  if (value === null || isNumber(value) || isBoolean(value)) return value;
   if (/token|authorization|cookie|lyrics|prompt|payload|requestBody/i.test(key))
     return '[redacted]';
-  if (value instanceof Error) return normalizeDiagnosticError(value, baseUrl);
-  if (typeof value === 'string')
+  if (isString(value))
     return value.replace(/https?:\/\/[^\s"'<>]+/gi, (url) =>
       redactDiagnosticUrl(url, baseUrl),
     );
   if (Array.isArray(value))
     return value.map((item) => safeDiagnosticDetails(item, baseUrl));
-  if (typeof value === 'object' && value)
+  if (isRecord(value))
     return Object.fromEntries(
       Object.entries(value).map(([childKey, child]) => [
         childKey,
         safeDiagnosticDetails(child, baseUrl, childKey),
       ]),
     );
-  return typeof value === 'symbol'
-    ? (value.description ?? '[symbol]')
-    : `[${typeof value}]`;
+  // Every JsonValue shape is handled above; this line is unreachable.
+  return '[undefined]';
 }
 
 export function mediaSnapshot(
   media: HTMLMediaElement | null,
   baseUrl: string,
-): Record<string, unknown> | null {
+): JsonRecord | null {
   if (!media) return null;
   const error = media.error;
   return {
@@ -126,7 +148,7 @@ export function mediaSnapshot(
   };
 }
 
-function safeMessage(error: unknown): string {
+function safeMessage(error: Error | null): string {
   const message =
     error instanceof Error ? error.message : 'Playback was rejected.';
   return message
@@ -139,7 +161,7 @@ function safeMessage(error: unknown): string {
 
 export function createMediaDiagnostics(): MediaDiagnostics {
   const [available] = createSignal(
-    typeof location !== 'undefined' &&
+    'location' in globalThis &&
       new URLSearchParams(location.search).get('mediaDebug') === '1',
   );
   const [visible, setVisible] = createSignal(false);

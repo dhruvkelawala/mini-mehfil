@@ -4,6 +4,7 @@ import {
   normalizeLyricTiming,
   type LyricTiming,
 } from '../../lyrics/lyric-sync.ts';
+import type { JsonValue } from '../../room/primitives.ts';
 import type { RoomSong } from '../../room/protocol.ts';
 import type { HostLyrics } from './generation-recovery.ts';
 import type { MediaDiagnostics } from './media-diagnostics.ts';
@@ -31,13 +32,13 @@ export interface PlayerController {
     source: string,
     lyrics: HostLyrics,
     reference?: string | null,
-    timing?: unknown,
+    timing?: JsonValue | undefined,
   ): Promise<void>;
   /**
    * Applies analysis only to the recording that requested it. This never
    * reloads, seeks, pauses, or starts the media element.
    */
-  applyTiming(expectedSource: string, timing: unknown): boolean;
+  applyTiming(expectedSource: string, timing: JsonValue | undefined): boolean;
   loadRoomSong(song: RoomSong, origin: string): void;
   syncRoomSong(song: RoomSong): void;
   clear(): void;
@@ -48,11 +49,7 @@ export interface PlayerController {
   replay(): Promise<void>;
 }
 
-function sourceUrl(source: string): {
-  url: string;
-  disposable: boolean;
-  bytes: ArrayBuffer | null;
-} {
+function sourceUrl(source: string) {
   if (trustedRemoteAudioSource(source))
     return { url: source, disposable: false, bytes: null };
   const hex = source.replace(/^0x/i, '');
@@ -116,7 +113,7 @@ export function createPlayerController(
       return true;
     } catch (error) {
       setPlaying(false);
-      diagnostics.recordFailure(error, audio);
+      diagnostics.recordFailure(error instanceof Error ? error : null, audio);
       return false;
     }
   };
@@ -134,7 +131,10 @@ export function createPlayerController(
       Math.abs(timing.durationSeconds - mediaDuration) <= tolerance;
     setTimingMatchesMedia(matches);
   };
-  const applyTiming = (expectedSource: string, value: unknown): boolean => {
+  const applyTiming = (
+    expectedSource: string,
+    value: JsonValue | undefined,
+  ): boolean => {
     const timing = normalizeLyricTiming(value);
     const sourceMatches =
       Boolean(expectedSource) && source() === expectedSource;
@@ -208,7 +208,12 @@ export function createPlayerController(
         );
       });
     },
-    async load(value, lyrics, reference = null, timing = null) {
+    async load(
+      value: string,
+      lyrics: HostLyrics,
+      reference: string | null = null,
+      timing: JsonValue | undefined = null,
+    ) {
       releaseObjectUrl();
       const resolved = sourceUrl(value);
       objectUrl = resolved.disposable ? resolved.url : null;

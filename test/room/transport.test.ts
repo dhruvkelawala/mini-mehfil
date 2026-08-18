@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'vitest';
 
 import { isRecord } from '../../src/room/protocol.ts';
+import {
+  isString,
+  type JsonValue,
+  type JsonRecord,
+} from '../../src/room/primitives.ts';
 import type { RoomSession } from '../../src/room/protocol.ts';
 import type { RoomConnections, RoomStorage } from '../../src/room/transport.ts';
 import {
@@ -25,27 +30,26 @@ const TIMING = {
   ],
 };
 
-function record(value: unknown): Record<string, unknown> {
+function record(value: JsonValue | undefined): JsonRecord {
   if (!isRecord(value)) throw new Error('Expected an object');
   return value;
 }
 
-function stringField(value: unknown, key: string): string {
+function stringField(value: JsonValue | undefined, key: string): string {
   const field = record(value)[key];
-  if (typeof field !== 'string')
-    throw new Error(`Expected ${key} to be a string`);
+  if (!isString(field)) throw new Error(`Expected ${key} to be a string`);
   return field;
 }
 
-function arrayField(value: unknown, key: string): unknown[] {
+function arrayField(value: JsonValue, key: string): JsonValue[] {
   const field = record(value)[key];
   if (!Array.isArray(field)) throw new Error(`Expected ${key} to be an array`);
   return field;
 }
 
 function createHarness() {
-  const stored = new Map<'state' | 'meta', unknown>();
-  const delivered: Array<{ socket: Socket; message: unknown }> = [];
+  const stored = new Map<'state' | 'meta', JsonValue | undefined>();
+  const delivered: Array<{ socket: Socket; message: JsonValue }> = [];
   const closed: Array<{
     socket: Socket;
     code: number;
@@ -78,7 +82,7 @@ function createHarness() {
         if (session.authenticated) {
           delivered.push({
             socket,
-            message: JSON.parse(createMessage(session)) as unknown,
+            message: JSON.parse(createMessage(session)),
           });
         }
       }
@@ -100,7 +104,7 @@ function createHarness() {
     createParticipantId: () => `id${++sequence}`,
     createResumeCredential: () => `resume${sequence}`,
   });
-  const latest = (socket: Socket, type: string): Record<string, unknown> => {
+  const latest = (socket: Socket, type: string): JsonRecord => {
     const message = delivered
       .filter((item) => item.socket === socket)
       .map((item) => item.message)
@@ -122,7 +126,7 @@ function createHarness() {
     },
     now: () => clock,
     socket: (id: string): Socket => ({ id }),
-    corrupt(key: 'state' | 'meta', value: unknown) {
+    corrupt(key: 'state' | 'meta', value: JsonValue | undefined) {
       stored.set(key, value);
     },
   };
@@ -163,7 +167,7 @@ async function connectListener(
   return socket;
 }
 
-function snapshot(harness: Harness, socket: Socket): Record<string, unknown> {
+function snapshot(harness: Harness, socket: Socket): JsonRecord {
   return record(harness.latest(socket, 'snapshot').state);
 }
 

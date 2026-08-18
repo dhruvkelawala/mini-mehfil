@@ -11,6 +11,11 @@ import {
   type TimingAnalysisPort,
 } from '../../../src/client/host/timing-analysis-controller.ts';
 import type { TimingAnalysisOutcome } from '../../../src/timing/timing-analysis.ts';
+import {
+  isRecord,
+  type JsonRecord,
+  type JsonValue,
+} from '../../../src/room/primitives.ts';
 
 const SHEET: HostLyrics = {
   title: 'Rain',
@@ -89,12 +94,13 @@ const completeFetch = (input: string) =>
         }),
   );
 
-function requestBody(init?: RequestInit): Record<string, unknown> {
-  if (typeof init?.body !== 'string') return {};
-  const value: unknown = JSON.parse(init.body);
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+const isBodyText = (value: BodyInit | null | undefined): value is string =>
+  typeof value === 'string';
+
+function requestBody(init?: RequestInit): JsonRecord {
+  if (!isBodyText(init?.body)) return {};
+  const value: JsonValue | undefined = JSON.parse(init.body);
+  return isRecord(value) ? value : {};
 }
 
 describe('typed generation lifecycle parity', () => {
@@ -151,8 +157,7 @@ describe('typed generation lifecycle parity', () => {
           }),
       },
     });
-    const requests: Array<{ input: string; body: Record<string, unknown> }> =
-      [];
+    const requests: Array<{ input: string; body: JsonRecord }> = [];
     const controller = createGenerationController({
       player: player(),
       storage: new MemoryStorage(),
@@ -198,7 +203,7 @@ describe('typed generation lifecycle parity', () => {
           }),
       },
     });
-    let sharedBody: Record<string, unknown> | undefined;
+    let sharedBody: JsonRecord | undefined;
     const controller = createGenerationController({
       player: player(),
       storage: new MemoryStorage(),
@@ -249,9 +254,13 @@ describe('typed generation lifecycle parity', () => {
       fetcher: completeFetch,
     });
     await controller.generate(INPUT);
+    // SAFETY: the player() factory above assigns clear: vi.fn(), so the real
+    // mock exposes the recorded invocation order at runtime.
     const clearOrder =
       (target.clear as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0] ??
       0;
+    // SAFETY: the player() factory above assigns load: vi.fn(), so the real
+    // mock exposes the recorded invocation order at runtime.
     const loadOrder =
       (target.load as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0] ??
       0;
@@ -274,12 +283,16 @@ describe('typed generation lifecycle parity', () => {
       },
       onReady: ready,
     });
-    expect((target.clear as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
-      0,
-    );
-    expect((target.load as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
-      0,
-    );
+    expect(
+      // SAFETY: the player() factory above assigns clear: vi.fn(), so the
+      // real mock records every call for assertion.
+      (target.clear as ReturnType<typeof vi.fn>).mock.calls,
+    ).toHaveLength(0);
+    expect(
+      // SAFETY: the player() factory above assigns load: vi.fn(), so the real
+      // mock records every call for assertion.
+      (target.load as ReturnType<typeof vi.fn>).mock.calls,
+    ).toHaveLength(0);
     expect(controller.lyrics()).toBeNull();
     expect(controller.pendingContext()).toEqual({
       kind: 'room-recording',
@@ -348,9 +361,11 @@ describe('typed generation lifecycle parity', () => {
     expect(urls).toEqual([
       '/api/generation-status?id=AbCdEfGhIjKlMnOpQrStUvWx',
     ]);
-    expect((target.load as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
-      0,
-    );
+    expect(
+      // SAFETY: the player() factory above assigns load: vi.fn(), so the real
+      // mock records every call for assertion.
+      (target.load as ReturnType<typeof vi.fn>).mock.calls,
+    ).toHaveLength(0);
     expect(ready).toHaveBeenCalledOnce();
     expect(controller.pendingContext()).toEqual({
       kind: 'room-recording',

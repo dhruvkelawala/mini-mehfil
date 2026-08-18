@@ -6,6 +6,7 @@ import type {
   TransitionResult,
 } from './protocol.ts';
 import { isRecord, parseClientMessage, parseRoomState } from './protocol.ts';
+import { isString, isNumber, type JsonValue } from './primitives.ts';
 import { createRoomState, projectRoomState, transitionRoom } from './state.ts';
 
 export const MAX_MESSAGE_BYTES = 16 * 1024;
@@ -14,23 +15,23 @@ export const ABSOLUTE_ROOM_MS = 6 * 60 * 60 * 1000;
 export const EMPTY_GRACE_MS = 15 * 60 * 1000;
 export const SONG_START_DELAY_MS = 1_500;
 
-interface RoomMetadata {
+type RoomMetadata = {
   hostDigest: string;
   absoluteDeadline: number;
   emptyDeadline: number | null;
   resumeDigests: Record<string, string>;
   kickedDigests: string[];
-}
+};
 
 export interface RoomStorage {
-  get(key: 'state' | 'meta'): Promise<unknown>;
+  get(key: 'state' | 'meta'): Promise<JsonValue | undefined>;
   put(key: 'state' | 'meta', value: RoomState | RoomMetadata): Promise<void>;
   setAlarm(timestamp: number): Promise<void>;
 }
 
 export interface RoomConnections<Socket> {
   list?(): Iterable<Socket>;
-  send(socket: Socket, message: unknown): void;
+  send(socket: Socket, message: JsonValue): void;
   broadcast(createMessage: (session: RoomSession) => string): void;
   close(socket: Socket, code: number, reason: string): void;
   setSession(socket: Socket, session: RoomSession): void;
@@ -45,7 +46,7 @@ export interface RoomTransport<Socket> {
     expiresAt?: number;
   }): Promise<boolean>;
   connect(socket: Socket): Promise<boolean>;
-  message(socket: Socket, raw: unknown): Promise<void>;
+  message(socket: Socket, raw: JsonValue): Promise<void>;
   disconnect(socket: Socket): Promise<void>;
   checkAuthenticationTimeout(socket: Socket): void;
   alarm(): Promise<void>;
@@ -59,13 +60,13 @@ interface RoomTransportOptions<Socket> {
   createResumeCredential: () => string;
 }
 
-export async function sha256(value: unknown): Promise<string> {
+export async function sha256(value: JsonValue): Promise<string> {
   const bytes = new TextEncoder().encode(String(value));
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
   return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export function constantTimeEqual(left: unknown, right: unknown): boolean {
+export function constantTimeEqual(left: JsonValue, right: JsonValue): boolean {
   const first = String(left);
   const second = String(right);
   let difference = first.length ^ second.length;
@@ -77,35 +78,41 @@ export function constantTimeEqual(left: unknown, right: unknown): boolean {
   return difference === 0;
 }
 
-function stringRecord(value: unknown): Record<string, string> | null {
+function stringRecord(
+  value: JsonValue | undefined,
+): Record<string, string> | null {
   if (!isRecord(value)) return null;
   const result: Record<string, string> = {};
   for (const [key, item] of Object.entries(value)) {
-    if (typeof item !== 'string') return null;
+    if (!isString(item)) return null;
     result[key] = item;
   }
   return result;
 }
 
-function parseMetadata(value: unknown): RoomMetadata | null {
+function parseMetadata(value: JsonValue | undefined): RoomMetadata | null {
   if (!isRecord(value)) return null;
   const resumeDigests = stringRecord(value.resumeDigests);
+  const hostDigest = value.hostDigest;
+  const absoluteDeadline = value.absoluteDeadline;
+  const emptyDeadline = value.emptyDeadline;
+  const kickedDigests = value.kickedDigests;
   if (
-    typeof value.hostDigest !== 'string' ||
-    typeof value.absoluteDeadline !== 'number' ||
-    (value.emptyDeadline !== null && typeof value.emptyDeadline !== 'number') ||
+    !isString(hostDigest) ||
+    !isNumber(absoluteDeadline) ||
+    (emptyDeadline !== null && !isNumber(emptyDeadline)) ||
     !resumeDigests ||
-    !Array.isArray(value.kickedDigests) ||
-    !value.kickedDigests.every((item) => typeof item === 'string')
+    !Array.isArray(kickedDigests) ||
+    !kickedDigests.every((item) => isString(item))
   ) {
     return null;
   }
   return {
-    hostDigest: value.hostDigest,
-    absoluteDeadline: value.absoluteDeadline,
-    emptyDeadline: value.emptyDeadline,
+    hostDigest,
+    absoluteDeadline,
+    emptyDeadline,
     resumeDigests,
-    kickedDigests: value.kickedDigests,
+    kickedDigests,
   };
 }
 
@@ -117,18 +124,18 @@ function clientEvent(
 ): RoomEvent {
   const base = { role: session.role, actorId: session.participantId, at };
   switch (message.type) {
-    case 'request-submitted':
-      return {
+    case 'request-submitted': {
+      const event: Extract<RoomEvent, { type: 'request-submitted' }> = {
         ...base,
         type: message.type,
         participantId: session.participantId,
         requestId: createRequestId(),
         idea: message.idea,
-        ...(message.vibe === undefined ? {} : { vibe: message.vibe }),
-        ...(message.language === undefined
-          ? {}
-          : { language: message.language }),
       };
+      if (message.vibe !== undefined) event.vibe = message.vibe;
+      if (message.language !== undefined) event.language = message.language;
+      return event;
+    }
     case 'request-accepted':
     case 'request-declined':
     case 'recording-enqueued':
@@ -157,28 +164,30 @@ function clientEvent(
         requestId: message.requestId,
         lyrics: message.lyrics,
       };
-    case 'song-ready':
-      return {
+    case 'song-ready': {
+      const event: Extract<RoomEvent, { type: 'song-ready' }> = {
         ...base,
         type: message.type,
         requestId: message.requestId,
         shareId: message.shareId,
         startedAt: at,
-        ...(message.lyricTiming === undefined
-          ? {}
-          : { lyricTiming: message.lyricTiming }),
       };
-    case 'song-shared':
-      return {
+      if (message.lyricTiming !== undefined)
+        event.lyricTiming = message.lyricTiming;
+      return event;
+    }
+    case 'song-shared': {
+      const event: Extract<RoomEvent, { type: 'song-shared' }> = {
         ...base,
         type: message.type,
         shareId: message.shareId,
         lyrics: message.lyrics,
         startedAt: at,
-        ...(message.lyricTiming === undefined
-          ? {}
-          : { lyricTiming: message.lyricTiming }),
       };
+      if (message.lyricTiming !== undefined)
+        event.lyricTiming = message.lyricTiming;
+      return event;
+    }
     case 'song-selected':
       return {
         ...base,
@@ -353,12 +362,14 @@ export function createRoomTransport<Socket>({
   async function findResumedParticipant(
     credential: string,
   ): Promise<string | undefined> {
-    if (!metadata) return undefined;
+    const currentMetadata = metadata;
+    if (!currentMetadata) return undefined;
     const digest = await sha256(credential);
-    const participantId = Object.keys(metadata.resumeDigests).find((id) =>
-      constantTimeEqual(metadata?.resumeDigests[id], digest),
+    const participantId = Object.keys(currentMetadata.resumeDigests).find(
+      (id) =>
+        constantTimeEqual(currentMetadata.resumeDigests[id] ?? '', digest),
     );
-    const wasKicked = metadata.kickedDigests.some((item) =>
+    const wasKicked = currentMetadata.kickedDigests.some((item) =>
       constantTimeEqual(item, digest),
     );
     return wasKicked ? undefined : participantId;
@@ -381,14 +392,15 @@ export function createRoomTransport<Socket>({
       participantId = createParticipantId();
       credential = createResumeCredential();
     }
-    const result = transitionRoom(state, {
+    const joinEvent: Extract<RoomEvent, { type: 'joined' }> = {
       type: 'joined',
       role: 'listener',
       participantId,
       actorId: participantId,
-      ...(message.name === undefined ? {} : { name: message.name }),
       at: now(),
-    });
+    };
+    if (message.name !== undefined) joinEvent.name = message.name;
+    const result = transitionRoom(state, joinEvent);
     if (result.error) {
       sendError(socket, result.error.code);
       if (result.error.code === 'room-full') {
@@ -421,16 +433,16 @@ export function createRoomTransport<Socket>({
     sendError(socket, 'authenticate-first');
   }
 
-  function decodeMessage(socket: Socket, raw: unknown): ClientMessage | null {
+  function decodeMessage(socket: Socket, raw: JsonValue): ClientMessage | null {
     const isTooLarge =
-      typeof raw !== 'string' ||
+      !isString(raw) ||
       new TextEncoder().encode(raw).byteLength > MAX_MESSAGE_BYTES;
     if (isTooLarge) {
       sendError(socket, 'invalid-message');
       return null;
     }
     try {
-      const message = parseClientMessage(JSON.parse(raw) as unknown);
+      const message = parseClientMessage(JSON.parse(raw));
       if (message) return message;
     } catch {
       // All malformed payloads receive the same private error.

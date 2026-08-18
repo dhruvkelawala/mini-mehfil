@@ -261,7 +261,7 @@ describe('timing artifact validation', () => {
     durationSeconds: 90,
     segments: [{ start: 0, end: 10, label: 'intro' }],
   };
-  const invalid: Record<string, unknown> = {
+  const invalid = {
     'non-object': null,
     'array input': [],
     'wrong version': { ...valid, version: 2 },
@@ -313,8 +313,8 @@ describe('timing artifact validation', () => {
     },
   };
 
-  test.each(Object.keys(invalid))('rejects %s', (name) => {
-    expect(normalizeLyricTiming(invalid[name])).toBeNull();
+  test.each(Object.entries(invalid))('rejects %s', (name, value) => {
+    expect(normalizeLyricTiming(value)).toBeNull();
   });
 });
 
@@ -519,6 +519,8 @@ describe('active timeline lookup', () => {
     expect(activeTimelineEntry(timeline, Number.NaN)).toBeNull();
     expect(activeTimelineEntry([], 1)).toBeNull();
     expect(activeTimelineEntry('nope', 1)).toBeNull();
+    // SAFETY: the entry is a valid timeline entry with its end deliberately
+    // inverted to exercise the ordering rejection path.
     expect(
       activeTimelineEntry([{ ...timeline[0], end: 0 }] as TimelineEntry[], 0),
     ).toBeNull();

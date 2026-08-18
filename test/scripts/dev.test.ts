@@ -5,7 +5,7 @@ import { launchDevelopment, resolveDevTopology } from '../../scripts/dev.ts';
 describe('development topology resolver', () => {
   test('defaults to web 4173 and API 4174 without launching on import', () => {
     expect(resolveDevTopology([])).toEqual({ webPort: 4173, apiPort: 4174 });
-    expect(typeof launchDevelopment).toBe('function');
+    expect(launchDevelopment).toBeTypeOf('function');
   });
 
   test('accepts independent web and API port overrides', () => {

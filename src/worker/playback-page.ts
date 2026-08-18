@@ -2,9 +2,12 @@ import {
   buildSectionTimeline,
   normalizeLyricTiming,
   parseLyricSheet,
+  type LyricLine,
   type LyricTiming,
+  type TimelineEntry,
 } from '../lyrics/lyric-sync.ts';
 import { buildLinePacing } from '../lyrics/line-pacing.ts';
+import type { JsonValue } from '../room/primitives.ts';
 import { FOLK_MODERN_BACKGROUND_PATH, FOLK_MODERN_SCENE } from './courtyard.ts';
 
 const EXTERNAL_LINK_ICON =
@@ -20,7 +23,7 @@ const SHARE_ICON =
 const DOWNLOAD_ICON =
   '<svg class="player-icon download-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v10M8.5 11.5 12 15l3.5-3.5M5 19h14"/></svg>';
 
-export interface PlaybackSong {
+export type PlaybackSong = {
   title: string;
   language: string;
   nativeScriptName: string;
@@ -33,9 +36,30 @@ export interface PlaybackSong {
    * re-normalize rather than trust the shape.
    */
   lyricTiming?: LyricTiming | null;
-}
+};
 
-function escapeHtml(value: unknown): string {
+/** One display-safe lyric line shipped to the page as JSON. */
+type DisplayLine = { cue: boolean; primary: string; secondary: string };
+
+type DisplaySection = { index: number; lines: DisplayLine[] };
+
+/** Structural copy of PacedLine so the serialized payload stays JsonValue. */
+type PacingEntry = {
+  sectionIndex: number;
+  lineIndexInSection: number;
+  start: number;
+  end: number;
+};
+
+type PlaybackData = {
+  lines: DisplayLine[];
+  sections: DisplaySection[];
+  timeline: TimelineEntry[] | null;
+  pacing?: PacingEntry[];
+  expectedDurationSeconds: number;
+};
+
+function escapeHtml(value: JsonValue | undefined): string {
   return String(value)
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
@@ -44,7 +68,7 @@ function escapeHtml(value: unknown): string {
     .replaceAll("'", '&#39;');
 }
 
-function scriptJson(value: unknown): string {
+function scriptJson(value: JsonValue): string {
   return (JSON.stringify(value) ?? 'null')
     .replaceAll('<', '\\u003c')
     .replaceAll('>', '\\u003e')
@@ -68,25 +92,22 @@ export function playbackPage(
   const timing = normalizeLyricTiming(song.lyricTiming);
   const timeline = buildSectionTimeline(sheet.sections, timing);
   const pacing = buildLinePacing(sheet.sections, timeline);
-  const safeLine = ({
-    cue,
-    primary,
-    secondary,
-  }: {
-    cue: boolean;
-    primary: string;
-    secondary: string;
-  }) => ({ cue, primary, secondary });
-  const data = scriptJson({
+  const safeLine = (line: LyricLine): DisplayLine => ({
+    cue: line.cue,
+    primary: line.primary,
+    secondary: line.secondary,
+  });
+  const payload: PlaybackData = {
     lines: sheet.lines.map(safeLine),
     sections: sheet.sections.map((section) => ({
       index: section.index,
       lines: section.lines.map(safeLine),
     })),
     timeline,
-    ...(timeline ? { pacing } : {}),
     expectedDurationSeconds: timing?.durationSeconds ?? 0,
-  });
+  };
+  if (timeline) payload.pacing = pacing;
+  const data = scriptJson(payload);
   const shareUrl = `${origin}/s/${id}`;
   const audioUrl = `${shareUrl}/audio`;
   const description = `Listen to ${song.title} in the Mini Mehfil courtyard.`;

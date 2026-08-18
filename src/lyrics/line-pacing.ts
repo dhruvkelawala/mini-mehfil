@@ -35,6 +35,7 @@ export function effectiveFirstVocalRelease(
   mediaTimeAtResolution: number,
 ): number | null {
   if (
+    detectedGateSeconds == null ||
     !Number.isFinite(detectedGateSeconds) ||
     !Number.isFinite(mediaTimeAtResolution) ||
     mediaTimeAtResolution < 0
@@ -47,14 +48,11 @@ export function effectiveFirstVocalRelease(
     !Number.isFinite(firstVocal.end) ||
     firstVocal.start < 0 ||
     firstVocal.start >= firstVocal.end ||
-    (detectedGateSeconds as number) < firstVocal.start ||
-    (detectedGateSeconds as number) >= firstVocal.end
+    detectedGateSeconds < firstVocal.start ||
+    detectedGateSeconds >= firstVocal.end
   )
     return null;
-  const release = Math.max(
-    detectedGateSeconds as number,
-    mediaTimeAtResolution,
-  );
+  const release = Math.max(detectedGateSeconds, mediaTimeAtResolution);
   return release < firstVocal.end ? release : null;
 }
 
@@ -64,7 +62,6 @@ export function effectiveFirstVocalRelease(
  * it is a pacing heuristic rather than phonetic syllabification.
  */
 export function syllableWeight(romanLine: string): number {
-  if (typeof romanLine !== 'string') return 0;
   return romanLine
     .trim()
     .split(/\s+/)
@@ -91,9 +88,10 @@ export function buildLinePacing(
   const pacing: PacedLine[] = [];
   const firstVocal = firstMappedVocalEntry(timeline);
   for (const segment of timeline) {
-    if (segment.sectionIndex === null) continue;
+    const sectionIndex = segment.sectionIndex;
+    if (sectionIndex === null) continue;
     const section = sections.find(
-      (candidate) => candidate.index === segment.sectionIndex,
+      (candidate) => candidate.index === sectionIndex,
     );
     if (!section || !(segment.start < segment.end)) continue;
 
@@ -110,10 +108,11 @@ export function buildLinePacing(
     const effectiveTotal = weightTotal || effectiveWeights.length;
     const rebasedStart =
       segment === firstVocal &&
+      firstVocalReleaseSeconds != null &&
       Number.isFinite(firstVocalReleaseSeconds) &&
-      (firstVocalReleaseSeconds as number) >= segment.start &&
-      (firstVocalReleaseSeconds as number) < segment.end
-        ? (firstVocalReleaseSeconds as number)
+      firstVocalReleaseSeconds >= segment.start &&
+      firstVocalReleaseSeconds < segment.end
+        ? firstVocalReleaseSeconds
         : segment.start;
     const duration = segment.end - rebasedStart;
     let cursor = rebasedStart;
@@ -126,7 +125,7 @@ export function buildLinePacing(
           : start +
             duration * ((effectiveWeights[index] ?? 0) / effectiveTotal);
       pacing.push({
-        sectionIndex: segment.sectionIndex as number,
+        sectionIndex,
         lineIndexInSection,
         start,
         end,

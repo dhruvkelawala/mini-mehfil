@@ -1,5 +1,7 @@
-function normalizeOrigin(value: unknown): string {
-  if (!value) return '';
+import { isString, type JsonValue } from '../room/primitives.ts';
+
+function normalizeOrigin(value: JsonValue | undefined): string {
+  if (!isString(value) || !value) return '';
   try {
     const url = new URL(value);
     const localHttp =

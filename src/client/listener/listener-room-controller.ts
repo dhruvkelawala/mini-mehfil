@@ -4,7 +4,14 @@ import {
   normalizeLyricTiming,
   type LyricTiming,
 } from '../../lyrics/lyric-sync.ts';
-import { isRecord, parseLyricsSheet } from '../../room/protocol.ts';
+import {
+  isBoolean,
+  isNumber,
+  isRecord,
+  isString,
+  type JsonValue,
+} from '../../room/primitives.ts';
+import { parseLyricsSheet } from '../../room/protocol.ts';
 import type { LyricsSheet, RoomPlayback } from '../../room/protocol.ts';
 
 export interface ListenerSong {
@@ -47,50 +54,51 @@ export interface ListenerRoomController {
   close(): void;
 }
 
-function parseSong(value: unknown): ListenerSong | null {
+function parseSong(value: JsonValue | undefined): ListenerSong | null {
   if (!isRecord(value)) return null;
-  const title = typeof value.title === 'string' ? value.title : '';
-  const language = typeof value.language === 'string' ? value.language : '';
+  const title = isString(value.title) ? value.title : '';
+  const language = isString(value.language) ? value.language : '';
   const lyrics = parseLyricsSheet(value.lyrics, { title, language });
   const playback = value.playback;
   if (
-    typeof value.shareId !== 'string' ||
+    !isString(value.shareId) ||
     !title ||
     !language ||
     !lyrics ||
     !isRecord(playback) ||
     (playback.status !== 'playing' && playback.status !== 'paused') ||
-    typeof playback.positionMs !== 'number' ||
-    typeof playback.changedAt !== 'number'
+    !isNumber(playback.positionMs) ||
+    !isNumber(playback.changedAt)
   ) {
     return null;
   }
   const lyricTiming = normalizeLyricTiming(value.lyricTiming);
   if (value.lyricTiming != null && !lyricTiming) return null;
-  return {
+  const song: ListenerSong = {
     shareId: value.shareId,
     title,
     language,
     lyrics,
-    ...(value.lyricTiming === undefined ? {} : { lyricTiming }),
     playback: {
       status: playback.status,
       positionMs: playback.positionMs,
       changedAt: playback.changedAt,
     },
   };
+  if (value.lyricTiming !== undefined) song.lyricTiming = lyricTiming;
+  return song;
 }
 
-function parseSnapshot(value: unknown): ListenerSnapshot | null {
+function parseSnapshot(value: JsonValue | undefined): ListenerSnapshot | null {
   if (
     !isRecord(value) ||
-    typeof value.hostPresent !== 'boolean' ||
-    typeof value.listenerCount !== 'number' ||
+    !isBoolean(value.hostPresent) ||
+    !isNumber(value.listenerCount) ||
     !Array.isArray(value.queue) ||
     !Array.isArray(value.setlist) ||
     (value.recordingQueue !== undefined &&
       (!Array.isArray(value.recordingQueue) ||
-        !value.recordingQueue.every((item) => typeof item === 'string')))
+        !value.recordingQueue.every((item) => isString(item))))
   ) {
     return null;
   }
@@ -98,9 +106,9 @@ function parseSnapshot(value: unknown): ListenerSnapshot | null {
   for (const item of value.queue) {
     if (
       !isRecord(item) ||
-      typeof item.id !== 'string' ||
-      typeof item.status !== 'string' ||
-      typeof item.mine !== 'boolean'
+      !isString(item.id) ||
+      !isString(item.status) ||
+      !isBoolean(item.mine)
     ) {
       return null;
     }
@@ -113,11 +121,7 @@ function parseSnapshot(value: unknown): ListenerSnapshot | null {
     : queue.filter((item) => item.status === 'queued').map((item) => item.id);
   const setlist: ListenerSnapshot['setlist'] = [];
   for (const item of value.setlist) {
-    if (
-      !isRecord(item) ||
-      typeof item.shareId !== 'string' ||
-      typeof item.title !== 'string'
-    ) {
+    if (!isRecord(item) || !isString(item.shareId) || !isString(item.title)) {
       return null;
     }
     setlist.push({ shareId: item.shareId, title: item.title });
@@ -129,8 +133,8 @@ function parseSnapshot(value: unknown): ListenerSnapshot | null {
   if (value.currentRecording !== null) {
     if (
       !isRecord(value.currentRecording) ||
-      typeof value.currentRecording.requestId !== 'string' ||
-      typeof value.currentRecording.startedAt !== 'number'
+      !isString(value.currentRecording.requestId) ||
+      !isNumber(value.currentRecording.startedAt)
     ) {
       return null;
     }
@@ -150,12 +154,11 @@ function parseSnapshot(value: unknown): ListenerSnapshot | null {
   };
 }
 
-const terminalMessage: Record<string, string> = {
-  'room-full': 'This mehfil is full.',
-  kicked: 'You were asked to leave the mehfil.',
-  'room-expired': 'This mehfil has ended.',
-  'room-unavailable': 'This room is unavailable.',
-};
+const terminalMessage: Record<string, string> = {};
+terminalMessage['room-full'] = 'This mehfil is full.';
+terminalMessage.kicked = 'You were asked to leave the mehfil.';
+terminalMessage['room-expired'] = 'This mehfil has ended.';
+terminalMessage['room-unavailable'] = 'This room is unavailable.';
 
 export function createListenerRoomController({
   roomId,
@@ -346,22 +349,22 @@ export function createListenerRoomController({
       );
       retryCount = 0;
     });
-    next.addEventListener('message', (event: MessageEvent<unknown>) => {
-      if (typeof event.data !== 'string') {
+    next.addEventListener('message', (event: MessageEvent<JsonValue>) => {
+      if (!isString(event.data)) {
         stop('The room sent a malformed message.', { clearCredential: false });
         return;
       }
-      let message: unknown;
+      let message: JsonValue | undefined;
       try {
-        message = JSON.parse(event.data) as unknown;
+        message = JSON.parse(event.data);
       } catch {
         stop('The room sent a malformed message.', { clearCredential: false });
         return;
       }
-      if (!isRecord(message) || typeof message.type !== 'string') return;
+      if (!isRecord(message) || !isString(message.type)) return;
       if (
         message.type === 'resume-credential' &&
-        typeof message.credential === 'string'
+        isString(message.credential)
       ) {
         storage.setItem(credentialKey, message.credential);
       } else if (message.type === 'snapshot') {
@@ -381,7 +384,7 @@ export function createListenerRoomController({
             ? 'The host is here.'
             : 'Host away — requests will wait.',
         );
-      } else if (message.type === 'error' && typeof message.code === 'string') {
+      } else if (message.type === 'error' && isString(message.code)) {
         if (message.code === 'resume-invalid') {
           stop('Your seat expired. Join again.', { allowFreshJoin: true });
         } else if (message.code in terminalMessage) stop(message.code);

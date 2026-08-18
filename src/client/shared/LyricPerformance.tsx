@@ -42,6 +42,20 @@ function cueForSection(section: LyricSection): string {
   return section.lines.find((line) => line.cue)?.primary ?? section.tag ?? '';
 }
 
+/** Narrows a frame to the section variant without a type assertion. */
+function sectionFrame(
+  frame: LyricFrame,
+): Extract<LyricFrame, { kind: 'section' }> | undefined {
+  return frame.kind === 'section' ? frame : undefined;
+}
+
+/** Narrows a frame to the rest variant without a type assertion. */
+function restFrame(
+  frame: LyricFrame,
+): Extract<LyricFrame, { kind: 'rest' }> | undefined {
+  return frame.kind === 'rest' ? frame : undefined;
+}
+
 function approximateShownCount(
   spokenCount: number,
   currentTime: number,
@@ -104,17 +118,21 @@ export function LyricPerformance(props: LyricPerformanceProps) {
     if (props.mode !== 'live' || timed()) return;
     shownSpokenCount();
     queueMicrotask(() => {
-      if (!atmosphericScroller) return;
-      if (typeof atmosphericScroller.scrollTo === 'function') {
-        atmosphericScroller.scrollTo({
-          top: atmosphericScroller.scrollHeight,
-          behavior:
-            typeof matchMedia === 'function' &&
-            matchMedia('(prefers-reduced-motion: reduce)').matches
-              ? 'auto'
-              : 'smooth',
+      const scroller = atmosphericScroller;
+      if (!scroller) return;
+      if (scroller.scrollTo !== undefined) {
+        // Reduced-motion detection: call matchMedia with an explicit global
+        // receiver so the Window method keeps its required `this` binding.
+        const matchMediaImpl = globalThis.matchMedia;
+        const reducedMotion =
+          matchMediaImpl instanceof Function &&
+          matchMediaImpl.call(globalThis, '(prefers-reduced-motion: reduce)')
+            .matches;
+        scroller.scrollTo({
+          top: scroller.scrollHeight,
+          behavior: reducedMotion ? 'auto' : 'smooth',
         });
-      } else atmosphericScroller.scrollTop = atmosphericScroller.scrollHeight;
+      } else scroller.scrollTop = scroller.scrollHeight;
     });
   });
 
@@ -184,26 +202,14 @@ export function LyricPerformance(props: LyricPerformanceProps) {
                   );
                 }}
               </Match>
-              <Match
-                when={
-                  frame().kind === 'section'
-                    ? (frame() as Extract<LyricFrame, { kind: 'section' }>)
-                    : undefined
-                }
-              >
+              <Match when={sectionFrame(frame())}>
                 {(current) => (
                   <p class="lyric-performance__section-cue lyric-cue">
                     {cueForSection(current().section)}
                   </p>
                 )}
               </Match>
-              <Match
-                when={
-                  frame().kind === 'rest'
-                    ? (frame() as Extract<LyricFrame, { kind: 'rest' }>)
-                    : undefined
-                }
-              >
+              <Match when={restFrame(frame())}>
                 {(current) => (
                   <p class="lyric-performance__section-cue lyric-cue">
                     {current().cue}
