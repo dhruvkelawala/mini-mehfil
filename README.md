@@ -21,7 +21,7 @@ this one is mini._
   button that says _don't press me_.
 - **Records a complete song.** MiniMax Music 3 performs those lyrics and your
   optional vibe, live in front of you.
-- **One page, one key, one flow.** Write → record → listen.
+- **One page, one key, one flow.** Write -> record -> listen.
 - **Keep it or share it.** Download the MP3, create an expiring public link, or
   open a live mehfil where friends request songs and listen together.
 
