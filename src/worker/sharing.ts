@@ -823,7 +823,7 @@ export function createShareHandler({
         headers: {
           'content-type': 'text/html; charset=utf-8',
           'cache-control': 'public, max-age=300',
-          'content-security-policy': `default-src 'none'; media-src 'self'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors https://twitter.com https://*.twitter.com https://x.com https://*.x.com`,
+          'content-security-policy': `default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors https://twitter.com https://*.twitter.com https://x.com https://*.x.com`,
           'referrer-policy': 'no-referrer',
           'x-content-type-options': 'nosniff',
         },

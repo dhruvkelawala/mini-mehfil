@@ -180,7 +180,17 @@ Repository conventions to match:
 - `test/client/shared/lyric-performance.test.tsx` (create)
 - `test/client/listener/App.test.tsx`
 - `test/browser/characterization.spec.ts`
+- `plans/001-unify-host-listener-lyric-performance.md` (completion record)
 - `plans/README.md` (status update only)
+
+**Approved implementation extension (2026-08-18):** after the shared-state
+prototype was reviewed, the operator approved matching section-aligned parsing
+and the same timed/untimed presentation on the standalone share page. That
+adds `src/lyrics/lyric-sync.ts`, `src/worker/playback-page.ts`,
+`test/lyrics/lyric-sync.test.ts`, `test/worker/sharing.test.ts`,
+`test/browser/sync-replay.spec.ts`, and `test/browser/user-journeys.spec.ts` to
+the implementation scope. The room protocol, persistence, deployment
+configuration, and player controllers remain out of scope.
 
 **Out of scope** (do not touch even if related):
 
@@ -370,24 +380,25 @@ document why the shared stage itself cannot own it.
 
 All conditions must hold:
 
-- [ ] `src/client/shared/lyric-timeline.ts`, `LyricPerformance.tsx`, and the
+- [x] `src/client/shared/lyric-timeline.ts`, `LyricPerformance.tsx`, and the
       namespaced shared stylesheet exist and are used by both surfaces.
-- [ ] `rg -n "function lyricLines|const lyricLines" src/client/host/App.tsx src/client/listener/App.tsx`
+- [x] `rg -n "function lyricLines|const lyricLines" src/client/host/App.tsx src/client/listener/App.tsx`
       returns no matches.
-- [ ] The shared unit/component tests cover every case listed in the test plan
+- [x] The shared unit/component tests cover every case listed in the test plan
       and pass.
-- [ ] The cross-surface Playwright test proves the host and listener show the
+- [x] The cross-surface Playwright test proves the host and listener show the
       same cue, primary line, and secondary line for the same sheet/time at
       desktop and mobile sizes.
-- [ ] Host-only reveal-all, replay, dialog accessibility, and seek/playback
+- [x] Host-only reveal-all, replay, dialog accessibility, and seek/playback
       controls remain intact.
-- [ ] Listener request, room activity, audio enablement, progress, and lyric
+- [x] Listener request, room activity, audio enablement, progress, and lyric
       clock behavior remain intact.
-- [ ] `pnpm run check` exits 0 without raising host/listener bundle budgets.
-- [ ] `pnpm run test:browser` exits 0.
-- [ ] `git diff --name-only` contains no files outside the in-scope list.
-- [ ] No runtime dependency was added.
-- [ ] `plans/README.md` marks Plan 001 DONE after implementation review.
+- [x] `pnpm run check` exits 0 without raising host/listener bundle budgets.
+- [x] `pnpm run test:browser` exits 0.
+- [x] `git diff --name-only` contains no files outside the amended in-scope
+      list above.
+- [x] No runtime dependency was added.
+- [x] `plans/README.md` marks Plan 001 DONE after implementation review.
 
 ## STOP conditions
 

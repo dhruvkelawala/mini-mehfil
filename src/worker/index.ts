@@ -11,7 +11,8 @@ interface WorkerEnv extends Env {
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
     const pathname = new URL(request.url).pathname;
-    if (pathname.startsWith('/assets/')) return env.ASSETS.fetch(request);
+    if (pathname.startsWith('/assets/') || pathname.startsWith('/backgrounds/'))
+      return env.ASSETS.fetch(request);
     const storage = createR2Storage(env.SHARES);
     const rateLimit = async (ip: string) =>
       (await env.UPLOAD_RATE_LIMIT.limit({ key: ip })).success;

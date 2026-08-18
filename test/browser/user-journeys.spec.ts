@@ -222,7 +222,7 @@ test('playing timed lyrics ignore an earlier manual full-sheet reveal', async ({
   releaseGeneration?.();
   await expect(page.getByText('Your recording is ready.')).toBeVisible();
 
-  await expect(page.locator('#reveal-lines .lyric-section')).toHaveCount(1);
+  await expect(page.locator('#lyric-reveal .lyric-section')).toHaveCount(1);
   await expect(page.getByText('Verse')).toBeVisible();
   await expect(page.getByText('Chorus')).toHaveCount(0);
   await expect(lyricToggle).toBeHidden();
@@ -230,10 +230,10 @@ test('playing timed lyrics ignore an earlier manual full-sheet reveal', async ({
   const audio = page.locator('audio');
   await audio.evaluate((element) => element.dispatchEvent(new Event('pause')));
   await expect(lyricToggle).toBeHidden();
-  await expect(page.locator('#reveal-lines .lyric-section')).toHaveCount(1);
+  await expect(page.locator('#lyric-reveal .lyric-section')).toHaveCount(1);
   await audio.evaluate((element) => element.dispatchEvent(new Event('ended')));
   await expect(lyricToggle).toBeHidden();
-  await expect(page.locator('#reveal-lines .lyric-section')).toHaveCount(1);
+  await expect(page.locator('#lyric-reveal .lyric-section')).toHaveCount(1);
 });
 
 test('ready untimed lyrics resume progressive reveal after a manual preview', async ({
@@ -604,12 +604,12 @@ test('delayed timing upgrades host, listener, and shared playback at the same me
   await expect(
     page.getByText('Lines follow MiniMax sections · timing is approximate'),
   ).toBeVisible();
-  await expect(page.locator('#reveal-lines .lyric-section')).toHaveCount(1);
-  await expect(page.locator('#reveal-lines [aria-current="true"]')).toHaveCount(
+  await expect(page.locator('#lyric-reveal .lyric-section')).toHaveCount(1);
+  await expect(page.locator('#lyric-reveal [aria-current="true"]')).toHaveCount(
     1,
   );
   const hostLine = await page
-    .locator('#reveal-lines [aria-current="true"] .lyric-primary')
+    .locator('#lyric-reveal [aria-current="true"] .lyric-primary')
     .textContent();
   expect(hostLine).toBeTruthy();
   expect(
@@ -674,12 +674,14 @@ test('delayed timing upgrades host, listener, and shared playback at the same me
       state,
     });
   }, listenerSnapshot);
-  await expect(listener.locator('.lyric-stage .lyric-section')).toHaveCount(1);
   await expect(
-    listener.locator('.lyric-stage [aria-current="true"]'),
+    listener.locator('.lyric-performance .lyric-section'),
+  ).toHaveCount(1);
+  await expect(
+    listener.locator('.lyric-performance [aria-current="true"]'),
   ).toHaveCount(1);
   const listenerLine = await listener
-    .locator('.lyric-stage [aria-current="true"] .lyric-primary')
+    .locator('.lyric-performance [aria-current="true"] .lyric-primary')
     .textContent();
   expect(listenerLine).toBe(hostLine);
 

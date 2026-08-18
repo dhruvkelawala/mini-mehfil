@@ -1,13 +1,7 @@
 import { createMemo, Show, For, untrack } from 'solid-js';
 
-import { activePacedLine, buildLinePacing } from '../../lyrics/line-pacing.ts';
-import {
-  activeTimelineEntry,
-  buildSectionTimeline,
-  parseLyricSheet,
-} from '../../lyrics/lyric-sync.ts';
-import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
-import { TimedSectionView } from '../lyrics/timed-lyrics.tsx';
+import { LyricPerformance } from '../shared/LyricPerformance.tsx';
+import { parseLyricTimeline } from '../shared/lyric-timeline.ts';
 import { RoomActivity } from './components/RoomActivity.tsx';
 import {
   createListenerRoomController,
@@ -45,51 +39,13 @@ export function App(props: {
       props.controller ??
       createListenerRoomController({ roomId: props.roomId }),
   );
-  const lyricSheet = createMemo(() =>
-    parseLyricSheet(controller.snapshot()?.currentSong?.lyrics),
+  const lyricTimeline = createMemo(() =>
+    parseLyricTimeline(
+      controller.snapshot()?.currentSong?.lyrics,
+      controller.timing(),
+    ),
   );
-  const sectionTimeline = createMemo(() =>
-    buildSectionTimeline(lyricSheet().sections, controller.timing()),
-  );
-  const activeEntry = createMemo(() =>
-    activeTimelineEntry(sectionTimeline(), controller.currentTime()),
-  );
-  const activeSection = createMemo(() => {
-    const index = activeEntry()?.sectionIndex;
-    return typeof index === 'number'
-      ? lyricSheet().sections.find((section) => section.index === index)
-      : undefined;
-  });
-  const linePacing = createMemo(() =>
-    buildLinePacing(lyricSheet().sections, sectionTimeline(), null),
-  );
-  const activeLine = createMemo(() =>
-    activePacedLine(linePacing(), controller.currentTime()),
-  );
-  const untimedLine = createMemo(() => {
-    const spoken = lyricSheet().lines.filter((line) => !line.cue);
-    if (!spoken.length) return null;
-    const duration = controller.duration();
-    const progress = duration
-      ? Math.min(controller.currentTime() / (duration * 0.9), 1)
-      : 0;
-    return (
-      spoken[
-        Math.min(Math.floor(progress * spoken.length), spoken.length - 1)
-      ] ?? null
-    );
-  });
-  const untimedCue = createMemo(() => {
-    const line = untimedLine();
-    if (!line) return '';
-    return (
-      lyricSheet()
-        .sections.find((section) => section.index === line.sectionIndex)
-        ?.lines.find((candidate) => candidate.cue)?.primary ??
-      line.tag ??
-      ''
-    );
-  });
+  const sectionTimeline = createMemo(() => lyricTimeline().entries);
   const playbackProgress = createMemo(() => {
     const duration = controller.duration();
     if (!duration) return 0;
@@ -120,9 +76,10 @@ export function App(props: {
 
   return (
     <>
-      {/* The courtyard is a repository-owned static SVG constant, never user input. */}
-      {/* eslint-disable-next-line solid/no-innerhtml */}
-      <div class="scene" aria-hidden="true" innerHTML={COURTYARD_SCENE} />
+      <div
+        class={`scene ${controller.playing() ? 'is-performing' : ''}`}
+        aria-hidden="true"
+      />
       <div class="grain" aria-hidden="true" />
       <header class="topbar">
         <div class="topbar-room">
@@ -134,7 +91,9 @@ export function App(props: {
         </div>
         <div class="listener-label">Listener</div>
       </header>
-      <main class="room-layout">
+      <main
+        class={`room-layout ${controller.snapshot()?.currentSong ? 'has-song' : ''}`}
+      >
         <section
           class={`identity ${controller.snapshot()?.currentSong ? 'has-song' : ''}`}
           aria-labelledby="brand-title"
@@ -153,30 +112,25 @@ export function App(props: {
           </p>
           <Show when={controller.snapshot()?.currentSong}>
             {(song) => (
-              <section class="lyric-stage">
-                <h2>{song().title}</h2>
-                <Show
-                  when={activeSection()}
-                  fallback={
-                    <Show when={untimedLine()}>
-                      {(line) => (
-                        <>
-                          <p class="lyric-cue">{untimedCue()}</p>
-                          <p class="lyric-primary">{line().primary}</p>
-                          <p class="lyric-secondary">{line().secondary}</p>
-                        </>
-                      )}
-                    </Show>
-                  }
-                >
-                  {(section) => (
-                    <TimedSectionView
-                      section={section()}
-                      activeLine={activeLine()}
-                    />
-                  )}
-                </Show>
-              </section>
+              <LyricPerformance
+                timeline={lyricTimeline()}
+                title={song().title}
+                language={
+                  song().lyrics.isLatinScript
+                    ? song().language
+                    : `${song().language} · ${song().lyrics.nativeScriptName}`
+                }
+                currentTime={controller.currentTime()}
+                duration={controller.duration()}
+                mode="live"
+                status={
+                  <span class="performance-timing">
+                    {sectionTimeline()
+                      ? 'Lines follow MiniMax sections · timing is approximate'
+                      : 'Atmospheric reveal · not synchronized'}
+                  </span>
+                }
+              />
             )}
           </Show>
         </section>
@@ -323,33 +277,37 @@ export function App(props: {
                   preload="metadata"
                 />
                 <Show when={snapshot().currentSong}>
-                  <span class="player-state" aria-hidden="true">
-                    <Show
-                      when={controller.playing()}
-                      fallback={
-                        <svg viewBox="0 0 18 18">
-                          <path d="m6.5 4.5 7 4.5-7 4.5z" />
+                  <Show
+                    when={!controller.audioBlocked()}
+                    fallback={
+                      <button
+                        class="enable-audio"
+                        type="button"
+                        onClick={() => void controller.enableAudio()}
+                      >
+                        <svg viewBox="0 0 20 20" aria-hidden="true">
+                          <path d="M3.5 8h3l4-3.25v10.5L6.5 12h-3z" />
+                          <path d="M13.25 7.25a4 4 0 0 1 0 5.5M15.25 5.25a6.75 6.75 0 0 1 0 9.5" />
                         </svg>
-                      }
-                    >
-                      <svg viewBox="0 0 18 18">
-                        <path d="M6.5 5v8M11.5 5v8" />
-                      </svg>
-                    </Show>
-                  </span>
-                </Show>
-                <Show when={controller.audioBlocked()}>
-                  <button
-                    class="enable-audio"
-                    type="button"
-                    onClick={() => void controller.enableAudio()}
+                        <span class="enable-audio-label">Enable sound</span>
+                      </button>
+                    }
                   >
-                    Enable sound
-                  </button>
-                  <p class="play-error" role="alert">
-                    Your browser blocked shared audio. Enable sound once to join
-                    the music.
-                  </p>
+                    <span class="player-state" aria-hidden="true">
+                      <Show
+                        when={controller.playing()}
+                        fallback={
+                          <svg viewBox="0 0 18 18">
+                            <path d="m6.5 4.5 7 4.5-7 4.5z" />
+                          </svg>
+                        }
+                      >
+                        <svg viewBox="0 0 18 18">
+                          <path d="M6.5 5v8M11.5 5v8" />
+                        </svg>
+                      </Show>
+                    </span>
+                  </Show>
                 </Show>
               </section>
             </section>

@@ -124,9 +124,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function displayLines(value: unknown): string[] {
+interface ScriptSection {
+  cue: string | null;
+  spoken: string[];
+}
+
+function scriptSections(value: unknown): ScriptSection[] {
   if (typeof value !== 'string') return [];
-  return value.split('\n').filter((line) => line.trim());
+  const sections: ScriptSection[] = [];
+  let current: ScriptSection | null = null;
+  for (const sourceLine of value.split('\n')) {
+    const line = sourceLine.trim();
+    if (!line) continue;
+    const cue = line.match(/^\[(.+)\]$/)?.[1]?.trim();
+    if (cue) {
+      current = { cue, spoken: [] };
+      sections.push(current);
+      continue;
+    }
+    if (!current) {
+      current = { cue: null, spoken: [] };
+      sections.push(current);
+    }
+    current.spoken.push(line);
+  }
+  return sections;
 }
 
 /**
@@ -146,61 +168,77 @@ function cueDetails(text: string): { tag: string; family: SectionFamily } {
 /**
  * Splits a lyric sheet into display lines and the sections they belong to.
  *
- * The display semantics deliberately match the host app's original reveal: the
- * romanized sheet decides whether a line is a cue and supplies the cue text,
- * while non-Latin songs show the native line as `primary` and the romanized
- * line as `secondary`.
+ * Non-Latin sheets align native and romanized text inside section boundaries,
+ * so an omitted companion line cannot turn the next bracketed cue into sung
+ * text. Romanized cue wording remains preferred while native text remains the
+ * primary sung line whenever it is available.
  */
 export function parseLyricSheet(sheet: unknown): ParsedLyricSheet {
   const empty: ParsedLyricSheet = { lines: [], sections: [] };
   try {
     if (!isRecord(sheet)) return empty;
-    const roman = displayLines(sheet.lyricsRoman);
-    const native = displayLines(sheet.lyricsNative);
+    const roman = scriptSections(sheet.lyricsRoman);
+    const native = scriptSections(sheet.lyricsNative);
     const useNative = sheet.isLatinScript !== true && native.length > 0;
-    const source = useNative ? native : roman;
-
     const lines: LyricLine[] = [];
     const sections: LyricSection[] = [];
-    let section: LyricSection | null = null;
+    const primarySections = useNative ? native : roman.length ? roman : native;
+    const sectionCount = useNative
+      ? Math.max(primarySections.length, roman.length)
+      : primarySections.length;
 
-    for (let index = 0; index < source.length; index += 1) {
-      const sourceLine = source[index] ?? '';
-      const romanLine = roman[index] ?? '';
-      const cueSource = romanLine || sourceLine;
-      const cue = /^\[.+\]$/.test(cueSource);
-      const primary = cue ? cueSource.replace(/^\[(.+)\]$/, '$1') : sourceLine;
+    for (let index = 0; index < sectionCount; index += 1) {
+      const primarySection = primarySections[index];
+      const romanSection = roman[index];
+      const cue = romanSection?.cue ?? primarySection?.cue ?? null;
+      const details = cue
+        ? cueDetails(cue)
+        : { tag: null, family: 'other' as const };
+      const section: LyricSection = {
+        index,
+        tag: details.tag,
+        family: details.family,
+        lines: [],
+      };
+      sections.push(section);
 
       if (cue) {
-        const details = cueDetails(primary);
-        section = {
-          index: sections.length,
-          tag: details.tag,
-          family: details.family,
-          lines: [],
+        const cueLine: LyricLine = {
+          cue: true,
+          tag: section.tag,
+          family: section.family,
+          primary: cue,
+          secondary: '',
+          sectionIndex: section.index,
         };
-        sections.push(section);
-      } else if (!section) {
-        section = {
-          index: sections.length,
-          tag: null,
-          family: 'other',
-          lines: [],
-        };
-        sections.push(section);
+        lines.push(cueLine);
+        section.lines.push(cueLine);
       }
 
-      const line: LyricLine = {
-        cue,
-        tag: section.tag,
-        family: section.family,
-        primary,
-        secondary:
-          useNative && !cue && romanLine !== sourceLine ? romanLine : '',
-        sectionIndex: section.index,
-      };
-      lines.push(line);
-      section.lines.push(line);
+      const primarySpoken = primarySection?.spoken ?? [];
+      const romanSpoken = romanSection?.spoken ?? [];
+      const spokenCount = useNative
+        ? Math.max(primarySpoken.length, romanSpoken.length)
+        : primarySpoken.length;
+      for (let spokenIndex = 0; spokenIndex < spokenCount; spokenIndex += 1) {
+        const nativeLine = primarySpoken[spokenIndex] ?? '';
+        const romanLine = useNative ? (romanSpoken[spokenIndex] ?? '') : '';
+        const primary = nativeLine || romanLine;
+        if (!primary) continue;
+        const line: LyricLine = {
+          cue: false,
+          tag: section.tag,
+          family: section.family,
+          primary,
+          secondary:
+            nativeLine && romanLine && romanLine !== nativeLine
+              ? romanLine
+              : '',
+          sectionIndex: section.index,
+        };
+        lines.push(line);
+        section.lines.push(line);
+      }
     }
 
     return { lines, sections };

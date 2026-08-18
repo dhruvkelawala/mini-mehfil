@@ -44,6 +44,44 @@ function listenerController(
 }
 
 describe('listener app', () => {
+  test('uses the player action slot for blocked-audio recovery', () => {
+    const enableAudio = vi.fn(() => Promise.resolve());
+    const controller = {
+      ...listenerController({
+        hostPresent: true,
+        listenerCount: 1,
+        queue: [],
+        recordingQueue: [],
+        currentRecording: null,
+        currentSong: {
+          shareId: 'song-reference',
+          title: 'Monsoon Song',
+          language: 'English',
+          playback: { status: 'playing', positionMs: 0, changedAt: 1 },
+          lyrics: {
+            title: 'Monsoon Song',
+            language: 'English',
+            nativeScriptName: 'Latin',
+            isLatinScript: true,
+            lyricsNative: '[Verse]\nRain at the window',
+            lyricsRoman: '[Verse]\nRain at the window',
+          },
+        },
+        setlist: [],
+      }),
+      audioBlocked: () => true,
+      enableAudio,
+    };
+
+    render(() => <App roomId="ABCDEFGH" controller={controller} />);
+    const action = screen.getByRole('button', { name: 'Enable sound' });
+
+    expect(action.parentElement?.classList.contains('player-shell')).toBe(true);
+    action.click();
+    expect(enableAudio).toHaveBeenCalledOnce();
+    expect(document.querySelector('.play-error')).toBeNull();
+  });
+
   test('keeps the accessible join flow', () => {
     const connect = vi.fn();
     const controller = listenerController(null, connect);
@@ -54,11 +92,56 @@ describe('listener app', () => {
     expect(connect).toHaveBeenCalled();
   });
 
+  test('presents requests with the host recording workflow hierarchy', () => {
+    const controller = listenerController({
+      hostPresent: true,
+      listenerCount: 2,
+      queue: [
+        { id: 'recording', status: 'recording', mine: true },
+        { id: 'waiting', status: 'pending', mine: false },
+        { id: 'queued-first', status: 'queued', mine: false },
+        { id: 'queued-second', status: 'queued', mine: true },
+        { id: 'declined', status: 'declined', mine: true },
+      ],
+      recordingQueue: ['queued-second', 'queued-first'],
+      currentRecording: { requestId: 'recording', startedAt: 1 },
+      currentSong: null,
+      setlist: [{ shareId: 'song-reference', title: 'Monsoon Song' }],
+    });
+
+    render(() => <App roomId="ABCDEFGH" controller={controller} />);
+
+    expect(screen.getByRole('heading', { name: 'Requests' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Recording now' })).toBeTruthy();
+    expect(
+      document.querySelector('.listener-recording-now strong')?.textContent,
+    ).toBe('Your request');
+    expect(screen.getByRole('region', { name: 'Up next' })).toBeTruthy();
+    expect(
+      Array.from(
+        document.querySelectorAll(
+          '.listener-up-next .listener-request-copy strong',
+        ),
+      ).map((element) => element.textContent),
+    ).toEqual(['Your request', 'Listener request']);
+    expect(
+      screen.getByRole('region', { name: 'Waiting on host' }),
+    ).toBeTruthy();
+    expect(screen.getByText('Waiting for host')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Not selected' })).toBeTruthy();
+    expect(screen.getByText('Not selected by host')).toBeTruthy();
+    expect(
+      screen.getByRole<HTMLAnchorElement>('link', { name: 'Monsoon Song' })
+        .pathname,
+    ).toBe('/s/song-reference');
+  });
+
   test('defaults song-request language to auto-detect even with English first in the dropdown', () => {
     const snapshot: ListenerSnapshot = {
       hostPresent: true,
       listenerCount: 1,
       queue: [],
+      recordingQueue: [],
       currentRecording: null,
       currentSong: {
         shareId: 'song-reference',
@@ -103,6 +186,7 @@ describe('listener app', () => {
       hostPresent: true,
       listenerCount: 1,
       queue: [],
+      recordingQueue: [],
       currentRecording: null,
       currentSong: {
         shareId: 'song-reference',
@@ -122,13 +206,16 @@ describe('listener app', () => {
     });
     render(() => <App roomId="ABCDEFGH" controller={controller} />);
     expect(
+      document.querySelector('.room-layout')?.classList.contains('has-song'),
+    ).toBe(true);
+    expect(
       screen.getAllByRole('heading', { name: 'Monsoon Song' }),
     ).toHaveLength(2);
     expect(screen.getByText('बारिश की रात')).toBeTruthy();
     expect(screen.getByText('Baarish ki raat')).toBeTruthy();
     expect(screen.getByText('Pre-Chorus 2')).toBeTruthy();
     expect(
-      document.querySelectorAll('.lyric-stage > .lyric-primary'),
+      document.querySelectorAll('.lyric-performance .lyric-primary'),
     ).toHaveLength(1);
   });
 
@@ -156,6 +243,7 @@ describe('listener app', () => {
       hostPresent: true,
       listenerCount: 1,
       queue: [],
+      recordingQueue: [],
       currentRecording: null,
       currentSong: {
         shareId: 'song-reference',
@@ -189,25 +277,30 @@ describe('listener app', () => {
 
     render(() => <App roomId="ABCDEFGH" controller={controller} />);
     expect(document.querySelectorAll('.lyric-section')).toHaveLength(1);
-    expect(document.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
     expect(
-      document.querySelector('[aria-current="true"] .lyric-primary')
-        ?.textContent,
+      document.querySelectorAll('.lyric-performance [aria-current="true"]'),
+    ).toHaveLength(1);
+    expect(
+      document.querySelector(
+        '.lyric-performance [aria-current="true"] .lyric-primary',
+      )?.textContent,
     ).toBe(expectedAt(6));
 
     setClock(16);
     await Promise.resolve();
     expect(document.querySelectorAll('.lyric-section')).toHaveLength(1);
     expect(
-      document.querySelector('[aria-current="true"] .lyric-primary')
-        ?.textContent,
+      document.querySelector(
+        '.lyric-performance [aria-current="true"] .lyric-primary',
+      )?.textContent,
     ).toBe(expectedAt(16));
 
     setClock(6);
     await Promise.resolve();
     expect(
-      document.querySelector('[aria-current="true"] .lyric-primary')
-        ?.textContent,
+      document.querySelector(
+        '.lyric-performance [aria-current="true"] .lyric-primary',
+      )?.textContent,
     ).toBe(expectedAt(6));
   });
 });

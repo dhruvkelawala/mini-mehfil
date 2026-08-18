@@ -20,6 +20,7 @@ export interface ListenerSnapshot {
   hostPresent: boolean;
   listenerCount: number;
   queue: Array<{ id: string; status: string; mine: boolean }>;
+  recordingQueue: string[];
   currentRecording: {
     requestId: string;
     startedAt: number;
@@ -86,7 +87,10 @@ function parseSnapshot(value: unknown): ListenerSnapshot | null {
     typeof value.hostPresent !== 'boolean' ||
     typeof value.listenerCount !== 'number' ||
     !Array.isArray(value.queue) ||
-    !Array.isArray(value.setlist)
+    !Array.isArray(value.setlist) ||
+    (value.recordingQueue !== undefined &&
+      (!Array.isArray(value.recordingQueue) ||
+        !value.recordingQueue.every((item) => typeof item === 'string')))
   ) {
     return null;
   }
@@ -102,6 +106,11 @@ function parseSnapshot(value: unknown): ListenerSnapshot | null {
     }
     queue.push({ id: item.id, status: item.status, mine: item.mine });
   }
+  const recordingQueue = Array.isArray(value.recordingQueue)
+    ? value.recordingQueue.filter(
+        (requestId): requestId is string => typeof requestId === 'string',
+      )
+    : queue.filter((item) => item.status === 'queued').map((item) => item.id);
   const setlist: ListenerSnapshot['setlist'] = [];
   for (const item of value.setlist) {
     if (
@@ -134,6 +143,7 @@ function parseSnapshot(value: unknown): ListenerSnapshot | null {
     hostPresent: value.hostPresent,
     listenerCount: value.listenerCount,
     queue,
+    recordingQueue,
     currentRecording,
     currentSong,
     setlist,
@@ -177,6 +187,7 @@ export function createListenerRoomController({
   let lastShareId: string | null = null;
   let timingRevision = '';
   let playbackRevision: string | null = null;
+  let playbackAttempt = 0;
   let playbackTimer: ReturnType<typeof setTimeout> | undefined;
   let playbackClock: ReturnType<typeof setInterval> | undefined;
   let metadataHandler: (() => void) | null = null;
@@ -236,15 +247,18 @@ export function createListenerRoomController({
 
   const attemptPlayback = async () => {
     if (!audio) return;
+    const attempt = ++playbackAttempt;
     try {
       await audio.play();
+      if (attempt !== playbackAttempt && audio.paused) return;
       setAudioBlocked(false);
       setPlaybackLabel('Playing with the host');
       setPlaying(true);
       startPlaybackClock();
     } catch {
+      if (attempt !== playbackAttempt || !audio.paused) return;
       setAudioBlocked(true);
-      setPlaybackLabel('Your browser needs sound enabled once.');
+      setPlaybackLabel('Tap to enable sound');
       setPlaying(false);
       stopPlaybackClock();
     }
@@ -262,6 +276,7 @@ export function createListenerRoomController({
     metadataHandler = null;
     if (lastShareId !== song.shareId) {
       lastShareId = song.shareId;
+      setAudioBlocked(false);
       setCurrentTime(0);
       setDuration(0);
       audio.src = `/s/${song.shareId}/audio`;
@@ -275,11 +290,28 @@ export function createListenerRoomController({
           ? Math.max(0, Date.now() - playback.changedAt)
           : 0;
       const desired = (playback.positionMs + elapsed) / 1_000;
+      const mediaDuration = Number.isFinite(audio.duration)
+        ? audio.duration
+        : null;
       audio.currentTime = Number.isFinite(audio.duration)
         ? Math.min(desired, audio.duration)
         : desired;
-      if (playback.status === 'playing') void attemptPlayback();
+      const songHasFinished =
+        playback.status === 'playing' &&
+        mediaDuration !== null &&
+        mediaDuration > 0 &&
+        desired >= mediaDuration - 0.05;
+      if (songHasFinished) {
+        playbackAttempt += 1;
+        setAudioBlocked(false);
+        audio.pause();
+        setPlaybackLabel('Song finished');
+        setPlaying(false);
+        stopPlaybackClock();
+      } else if (playback.status === 'playing') void attemptPlayback();
       else {
+        playbackAttempt += 1;
+        setAudioBlocked(false);
         audio.pause();
         setPlaybackLabel('Host paused');
         setPlaying(false);
@@ -403,16 +435,22 @@ export function createListenerRoomController({
     audio.addEventListener('durationchange', syncMediaMetadata);
     audio.addEventListener('timeupdate', syncPlaybackClock);
     audio.addEventListener('play', () => {
+      playbackAttempt += 1;
+      setAudioBlocked(false);
       setPlaybackLabel('Playing with the host');
       setPlaying(true);
       startPlaybackClock();
     });
     audio.addEventListener('pause', () => {
+      playbackAttempt += 1;
+      setAudioBlocked(false);
       if (!audio?.ended) setPlaybackLabel('Host paused');
       setPlaying(false);
       stopPlaybackClock();
     });
     audio.addEventListener('ended', () => {
+      playbackAttempt += 1;
+      setAudioBlocked(false);
       setPlaybackLabel('Song finished');
       setPlaying(false);
       stopPlaybackClock();

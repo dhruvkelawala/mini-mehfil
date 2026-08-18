@@ -68,6 +68,10 @@ class FakeAudio extends EventTarget {
     this.dispatchEvent(new Event('play'));
     return Promise.resolve();
   }
+  started() {
+    this.paused = false;
+    this.dispatchEvent(new Event('play'));
+  }
   metadata(duration: number) {
     this.duration = duration;
     this.readyState = 1;
@@ -126,6 +130,70 @@ afterEach(() => {
 });
 
 describe('listener room timing and media clock', () => {
+  test('does not request audio permission when a resumed song has finished', async () => {
+    const socket = new FakeSocket();
+    const controller = createListenerRoomController({
+      roomId: 'ABCDEFGH',
+      storage: new MemoryStorage(),
+      socketFactory: () => socket as unknown as WebSocket,
+    });
+    const audio = new FakeAudio();
+    const play = vi
+      .spyOn(audio, 'play')
+      .mockRejectedValue(new Error('NotAllowedError'));
+    controller.bindAudio(audio as unknown as HTMLAudioElement);
+    controller.connect('Ada');
+    socket.open();
+    socket.message(
+      snapshot({
+        playback: {
+          status: 'playing',
+          positionMs: 90_000,
+          changedAt: Date.now(),
+        },
+      }),
+    );
+
+    audio.metadata(90);
+    await Promise.resolve();
+
+    expect(play).not.toHaveBeenCalled();
+    expect(controller.audioBlocked()).toBe(false);
+    expect(controller.playbackLabel()).toBe('Song finished');
+    controller.close();
+  });
+
+  test('clears a stale autoplay warning once the media starts playing', async () => {
+    const socket = new FakeSocket();
+    const controller = createListenerRoomController({
+      roomId: 'ABCDEFGH',
+      storage: new MemoryStorage(),
+      socketFactory: () => socket as unknown as WebSocket,
+    });
+    const audio = new FakeAudio();
+    vi.spyOn(audio, 'play').mockRejectedValueOnce(new Error('NotAllowedError'));
+    controller.bindAudio(audio as unknown as HTMLAudioElement);
+    controller.connect('Ada');
+    socket.open();
+    socket.message(
+      snapshot({
+        playback: {
+          status: 'playing',
+          positionMs: 30_000,
+          changedAt: Date.now(),
+        },
+      }),
+    );
+    audio.metadata(90);
+    await Promise.resolve();
+    expect(controller.audioBlocked()).toBe(true);
+
+    audio.started();
+
+    expect(controller.audioBlocked()).toBe(false);
+    controller.close();
+  });
+
   test('applies late timing without moving playback and rejects duration drift', () => {
     const socket = new FakeSocket();
     const fetchSpy = vi.spyOn(globalThis, 'fetch');

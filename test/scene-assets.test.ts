@@ -9,12 +9,24 @@ test('the selected folk-modern scene ships with all four background candidates',
   )
     .filter((file) => file.endsWith('.png'))
     .sort();
-  const styles = readFileSync(
+  const hostStyles = readFileSync(
     new URL('../src/client/host/styles.css', import.meta.url),
     'utf8',
   );
-  const html = readFileSync(
+  const hostHtml = readFileSync(
     new URL('../src/client/host/index.html', import.meta.url),
+    'utf8',
+  );
+  const listenerStyles = readFileSync(
+    new URL('../src/client/listener/styles.css', import.meta.url),
+    'utf8',
+  );
+  const listenerHtml = readFileSync(
+    new URL('../src/client/listener/index.html', import.meta.url),
+    'utf8',
+  );
+  const worker = readFileSync(
+    new URL('../src/worker/index.ts', import.meta.url),
     'utf8',
   );
   const app = readFileSync(
@@ -33,26 +45,32 @@ test('the selected folk-modern scene ships with all four background candidates',
     '04-folk-modern-dusk.png',
   ]);
   assert.match(
-    styles,
+    hostStyles,
     /\.scene\s*\{[\s\S]*background-image:\s*url\('\/backgrounds\/04-folk-modern-dusk\.png'\)/,
   );
   assert.match(
-    html,
+    hostHtml,
     /rel="preload"[\s\S]*href="\/backgrounds\/04-folk-modern-dusk\.png"/,
   );
-  assert.doesNotMatch(html, /background-prototype/);
+  assert.match(
+    listenerStyles,
+    /\.scene\s*\{[\s\S]*background-image:\s*url\('\/backgrounds\/04-folk-modern-dusk\.png'\)/,
+  );
+  assert.match(
+    listenerHtml,
+    /rel="preload"[\s\S]*href="\/backgrounds\/04-folk-modern-dusk\.png"/,
+  );
+  assert.match(worker, /pathname\.startsWith\('\/backgrounds\/'\)/);
+  assert.doesNotMatch(hostHtml, /background-prototype/);
   assert.match(
     app,
     /class="topbar-docs"[\s\S]*href="https:\/\/platform\.minimax\.io\/docs\/api-reference\/music-generation"/,
   );
   assert.match(
-    styles,
+    hostStyles,
     /@media \(max-width: 560px\)[\s\S]*\.topbar-docs\s*\{\s*display:\s*none;\s*\}/,
   );
   assert.doesNotMatch(app, /Lyrics cost about a tenth of a cent/);
-  assert.doesNotMatch(styles, /\.cost-hint/);
-  assert.match(
-    viteConfig,
-    /publicDir:\s*surface === 'host' \? resolve\('public'\) : false/,
-  );
+  assert.doesNotMatch(hostStyles, /\.cost-hint/);
+  assert.match(viteConfig, /publicDir:\s*resolve\('public'\)/);
 });

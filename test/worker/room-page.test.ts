@@ -44,7 +44,7 @@ describe('listener shell', () => {
     const get = await route(new Request('https://rooms.test/r/ABCDEFGH'));
     expect(get?.status).toBe(200);
     expect(get?.headers.get('content-security-policy')).toBe(
-      "default-src 'none'; connect-src 'self'; media-src 'self' blob:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "default-src 'none'; connect-src 'self'; img-src 'self' data:; media-src 'self' blob:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     );
     const head = await route(
       new Request('https://rooms.test/r/ABCDEFGH', { method: 'HEAD' }),
