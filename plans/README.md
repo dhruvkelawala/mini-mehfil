@@ -9,7 +9,7 @@ starting, honor its STOP conditions, and update its row when done.
 | Plan | Title                                                                                         | Priority | Effort | Depends on                 | Status                                                                                                                                   | Issue                                                         |
 | ---- | --------------------------------------------------------------------------------------------- | -------- | ------ | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | 006  | [Make MiniMax timing analysis non-blocking and retryable](006-nonblocking-timing-analysis.md) | P1       | L      | Plan 005 through `7c8b596` | DONE — 2026-08-18: both live failure causes found and fixed (boundary-overshoot clamp in PR #38; stale share-worker deploy corrected plus CI deploy job); operator confirmed live timed host playback and a live timed shared page | —                                                             |
-| 007  | [Benchmark and productionize Mac-hosted MLX lyric timing](007-local-mlx-timing-service.md)    | P1       | L      | PR #33 / Plan 006 DONE     | DEFERRED — 2026-08-18 operator decision: MiniMax analysis proven reliable once the real causes were fixed, so the local MLX service is a latency/independence option, not a need                                                    | [#35](https://github.com/dhruvkelawala/mini-mehfil/issues/35) |
+| 007  | [Align exact lyric lines on the operator Mac, falling back to sections](007-local-mlx-timing-service.md) | P1       | L      | none (Plans 001/006 DONE)  | TODO — revised 2026-08-18 from section benchmarking to line-level forced alignment (HTDemucs + MMS_FA) per docs/research/lyric-timing-alignment.md; operator un-deferred after three prod section-mislabel incidents                | [#35](https://github.com/dhruvkelawala/mini-mehfil/issues/35) |
 | 001  | Unify host and listener lyric performance presentation                                        | P2       | M      | PR #29 merged              | DONE                                                                                                                                     | [#32](https://github.com/dhruvkelawala/mini-mehfil/issues/32) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
@@ -38,10 +38,14 @@ abandoned)
   head `0aa1fc0` with no additional commits. Its retained
   `[TIMING-DIAGNOSTIC]` instrumentation identified both live failure causes and
   was removed with operator approval in PR #38 on 2026-08-18.
-- Plan 007 must not begin until PR #33 is merged and Plan 006 is marked DONE.
-  It keeps the production MiniMax adapter as the default and fallback while a
-  native Mac/MLX service is benchmarked, secured, queued, and proven across
-  host, listener, and standalone playback without paid generation.
+- Plan 007 was deferred on 2026-08-18 and un-deferred the same day after three
+  production incidents showed MiniMax section labels are the quality ceiling.
+  Its 2026-08-18 revision (planned at `7c8c892`) targets line-level forced
+  alignment of the known lyric sheet (HTDemucs vocal separation +
+  torchaudio MMS_FA) on the operator Mac, a version-2 line artifact, and an
+  optional Cloudflare Workers AI section-grade fallback rung. MiniMax stays
+  the automatic fallback throughout; see
+  docs/research/lyric-timing-alignment.md for the primary-sourced basis.
 
 ## Findings considered and rejected
 
