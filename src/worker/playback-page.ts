@@ -101,6 +101,7 @@ export function playbackPage(
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#1f4238">
 <title>${escapeHtml(song.title)} · Mini Mehfil</title><meta name="description" content="${escapeHtml(description)}">
+<link rel="icon" href="https://minimehfil.wtf/favicon.ico" sizes="16x16 32x32 48x48"><link rel="icon" href="https://minimehfil.wtf/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="https://minimehfil.wtf/apple-touch-icon.png">
 <link rel="preload" as="image" href="${FOLK_MODERN_BACKGROUND_PATH}">
 <meta property="og:site_name" content="Mini Mehfil"><meta property="og:title" content="${escapeHtml(song.title)} · Mini Mehfil"><meta property="og:type" content="music.song"><meta property="og:url" content="${escapeHtml(shareUrl)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:audio" content="${escapeHtml(audioUrl)}"><meta property="og:audio:secure_url" content="${escapeHtml(audioUrl)}"><meta property="og:audio:type" content="audio/mpeg">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:site" content="@dhruv_kelawala"><meta name="twitter:title" content="${escapeHtml(song.title)} · Mini Mehfil"><meta name="twitter:description" content="${escapeHtml(description)}">${imageMetadata}
