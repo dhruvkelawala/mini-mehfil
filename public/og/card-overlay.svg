@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#061312" stop-opacity="0.62"/>
+      <stop offset="55%" stop-color="#061312" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#061312" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="bottom" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#061312" stop-opacity="0.42"/>
+      <stop offset="100%" stop-color="#061312" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="6" stdDeviation="14" flood-color="#04100f" flood-opacity="0.72"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="390" fill="url(#top)"/>
+  <rect y="430" width="1200" height="200" fill="url(#bottom)"/>
+  <g filter="url(#soft)" text-anchor="middle">
+    <text x="600" y="118" fill="#e6a653" font-family="Iowan Old Style, Georgia, serif" font-style="italic" font-weight="600" font-size="44" letter-spacing="1.8">Mini</text>
+    <text x="600" y="238" fill="#f9edda" font-family="Kohinoor Devanagari, Noto Serif Devanagari, serif" font-weight="600" font-size="128">महफ़िल</text>
+    <text x="600" y="300" fill="#e7d6c1" font-family="Iowan Old Style, Georgia, serif" font-style="italic" font-size="34">A private song room — write the words, let them sing.</text>
+  </g>
+</svg>

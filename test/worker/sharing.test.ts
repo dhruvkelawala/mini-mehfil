@@ -487,11 +487,19 @@ test('upload to playback round trip preserves title, language, and both lyric sc
   );
   assert.match(html, /href="https:\/\/minimehfil\.wtf">Make your own song/);
   assert.match(html, /property="og:audio:type" content="audio\/mpeg"/);
-  assert.match(html, /name="twitter:card" content="player"/);
+  // A player card needs domain approval from X; a large summary card renders
+  // the courtyard image today, so the page must not claim the player card.
+  assert.match(html, /name="twitter:card" content="summary_large_image"/);
+  assert.doesNotMatch(html, /name="twitter:(card" content="player|player)"/);
   assert.match(
     html,
     /name="twitter:image" content="https:\/\/share\.example\/preview\.png"/,
   );
+  assert.match(
+    html,
+    /property="og:image" content="https:\/\/share\.example\/preview\.png"/,
+  );
+  assert.match(html, /property="og:site_name" content="Mini Mehfil"/);
 
   const audio = await handle(
     new Request(`https://share.example/s/${ID}/audio`),
