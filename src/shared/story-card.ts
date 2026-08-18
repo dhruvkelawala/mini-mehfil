@@ -24,7 +24,12 @@ export interface StoryCard {
   url: string;
   /** Host painted into the picture, so a screenshot still leads home. */
   host: string;
+  /** Name for the still card. The extension decides which apps iOS offers. */
   fileName: string;
+  /** Name for the moving card, when the browser can record one. */
+  videoFileName: string;
+  /** The section the stanza came from, so a clip can play the right words. */
+  sectionIndex: number | null;
   stanza: StoryCardLine[];
   backgroundUrl: string;
 }
@@ -45,9 +50,29 @@ function sungLines(section: LyricSection): LyricLine[] {
 }
 
 /**
- * The lines the card quotes: the chorus when the sheet names one long enough
- * to stand alone, otherwise the longest section. A Story is watched for about
- * two seconds with the sound off, so one stanza beats a scrape of the sheet.
+ * The section the card speaks for: the chorus when the sheet names one long
+ * enough to stand alone, otherwise the section with the most sung lines.
+ */
+export function storyStanzaSection(
+  sections: LyricSection[],
+): LyricSection | null {
+  const chorus = sections.find(
+    (section) =>
+      section.family === 'chorus' &&
+      sungLines(section).length >= CHORUS_MIN_LINES,
+  );
+  if (chorus) return chorus;
+  const sung = sections.filter((section) => sungLines(section).length > 0);
+  return sung.length === 0
+    ? null
+    : sung.reduce((best, next) =>
+        sungLines(next).length > sungLines(best).length ? next : best,
+      );
+}
+
+/**
+ * The lines the card quotes. A Story is watched for about two seconds with the
+ * sound off, so one stanza beats a scrape of the whole sheet.
  *
  * Falls back to the flat line list for sheets that carry no section cues.
  */
@@ -55,33 +80,29 @@ export function storyStanza(
   sections: LyricSection[],
   lines: LyricLine[],
 ): StoryCardLine[] {
-  const groups = sections.map(sungLines).filter((group) => group.length > 0);
-  if (groups.length === 0)
+  const chosen = storyStanzaSection(sections);
+  if (!chosen)
     return lines
       .filter((line) => !line.cue)
       .slice(0, STANZA_MAX_LINES)
       .map(quoted);
-  const chorus = sections.find(
-    (section) =>
-      section.family === 'chorus' &&
-      sungLines(section).length >= CHORUS_MIN_LINES,
-  );
-  const group = chorus
-    ? sungLines(chorus)
-    : groups.reduce((best, next) => (next.length > best.length ? next : best));
-  return group.slice(0, STANZA_MAX_LINES).map(quoted);
+  return sungLines(chosen).slice(0, STANZA_MAX_LINES).map(quoted);
 }
 
 /**
  * A name every share sheet and file system accepts. Reserved characters become
  * spaces rather than disappearing, so `Rain/Refrain` stays two readable words.
+ *
+ * The extension matters: on iOS the share sheet derives the file's type from
+ * it, not from the blob's MIME type, and an unknown extension degrades to a
+ * type that media-only share targets refuse to open.
  */
-export function storyFileName(title: string): string {
+export function storyFileName(title: string, extension: string): string {
   let name = '';
   for (const character of title)
     name += RESERVED_FILE_NAME_CHARACTERS.includes(character) ? ' ' : character;
   const trimmed = name.trim().slice(0, FILE_NAME_MAX_LENGTH).trim();
-  return `${trimmed || 'Mini Mehfil'}.jpg`;
+  return `${trimmed || 'Mini Mehfil'}.${extension}`;
 }
 
 /**

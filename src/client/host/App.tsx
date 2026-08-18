@@ -21,6 +21,7 @@ import {
   storyCardHost,
   storyFileName,
   storyStanza,
+  storyStanzaSection,
   type StoryCard,
 } from '../../shared/story-card.ts';
 import {
@@ -28,6 +29,8 @@ import {
   shareOrSaveStoryCard,
   storyCardBlob,
 } from '../shared/story-card-canvas.ts';
+// The moving card records in real time and needs a visible canvas, so the app
+// keeps the still card for now. The recorder ships on the shared page first.
 import { LyricPerformance } from '../shared/LyricPerformance.tsx';
 import { copyLink } from '../shared/copy-link.ts';
 import { createShareLabel } from '../shared/share-label.ts';
@@ -244,7 +247,9 @@ export function App() {
       label: languageLabel(),
       url,
       host: storyCardHost(url || location.origin),
-      fileName: storyFileName(sheet.title),
+      fileName: storyFileName(sheet.title, 'jpg'),
+      videoFileName: storyFileName(sheet.title, 'mp4'),
+      sectionIndex: storyStanzaSection(parsed.sections)?.index ?? null,
       stanza,
       backgroundUrl: FOLK_MODERN_BACKGROUND_PATH,
     };

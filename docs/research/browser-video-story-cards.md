@@ -173,7 +173,7 @@ matched case-sensitively** — send it lowercase. The codec allowlists in the sa
   audio `opus`, `pcm`.
 - MP4: `avc1`, `avc3`, `mp4a.40.2` (all under `USE_PROPRIETARY_CODECS`), `hvc1`/`hev1`
   under the HEVC flag, plus `vp9`, `av01`, `opus`.
-- `AudioStringToAudioCodec` maps `mp4a.40.2` → AAC only under `USE_PROPRIETARY_CODECS`.
+- `AudioStringToAudioCodec` maps `mp4a.40.2` -> AAC only under `USE_PROPRIETARY_CODECS`.
 
 **Chrome Android.** chromestatus records "MP4 container support for MediaRecorder" —
 _"Adds support for muxing audio/video into MP4 containers with MediaRecorder"_ — as
@@ -275,7 +275,7 @@ Meta publishes to "what the Instagram app can ingest", verbatim:
 - _"Minimum dimensions 720x1280"_, _"Recommended image ratios 9:16 or 9:18"_,
   _"1080p and up to 20 seconds in duration"_, _"Under 50 MB"_.
 
-Those last two lines are worth pinning up: Meta's own recommendation is **1080p, ≤20 s,
+Those last two lines are worth pinning up: Meta's own recommendation is **1080p, <=20 s,
 under 50 MB**, which is precisely the clip we want to make.
 
 **(c) What the Instagram app accepts from `UIActivityViewController` / `ACTION_SEND`:
@@ -286,13 +286,13 @@ which is not a Meta-published document.
 
 ### 2.2 What "documented" vs "inferred" means here
 
-| Claim                                                                                             | Status                                                                         |
-| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Content Publishing API Story video is MOV/MP4, H.264/HEVC + AAC, ≤60 s, ≤100 MB, 9:16 recommended | **Documented** by Meta                                                         |
-| Sharing-to-Stories lists H.264, H.265 and WebM as supported video for the Instagram app           | **Documented** by Meta                                                         |
-| Meta recommends 1080p, ≤20 s, under 50 MB for a Stories background video                          | **Documented** by Meta                                                         |
-| Sharing-to-Stories format list also describes what the share-sheet path accepts                   | **Inferred.** Different entry point; plausible but unproven                    |
-| Content Publishing API's MOV/MP4-only container list applies to the app                           | **Inferred, and probably wrong** — different code path, and it contradicts (b) |
+| Claim                                                                                               | Status                                                                         |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Content Publishing API Story video is MOV/MP4, H.264/HEVC + AAC, <=60 s, <=100 MB, 9:16 recommended | **Documented** by Meta                                                         |
+| Sharing-to-Stories lists H.264, H.265 and WebM as supported video for the Instagram app             | **Documented** by Meta                                                         |
+| Meta recommends 1080p, <=20 s, under 50 MB for a Stories background video                           | **Documented** by Meta                                                         |
+| Sharing-to-Stories format list also describes what the share-sheet path accepts                     | **Inferred.** Different entry point; plausible but unproven                    |
+| Content Publishing API's MOV/MP4-only container list applies to the app                             | **Inferred, and probably wrong** — different code path, and it contradicts (b) |
 
 ### 2.3 "Instagram rejects WebM from the share sheet" — no primary source found
 
@@ -327,8 +327,8 @@ mutually consistent primary sources: [`share_service_impl.cc`](https://chromium.
 and the Android implementation
 [`ShareServiceImpl.java`](https://chromium.googlesource.com/chromium/src/+/main/components/browser_ui/webshare/android/java/src/org/chromium/components/browser_ui/webshare/ShareServiceImpl.java).
 Both the extension **and** the MIME type are checked; failing either yields
-`PERMISSION_DENIED`. Permitted video: `.m4v`/`.mp4` → `video/mp4`, `.mpeg`/`.mpg`,
-`.ogm`/`.ogv`, `.webm` → `video/webm`. Notably **`.mov` / `video/quicktime` is NOT
+`PERMISSION_DENIED`. Permitted video: `.m4v`/`.mp4` -> `video/mp4`, `.mpeg`/`.mpg`,
+`.ogm`/`.ogv`, `.webm` -> `video/webm`. Notably **`.mov` / `video/quicktime` is NOT
 permitted** by Chromium — do not name the file `.mov`.
 
 **WebKit has no allowlist at all.** `Navigator::canShare()` in
@@ -385,7 +385,7 @@ often-cited "~300 MB" figure traces to a [Medium post by Jeremy Keith](https://a
 
 ## 3. Getting the song into the recording
 
-### 3.1 `createMediaElementSource` → `MediaStreamAudioDestinationNode` works, with a catch
+### 3.1 `createMediaElementSource` -> `MediaStreamAudioDestinationNode` works, with a catch
 
 Both nodes are supported everywhere we care about. Per
 [MDN's compat data](https://github.com/mdn/browser-compat-data/blob/main/api/MediaStreamAudioDestinationNode.json),
@@ -402,8 +402,8 @@ re-routed into the processing graph of the `AudioContext`."_
 So the graph must be:
 
 ```
-audio element → MediaElementAudioSourceNode ─┬→ context.destination        (person hears it)
-                                             └→ MediaStreamAudioDestinationNode (recorder hears it)
+audio element -> MediaElementAudioSourceNode ─┬-> context.destination        (person hears it)
+                                             └-> MediaStreamAudioDestinationNode (recorder hears it)
 ```
 
 Omit the first branch and the song goes silent for the person while it records — a
@@ -652,7 +652,7 @@ Worker(url, …)`. Under `default-src 'none'` with no `worker-src`/`child-src`, 
 | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`webm-muxer`](https://github.com/Vanilagy/webm-muxer) (MIT, 147,682 B unpacked, CSP-clean) | Wrong container, and also npm-deprecated in favour of mediabunny                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | [`mp4box.js`](https://github.com/gpac/mp4box.js) (BSD-3, 2.26 MB unpacked)                  | It is a **demuxer/parser**, not a muxer — it cannot write MP4 from encoded chunks. Also ships code-split ESM/CJS chunks (`import … from "./rolldown-runtime-….mjs"`), so it is not single-file inlinable, and its advertised `dist/mp4box.all.js` 404s on 2.4.1                                                                                                                                                                                                                                                                                                                                                                                                              |
-| [`mux.js`](https://github.com/videojs/mux.js) (Apache-2.0, 4.7 MB unpacked)                 | Transmuxes MPEG-TS → fMP4 for HLS; not a WebCodecs-chunk muxer. Also the only candidate with **real** runtime deps (`global`, `@babel/runtime`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| [`mux.js`](https://github.com/videojs/mux.js) (Apache-2.0, 4.7 MB unpacked)                 | Transmuxes MPEG-TS -> fMP4 for HLS; not a WebCodecs-chunk muxer. Also the only candidate with **real** runtime deps (`global`, `@babel/runtime`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | [`jsmpeg`](https://github.com/phoboslab/jsmpeg)                                             | An MPEG-1 _player_, not a muxer. Loads over Ajax/WebSocket. Wrong tool entirely                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | [`ffmpeg.wasm`](https://github.com/ffmpegwasm/ffmpeg.wasm)                                  | **Disqualified three times over.** `@ffmpeg/util`'s `toBlobURL` is literally `await (await fetch(url)).arrayBuffer()` and the documented `load()` call fetches both `ffmpeg-core.js` and `ffmpeg-core.wasm` — blocked by the missing `connect-src`. `load()` also does `new Worker(new URL("./worker.js", import.meta.url), { type: "module" })` — blocked by `worker-src`. And `@ffmpeg/core@0.12.10` ships a **32,232,419-byte** `.wasm`, which is disqualifying on a phone regardless. ([usage docs](https://ffmpegwasm.netlify.app/docs/getting-started/usage), [`@ffmpeg/util` source](https://github.com/ffmpegwasm/ffmpeg.wasm/blob/main/packages/util/src/index.ts)) |
 
@@ -671,9 +671,9 @@ This is the sharpest constraint in the whole investigation, so it is worth being
 **Which directive governs what.** [CSP3 §6.8.1 "Get the effective directive for request"](https://www.w3.org/TR/CSP3/#effective-directive-for-a-request)
 switches on the request's _destination_:
 
-> `"audio"`, `"track"`, `"video"` → Return `media-src`.
-> the empty string → Return `connect-src`.
-> `"serviceworker"`, `"sharedworker"`, `"worker"` → Return `worker-src`.
+> `"audio"`, `"track"`, `"video"` -> Return `media-src`.
+> the empty string -> Return `connect-src`.
+> `"serviceworker"`, `"sharedworker"`, `"worker"` -> Return `worker-src`.
 > … Return `connect-src`. **Note:** The algorithm returns `connect-src` as a default fallback.
 
 and [§6.1.2](https://www.w3.org/TR/CSP3/#directive-connect-src) says `connect-src`
@@ -686,12 +686,12 @@ URLs from which video, audio, and associated text track resources may be loaded"
 So on `src/worker/sharing.ts:826` — `default-src 'none'; img-src 'self' data:; media-src
 'self'; style-src 'nonce-X'; script-src 'nonce-X'` — with
 [§6.8.3's fallback list](https://www.w3.org/TR/CSP3/#directive-fallback-list)
-(`connect-src` → `default-src`):
+(`connect-src` -> `default-src`):
 
 - `<audio src="/s/<id>/audio">` — **allowed** by `media-src 'self'`. Already works.
 - `fetch('/s/<id>/audio')` and `XMLHttpRequest` — **blocked**. `connect-src` is absent, so
   it falls back to `default-src 'none'`.
-- `new Worker(...)` — **blocked**. `worker-src` falls back to `child-src` → `script-src` →
+- `new Worker(...)` — **blocked**. `worker-src` falls back to `child-src` -> `script-src` ->
   and lands on `script-src 'nonce-X'`. Nonces are matched only in the _inline_ and
   _element_ checks; [§6.7.2.5 "Does request match source list?"](https://www.w3.org/TR/CSP3/#match-request-to-source-list)
   matches a request's URL against the list, and a `'nonce-…'` expression is not a URL. So
@@ -711,7 +711,7 @@ and `AudioDecoder` (WebCodecs) equally needs an `EncodedAudioChunk` built from b
 | Route                                                                                        | Verdict                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `fetch()` / `XHR` / `EventSource` / `WebSocket`                                              | Blocked — `connect-src` (CSP3 §6.1.2)                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Worker or Service Worker doing the fetch                                                     | Blocked — `worker-src` → `script-src 'nonce-X'`                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Worker or Service Worker doing the fetch                                                     | Blocked — `worker-src` -> `script-src 'nonce-X'`                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Cache Storage (`caches.match`)                                                               | No help — populating it needs a fetch or a SW                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `<audio src>` + `createMediaElementSource`                                                   | **Works, but real-time only.** `media-src 'self'` permits the load; the bytes are never exposed to script, only samples as they play                                                                                                                                                                                                                                                                                                                                                           |
 | `<audio src="data:…">`                                                                       | Would need `media-src data:`; and still exposes no bytes to script                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -720,8 +720,8 @@ and `AudioDecoder` (WebCodecs) equally needs an `EncodedAudioChunk` built from b
 | **Add `connect-src 'self'` to the policy**                                                   | **Works, and it is our own policy.** One line in `src/worker/sharing.ts`                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 The two "inline the bytes" routes cost a base64 inflation of 4/3. A whole 3-minute MP3 at
-192 kbps is ~4.3 MB → ~5.8 MB of base64 in the HTML, which is absurd for a page that must
-render fast. A pre-trimmed 20 s excerpt at 128 kbps is ~320 KB → ~430 KB of base64, which
+192 kbps is ~4.3 MB -> ~5.8 MB of base64 in the HTML, which is absurd for a page that must
+render fast. A pre-trimmed 20 s excerpt at 128 kbps is ~320 KB -> ~430 KB of base64, which
 is merely bad. **The honest conclusion is that if we want WebCodecs on the shared page, we
 should add `connect-src 'self'` rather than contort around it.** That directive permits
 same-origin fetches only, which is a far smaller widening than it sounds.
@@ -799,7 +799,7 @@ static inline size_t NODELETE maxCanvasArea()
 
 enforced in `validateArea()`, which logs _"Canvas area exceeds the maximum limit (width \*
 height > …)"_ and refuses to allocate. **iOS limit: 67,108,864 px². Our card is
-1080 × 1920 = 2,073,600 px² — 3.1% of the limit.** No problem, and the same limit applies
+1080 x 1920 = 2,073,600 px² — 3.1% of the limit.** No problem, and the same limit applies
 whether we draw once or 600 times.
 
 The often-repeated "iOS Safari caps total canvas memory at N MB" numbers: **no primary
@@ -852,8 +852,8 @@ Chrome below 126 can still get `video/webm;codecs=vp8,opus`, but see §2.3 for w
 an unproven bet; simplest is to fall back to the JPEG.
 
 **Fallback.** `MediaRecorder.isTypeSupported('video/mp4…')` false, or no
-`MediaRecorder`, or `navigator.canShare({files:[mp4Probe]})` false → today's JPEG, with the
-existing "Story"/"Card" caption logic. Backgrounding mid-record → abort, keep the JPEG.
+`MediaRecorder`, or `navigator.canShare({files:[mp4Probe]})` false -> today's JPEG, with the
+existing "Story"/"Card" caption logic. Backgrounding mid-record -> abort, keep the JPEG.
 
 **New dependency.** **None.** This is the decisive advantage.
 
@@ -928,7 +928,7 @@ desktop/Android/WebView; Safari's MP4 support since iOS 14.3; Safari's WebM outp
 18.4; WebCodecs `AudioEncoder` only from Safari 26; WebKit's `avc1` even-dimension rule;
 Chrome's 50 MB / 10-file share cap; Chromium's Web Share extension and MIME allowlists
 (`.mp4` and `.webm` both permitted, `.mov` not); WebKit having no Web Share type allowlist;
-iOS deriving the share UTI from the filename extension; the iOS 8192×8192 canvas area
+iOS deriving the share UTI from the filename extension; the iOS 8192x8192 canvas area
 limit; which CSP directive governs `fetch` vs `<audio>`; the Web Audio re-routing and
 CORS-silence rules; rAF stopping on hidden documents; the measured sizes, licenses and
 dependency counts of `mp4-muxer` and `mediabunny`; ffmpeg.wasm's fetch and module-Worker

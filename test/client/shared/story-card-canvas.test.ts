@@ -67,6 +67,8 @@ function card(overrides: Partial<StoryCard> = {}): StoryCard {
     url: 'https://minimehfil.wtf/s/AbCdEfGhIjKlMnOp',
     host: 'minimehfil.wtf',
     fileName: 'Aloopuri Khavsa.jpg',
+    videoFileName: 'Aloopuri Khavsa.mp4',
+    sectionIndex: 0,
     stanza: [{ primary: 'આ સાંજ ધીમે', secondary: 'aa saanj dhime' }],
     backgroundUrl: '/backgrounds/04-folk-modern-dusk.png',
     ...overrides,

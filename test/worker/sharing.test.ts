@@ -153,6 +153,7 @@ class Element {
     this.className = '';
     this.value = 0;
     this.clicks = 0;
+    this.style = {};
   }
   addEventListener(type, listener) {
     this.listeners.set(type, listener);
@@ -265,6 +266,12 @@ async function playbackHarness(metadata, mediaDuration, options = {}) {
     ['.scene', new Element()],
     ['#share', new Element()],
     ['#story', new Element()],
+    ['#story-stage', new Element()],
+    ['#story-canvas', new Element()],
+    ['#story-bar', new Element()],
+    ['#story-note', new Element()],
+    ['#story-send', new Element()],
+    ['#story-close', new Element()],
     ['#clock', new Element()],
   ]);
   const audio = elements.get('#audio');

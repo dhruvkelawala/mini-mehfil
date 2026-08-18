@@ -71,18 +71,18 @@ test('the romanization travels with the line it belongs to', () => {
 });
 
 test('a file name keeps the title readable and loses only reserved characters', () => {
-  assert.equal(storyFileName('Rain / Refrain'), 'Rain   Refrain.jpg');
-  assert.equal(storyFileName('Aloopuri Khavsa'), 'Aloopuri Khavsa.jpg');
-  assert.equal(storyFileName('ગીત: રાત'), 'ગીત  રાત.jpg');
+  assert.equal(storyFileName('Rain / Refrain', 'jpg'), 'Rain   Refrain.jpg');
+  assert.equal(storyFileName('Aloopuri Khavsa', 'jpg'), 'Aloopuri Khavsa.jpg');
+  assert.equal(storyFileName('ગીત: રાત', 'jpg'), 'ગીત  રાત.jpg');
 });
 
 test('a title of nothing but reserved characters still names a file', () => {
-  assert.equal(storyFileName('///'), 'Mini Mehfil.jpg');
-  assert.equal(storyFileName(''), 'Mini Mehfil.jpg');
+  assert.equal(storyFileName('///', 'jpg'), 'Mini Mehfil.jpg');
+  assert.equal(storyFileName('', 'jpg'), 'Mini Mehfil.jpg');
 });
 
 test('a very long title is cut without leaving a trailing space', () => {
-  const name = storyFileName('A'.repeat(40) + ' ' + 'B'.repeat(40));
+  const name = storyFileName('A'.repeat(40) + ' ' + 'B'.repeat(40), 'jpg');
   assert.ok(name.length <= 64, name);
   assert.doesNotMatch(name, / \.jpg$/);
 });

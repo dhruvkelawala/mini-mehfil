@@ -15,8 +15,49 @@
 
 import type { StoryCard } from '../../shared/story-card.ts';
 
+/** The stretch of the song a moving card plays. */
+export interface StoryClip {
+  start: number;
+  seconds: number;
+}
+
 /** What pressing a story control actually did. */
 export type StoryCardOutcome = 'shared' | 'saved' | 'cancelled';
+
+/**
+ * Where a moving card is in its clip. Absent for the still card, which is
+ * drawn exactly as it always was.
+ */
+export interface StoryFrame {
+  /** 0 through 1 across the clip. */
+  progress: number;
+  /** The stanza line being sung, or -1 before any of them. */
+  activeLine: number;
+}
+
+/** Meta asks for up to 20 seconds; a Story cuts anything longer. */
+const CLIP_MAX_SECONDS = 20;
+const CLIP_MIN_SECONDS = 8;
+/** An untimed song opens here rather than on its intro. */
+const CLIP_UNTIMED_START = 0.3;
+
+/** How far the courtyard drifts across a clip, as a fraction of its size. */
+const SCENE_DRIFT = 0.06;
+/** A stanza line that is not the one being sung. */
+const RESTING_LINE = 'rgba(255,248,236,.42)';
+const RESTING_SECONDARY = 'rgba(216,195,170,.38)';
+const VIDEO_BITS_PER_SECOND = 6_000_000;
+const CAPTURE_FRAMES_PER_SECOND = 30;
+/**
+ * Ordered by preference. Safari has recorded MP4 since its first
+ * MediaRecorder; Chrome gained MP4 muxing in 126. WebM is deliberately absent:
+ * MP4 works everywhere WebM does, and Meta documents MP4.
+ */
+const VIDEO_TYPES = [
+  'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+  'video/mp4;codecs=avc1,mp4a',
+  'video/mp4',
+];
 
 const WIDTH = 1080;
 const HEIGHT = 1920;
@@ -99,25 +140,39 @@ function wrapText(
  * `toBlob` still returns bytes. A background that will not load resolves to
  * `null` and the card keeps its night-green fill.
  */
+let loaded: { url: string; image: HTMLImageElement | null } | null = null;
+
 export function loadStoryBackground(
   url: string,
 ): Promise<HTMLImageElement | null> {
+  if (loaded?.url === url) return Promise.resolve(loaded.image);
   return new Promise((resolve) => {
     const image = new Image();
-    image.addEventListener('load', () => resolve(image));
-    image.addEventListener('error', () => resolve(null));
+    const settle = (value: HTMLImageElement | null) => {
+      loaded = { url, image: value };
+      resolve(value);
+    };
+    image.addEventListener('load', () => settle(image));
+    image.addEventListener('error', () => settle(null));
     image.src = url;
   });
+}
+
+/** The memoized background, or `null` when it has not loaded yet. */
+export function readyStoryBackground(url: string): HTMLImageElement | null {
+  return loaded?.url === url ? loaded.image : null;
 }
 
 function paintScene(
   context: CanvasRenderingContext2D,
   image: HTMLImageElement | null,
+  drift: number,
 ): void {
   context.fillStyle = NIGHT;
   context.fillRect(0, 0, WIDTH, HEIGHT);
   if (image && image.width && image.height) {
-    const scale = Math.max(WIDTH / image.width, HEIGHT / image.height);
+    const scale =
+      Math.max(WIDTH / image.width, HEIGHT / image.height) * (1 + drift);
     const width = image.width * scale;
     const height = image.height * scale;
     context.drawImage(
@@ -190,12 +245,14 @@ function measureStanza(
 
 /**
  * Paints the whole card. The canvas is sized here rather than by the caller so
- * every surface produces the same 1080x1920 picture.
+ * every surface produces the same 1080x1920 picture. Pass a `frame` to draw
+ * one moment of the moving card; omit it for the still one.
  */
 export function drawStoryCard(
   canvas: HTMLCanvasElement,
   card: StoryCard,
   image: HTMLImageElement | null,
+  frame?: StoryFrame,
 ): void {
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
@@ -204,7 +261,7 @@ export function drawStoryCard(
   const centerX = WIDTH / 2;
   const maxWidth = WIDTH - PADDING * 2;
 
-  paintScene(context, image);
+  paintScene(context, image, frame ? SCENE_DRIFT * frame.progress : 0);
   context.textAlign = 'center';
   context.textBaseline = 'alphabetic';
   // The page lifts its lyrics off the courtyard with a text shadow; the card
@@ -238,16 +295,19 @@ export function drawStoryCard(
   const stanza = measureStanza(context, card, maxWidth, available);
   const height = stanza.reduce((sum, entry) => sum + entry.height, 0);
   let lineY = top + Math.max(0, (available - height) / 2);
-  for (const entry of stanza) {
+  for (const [index, entry] of stanza.entries()) {
+    // On the still card every line is equal. On the moving one the line being
+    // sung carries the frame and the rest step back.
+    const singing = !frame || frame.activeLine === index;
     setFont(context, '500', PRIMARY_SIZE, SERIF);
-    context.fillStyle = '#fff8ec';
+    context.fillStyle = singing ? '#fff8ec' : RESTING_LINE;
     for (const text of entry.primary) {
       lineY += PRIMARY_LINE_HEIGHT;
       context.fillText(text, centerX, lineY);
     }
     if (entry.secondary.length) {
       setFont(context, '400', SECONDARY_SIZE, SANS);
-      context.fillStyle = '#d8c3aa';
+      context.fillStyle = singing ? '#d8c3aa' : RESTING_SECONDARY;
       lineY += SECONDARY_GAP;
       for (const text of entry.secondary) {
         lineY += SECONDARY_LINE_HEIGHT;
@@ -263,6 +323,182 @@ export function drawStoryCard(
   setFont(context, '800', 56, SANS);
   context.fillStyle = '#f9edda';
   context.fillText(card.host, centerX, HOST_BASELINE);
+}
+
+/**
+ * The stretch of song a moving card plays: the section the card quotes, so the
+ * words on screen are the words being sung. Without a trusted timeline it opens
+ * partway in, because the first seconds are usually an intro.
+ *
+ * Decided in the browser rather than on the server, because only the browser
+ * knows how long the recording actually is.
+ */
+export function storyClip(
+  timeline:
+    { start: number; end: number; sectionIndex: number | null }[] | null,
+  sectionIndex: number | null,
+  durationSeconds: number,
+): StoryClip {
+  const duration = Number.isFinite(durationSeconds) ? durationSeconds : 0;
+  const entry =
+    timeline && sectionIndex !== null
+      ? timeline.find((value) => value.sectionIndex === sectionIndex)
+      : undefined;
+  const start = entry
+    ? entry.start
+    : Math.max(
+        0,
+        Math.min(duration * CLIP_UNTIMED_START, duration - CLIP_MAX_SECONDS),
+      );
+  const wanted = entry
+    ? Math.max(CLIP_MIN_SECONDS, entry.end - entry.start)
+    : CLIP_MAX_SECONDS;
+  return {
+    start,
+    seconds: Math.max(0, Math.min(wanted, CLIP_MAX_SECONDS, duration - start)),
+  };
+}
+
+/**
+ * The MP4 flavour this browser records, or `null` when it records none.
+ *
+ * Probed rather than inferred from a version: WebKit publishes no
+ * `isTypeSupported` table for any shipped build, so the browser is the only
+ * authority on what it will actually accept.
+ */
+export function storyVideoType(): string | null {
+  if (typeof MediaRecorder === 'undefined') return null;
+  return (
+    VIDEO_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) ?? null
+  );
+}
+
+/**
+ * A media element may only be given to `createMediaElementSource` once, so the
+ * node is kept for the life of the element.
+ */
+interface SongTap {
+  context: AudioContext;
+  destination: MediaStreamAudioDestinationNode;
+}
+const taps = new WeakMap<HTMLMediaElement, SongTap>();
+
+/**
+ * Routes the song into a recordable stream. The source is also connected to
+ * `context.destination`, because the Web Audio spec stops the element being
+ * heard directly once a source node exists — without it the person watches a
+ * silent recording of the song they are recording.
+ */
+function tapSong(audio: HTMLMediaElement): SongTap {
+  const existing = taps.get(audio);
+  if (existing) return existing;
+  const context = new AudioContext();
+  const source = context.createMediaElementSource(audio);
+  const destination = context.createMediaStreamDestination();
+  source.connect(destination);
+  source.connect(context.destination);
+  const tap = { context, destination };
+  taps.set(audio, tap);
+  return tap;
+}
+
+export interface StoryVideoOptions {
+  /** Drawn on while recording, so the person watches rather than waits. */
+  canvas: HTMLCanvasElement;
+  card: StoryCard;
+  audio: HTMLMediaElement;
+  clipStart: number;
+  seconds: number;
+  onProgress?: (fraction: number) => void;
+}
+
+/**
+ * Records the moving card and the song into one MP4.
+ *
+ * This runs in real time — the recorder is fed by live streams, and a live
+ * stream runs at one second per second. It also cannot survive the page being
+ * hidden: hidden documents leave the rendering steps, canvas capture only
+ * produces a frame when the canvas is painted, and WebKit interrupts the
+ * `AudioContext` on entering the background. So backgrounding aborts rather
+ * than yielding a frozen file.
+ *
+ * The caller must still open the share sheet from a fresh press: transient
+ * activation does not survive the length of the clip.
+ */
+export async function recordStoryVideo(
+  options: StoryVideoOptions,
+): Promise<Blob> {
+  const { canvas, card, audio, clipStart, seconds, onProgress } = options;
+  const type = storyVideoType();
+  if (!type) throw new Error('This browser cannot record a story video.');
+
+  const tap = tapSong(audio);
+  if (tap.context.state === 'suspended') await tap.context.resume();
+  const image =
+    readyStoryBackground(card.backgroundUrl) ??
+    (await loadStoryBackground(card.backgroundUrl));
+  drawStoryCard(canvas, card, image, { progress: 0, activeLine: -1 });
+
+  const captured = canvas.captureStream(CAPTURE_FRAMES_PER_SECOND);
+  const stream = new MediaStream([
+    ...captured.getVideoTracks(),
+    ...tap.destination.stream.getAudioTracks(),
+  ]);
+  const recorder = new MediaRecorder(stream, {
+    mimeType: type,
+    videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
+  });
+  const parts: Blob[] = [];
+  recorder.addEventListener('dataavailable', (event) => {
+    if (event.data.size) parts.push(event.data);
+  });
+  const recorded = new Promise<Blob>((resolve, reject) => {
+    recorder.addEventListener('stop', () => resolve(new Blob(parts, { type })));
+    recorder.addEventListener('error', () =>
+      reject(new Error('The recording failed.')),
+    );
+  });
+
+  audio.currentTime = clipStart;
+  await audio.play();
+  recorder.start();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let frame = 0;
+      const finish = (error?: Error) => {
+        cancelAnimationFrame(frame);
+        document.removeEventListener('visibilitychange', watchVisibility);
+        if (error) reject(error);
+        else resolve();
+      };
+      const watchVisibility = () => {
+        if (document.hidden)
+          finish(new Error('The recording stopped when the page was hidden.'));
+      };
+      document.addEventListener('visibilitychange', watchVisibility);
+      const tick = () => {
+        const elapsed = audio.currentTime - clipStart;
+        const progress = Math.min(1, Math.max(0, elapsed / seconds));
+        const activeLine = Math.min(
+          card.stanza.length - 1,
+          Math.floor(progress * card.stanza.length),
+        );
+        drawStoryCard(canvas, card, image, { progress, activeLine });
+        onProgress?.(progress);
+        if (progress >= 1 || audio.ended) {
+          finish();
+          return;
+        }
+        frame = requestAnimationFrame(tick);
+      };
+      frame = requestAnimationFrame(tick);
+    });
+  } finally {
+    audio.pause();
+    if (recorder.state !== 'inactive') recorder.stop();
+    for (const track of captured.getVideoTracks()) track.stop();
+  }
+  return recorded;
 }
 
 /** Draws the card and encodes it as the JPEG a share sheet will accept. */
