@@ -3,6 +3,11 @@
     The lockup stays inside the clean sky corridor, roughly x=300..900 above
     y=310. Past that the courtyard tree and the pavilion roofline cut through
     text, so keep any line short enough to stay centered within it.
+
+    Devanagari ink sits high in its line box: the i-matra curl of "फ़ि" tops
+    out ~0.95em above the baseline (~y=117 for the 128px line at y=238), the
+    same collision the host wordmark CSS documents. Keep the "Mini" baseline
+    at least 20px above that curl.
   -->
   <defs>
     <linearGradient id="top" x1="0" y1="0" x2="0" y2="1">
@@ -21,7 +26,7 @@
   <rect width="1200" height="430" fill="url(#top)"/>
   <rect y="430" width="1200" height="200" fill="url(#bottom)"/>
   <g filter="url(#soft)" text-anchor="middle">
-    <text x="600" y="118" fill="#e6a653" font-family="Iowan Old Style, Georgia, serif" font-style="italic" font-weight="600" font-size="44" letter-spacing="1.8">Mini</text>
+    <text x="600" y="94" fill="#e6a653" font-family="Iowan Old Style, Georgia, serif" font-style="italic" font-weight="600" font-size="44" letter-spacing="1.8">Mini</text>
     <text x="600" y="238" fill="#f9edda" font-family="Kohinoor Devanagari, Noto Serif Devanagari, serif" font-weight="600" font-size="128">महफ़िल</text>
     <text x="600" y="302" fill="#e7d6c1" font-family="Iowan Old Style, Georgia, serif" font-style="italic" font-size="36">A private song room</text>
   </g>

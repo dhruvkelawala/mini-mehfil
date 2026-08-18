@@ -33,8 +33,12 @@ magick /tmp/og-base.png /tmp/og-overlay.png -composite -quality 88 -strip \
 
 Keep the result at exactly 1200x630 and under 300 KB.
 
-Two things to check by eye after any copy change, because nothing else can:
+Three things to check by eye after any copy change, because nothing else can:
 
+- The i-matra curl of "फ़ि" rises ~0.95em above the Devanagari baseline, well
+  past the shirorekha — the same collision the host wordmark CSS documents.
+  Zoom the junction between "Mini" and the curl at full resolution and keep
+  at least 20px of sky between them.
 - The scene is only clear above roughly y=310 between x=300 and x=900. The
   courtyard tree and the pavilion roofline cut through anything wider, so keep
   each line short enough to stay centered inside that corridor.
