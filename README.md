@@ -56,6 +56,10 @@ starts only after you explicitly press record.
 - MiniMax audio URLs expire after 24 hours — use **Save** to keep a track. With
   the optional share Worker configured, **Share** copies a production `/s/…`
   link after an explicit click.
+- On a shared `/s/…` page, **Story** draws a 1080x1920 courtyard card in your
+  own browser and hands it to the operating system share sheet, where Instagram,
+  WhatsApp and Messages appear. The picture is never uploaded; the only copy is
+  the one you send.
 - Hosted recovery (for iOS suspensions and dropped responses) stores only a
   private 24-hour job checkpoint — never the token, prompt, or lyrics.
 
