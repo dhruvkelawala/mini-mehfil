@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import type { RoomState } from '../../src/room/protocol.ts';
+import { projectRoomState } from '../../src/room/state.ts';
 import {
   installWebSocketHarness,
   projectHostFixture,
@@ -659,6 +660,156 @@ test('a listener joins, resumes, renders synchronized lyrics, and stops on expir
   expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
 });
 
+test('host and listener share the live lyric performance', async ({
+  page,
+  context,
+}) => {
+  const installMediaClock = async (target: typeof page) => {
+    await target.addInitScript(() => {
+      const media = window as typeof window & {
+        __mediaCurrentTime?: number;
+        __mediaPaused?: boolean;
+      };
+      media.__mediaCurrentTime = 0;
+      media.__mediaPaused = true;
+      Object.defineProperties(HTMLMediaElement.prototype, {
+        currentTime: {
+          configurable: true,
+          get: () => media.__mediaCurrentTime ?? 0,
+          set: (value: number) => {
+            media.__mediaCurrentTime = value;
+          },
+        },
+        duration: { configurable: true, get: () => 120 },
+        paused: {
+          configurable: true,
+          get: () => media.__mediaPaused ?? true,
+        },
+        ended: { configurable: true, get: () => false },
+        readyState: { configurable: true, get: () => 4 },
+      });
+      HTMLMediaElement.prototype.load = function () {
+        this.dispatchEvent(new Event('loadedmetadata'));
+      };
+      HTMLMediaElement.prototype.play = function () {
+        media.__mediaPaused = false;
+        this.dispatchEvent(new Event('play'));
+        return Promise.resolve();
+      };
+      HTMLMediaElement.prototype.pause = function () {
+        media.__mediaPaused = true;
+        this.dispatchEvent(new Event('pause'));
+      };
+    });
+  };
+  const song: NonNullable<RoomState['currentSong']> = {
+    requestId: null,
+    shareId: 'abcdefghijklmnop',
+    title: 'Four-line Song',
+    language: 'Hindi',
+    startedAt: 1,
+    playback: { status: 'paused', positionMs: 0, changedAt: 1 },
+    lyrics: {
+      title: 'Four-line Song',
+      language: 'Hindi',
+      nativeScriptName: 'Devanagari',
+      isLatinScript: false,
+      lyricsNative:
+        '[Verse]\nपहली पंक्ति\nदूसरी पंक्ति\nतीसरी पंक्ति\nचौथी पंक्ति',
+      lyricsRoman:
+        '[Verse]\nPehli pankti\nDoosri pankti\nTeesri pankti\nChauthi pankti',
+    },
+  };
+  const state: RoomState = {
+    version: 1,
+    roomId: 'ABCDEFGH',
+    openedAt: 1,
+    expiresAt: Date.now() + 60_000,
+    expiredAt: null,
+    hostPresent: true,
+    participants: [
+      { id: 'listener-1', name: 'Listener', connected: true, joinedAt: 1 },
+    ],
+    kickedParticipantIds: [],
+    queue: [],
+    recordingQueue: [],
+    currentRecording: null,
+    currentSong: song,
+    setlist: [],
+  };
+  const hostSnapshot = projectHostFixture(state);
+  const listenerSnapshot = projectRoomState(state, {
+    role: 'listener',
+    participantId: 'listener-1',
+  });
+
+  await installMediaClock(page);
+  await installWebSocketHarness(page, {
+    host: hostSnapshot,
+    listener: listenerSnapshot,
+  });
+  await page.goto('/');
+  await page
+    .getByRole('button', { name: 'Open this mehfil to friends' })
+    .click();
+
+  const listener = await context.newPage();
+  await installMediaClock(listener);
+  await installWebSocketHarness(listener, {
+    host: hostSnapshot,
+    listener: listenerSnapshot,
+  });
+  await listener.goto('/r/ABCDEFGH');
+  await listener.getByLabel('Your name').fill('Listener');
+  await listener.getByRole('button', { name: 'Join the mehfil' }).click();
+
+  await page.getByRole('button', { name: 'View performance' }).click();
+  const hostPerformance = page.locator('.lyric-performance');
+  const listenerPerformance = listener.locator('.lyric-performance');
+  const assertSharedFrame = async (
+    root: typeof hostPerformance,
+    primary: string,
+    secondary: string,
+  ) => {
+    await expect(root).toBeVisible();
+    await expect(
+      root.getByRole('heading', { name: 'Four-line Song' }),
+    ).toBeVisible();
+    await expect(root.locator('.lyric-performance__language')).toHaveText(
+      'Hindi · Devanagari',
+    );
+    await expect(root.locator('.lyric-cue')).toHaveText('Verse');
+    await expect(
+      root.locator('.lyric-line:not([hidden]) .lyric-primary').last(),
+    ).toHaveText(primary);
+    await expect(
+      root.locator('.lyric-line:not([hidden]) .lyric-secondary').last(),
+    ).toHaveText(secondary);
+  };
+
+  await assertSharedFrame(hostPerformance, 'पहली पंक्ति', 'Pehli pankti');
+  await assertSharedFrame(listenerPerformance, 'पहली पंक्ति', 'Pehli pankti');
+  await expect(hostPerformance.getByText('तीसरी पंक्ति')).toBeHidden();
+  await expect(listenerPerformance.getByText('तीसरी पंक्ति')).toBeHidden();
+
+  for (const target of [page, listener]) {
+    await target.evaluate(() => {
+      (
+        window as typeof window & { __mediaCurrentTime?: number }
+      ).__mediaCurrentTime = 70;
+      const audio = document.querySelector('audio');
+      audio?.dispatchEvent(new Event('loadedmetadata'));
+      audio?.dispatchEvent(new Event('timeupdate'));
+    });
+  }
+
+  await expect(page.getByText('1:10 / 2:00')).toHaveText('1:10 / 2:00');
+  await expect(listener.getByText('1:10 / 2:00')).toHaveText('1:10 / 2:00');
+
+  await assertSharedFrame(hostPerformance, 'तीसरी पंक्ति', 'Teesri pankti');
+  await assertSharedFrame(listenerPerformance, 'तीसरी पंक्ति', 'Teesri pankti');
+});
+
 test('listener playback advances its progress, lyrics, and record between room updates', async ({
   page,
 }) => {
@@ -748,7 +899,11 @@ test('listener playback advances its progress, lyrics, and record between room u
     page.getByRole('progressbar', { name: 'Song progress' }),
   ).toHaveAttribute('aria-valuenow', '70');
   await expect(page.getByText('1:10 / 2:00')).toBeVisible();
-  await expect(page.locator('.lyric-primary')).not.toHaveText('पहली पंक्ति');
+  const visibleLyrics = page.locator(
+    '.lyric-line:not([hidden]) .lyric-primary',
+  );
+  await expect(visibleLyrics.first()).toHaveText('पहली पंक्ति');
+  await expect(visibleLyrics.last()).toHaveText('तीसरी पंक्ति');
   await expect(page.locator('.record-mark')).toHaveText('M');
   await expect
     .poll(() =>

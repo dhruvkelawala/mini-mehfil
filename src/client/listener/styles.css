@@ -32,7 +32,6 @@ textarea {
   outline-offset: 2px;
 }
 .scene,
-.scene svg,
 .grain {
   position: fixed;
   inset: 0;
@@ -41,10 +40,16 @@ textarea {
 }
 .scene {
   z-index: -3;
-}
-.scene svg {
-  object-fit: cover;
+  background-image: url('/backgrounds/04-folk-modern-dusk.png');
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
   transform: scale(1.015);
+  animation: scene-in 1.4s cubic-bezier(0.2, 0.75, 0.2, 1) both;
+  transition: transform 1.1s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.scene.is-performing {
+  transform: scale(1.018);
 }
 .scene::after {
   content: '';
@@ -61,14 +66,10 @@ textarea {
 }
 .grain {
   z-index: -2;
-  opacity: 0.1;
+  opacity: 0.13;
   pointer-events: none;
-  background: radial-gradient(
-    circle at 40% 30%,
-    rgba(255, 255, 255, 0.3) 0 1px,
-    transparent 1px
-  );
-  background-size: 4px 4px;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.9'/%3E%3C/svg%3E");
 }
 .topbar {
   height: 70px;
@@ -107,9 +108,25 @@ textarea {
   gap: 64px;
   align-items: center;
 }
+.room-layout.has-song {
+  grid-template-columns: minmax(0, 1fr);
+}
 .identity {
   text-align: center;
   text-shadow: 0 5px 24px rgba(26, 25, 18, 0.32);
+}
+.identity.has-song h1 {
+  font-size: clamp(54px, 7vw, 92px);
+}
+.identity.has-song .mini {
+  margin-bottom: 0.35em;
+}
+.identity.has-song .tagline {
+  display: none;
+}
+.identity.has-song .status {
+  margin-block: 4px 8px;
+  font-size: 13px;
 }
 .identity h1 {
   margin: 0;
@@ -160,7 +177,6 @@ textarea {
   gap: 12px;
 }
 .composer h2,
-.lyric-stage h2,
 .player-track h2 {
   margin: 0;
   font-family: 'Iowan Old Style', Georgia, serif;
@@ -188,8 +204,7 @@ textarea {
   font-style: normal;
   text-transform: lowercase;
 }
-.field-row,
-.room-shelves {
+.field-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
@@ -258,82 +273,155 @@ textarea {
   margin-top: 20px;
 }
 .activity summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
   cursor: pointer;
 }
-.shelf h2 {
-  font-size: 11px;
-  text-transform: uppercase;
-}
-.shelf ol {
-  padding-left: 18px;
+.activity summary small {
   color: var(--muted);
-  font-size: 11px;
-  line-height: 1.6;
-}
-.shelf a {
-  color: var(--amber);
-}
-.lyric-stage {
-  min-height: 170px;
-  margin: 24px auto 0;
-  display: grid;
-  align-content: center;
-}
-.lyric-stage h2 {
-  color: var(--amber);
-  font-size: 20px;
-}
-.lyric-cue {
-  min-height: 1.4em;
-  margin: 15px 0 0;
-  color: #dfc39a;
   font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
+}
+.room-shelves {
+  display: grid;
+  gap: 20px;
+  margin-top: 15px;
+}
+.shelf h2,
+.shelf h3 {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.lyric-primary {
-  margin: 8px 0 0;
+.listener-request-workflow {
+  margin-top: 9px;
+  border-block: 1px solid rgba(249, 237, 218, 0.14);
+}
+.listener-recording-now,
+.listener-up-next,
+.listener-waiting,
+.listener-declined {
+  padding: 13px 0;
+}
+.listener-recording-now + .listener-up-next,
+.listener-recording-now + .listener-waiting,
+.listener-recording-now + .listener-declined,
+.listener-up-next + .listener-waiting,
+.listener-up-next + .listener-declined,
+.listener-waiting + .listener-declined {
+  border-top: 1px solid rgba(249, 237, 218, 0.1);
+}
+.listener-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.listener-section-heading h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.listener-section-heading > span {
+  color: rgba(221, 203, 184, 0.72);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.listener-recording-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #7be0a4;
+  animation: pulse 2.2s ease-in-out infinite;
+}
+.listener-request-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.listener-recording-now .listener-request-copy {
+  margin: 9px 0 0;
+}
+.listener-request-copy strong,
+.listener-request-copy a {
+  width: fit-content;
+  max-width: 100%;
   color: #fff8ec;
   font:
-    700 clamp(27px, 3.3vw, 44px)/1.22 'Iowan Old Style',
+    700 14px/1.25 'Iowan Old Style',
     Georgia,
     serif;
+  overflow-wrap: anywhere;
 }
-.lyric-secondary {
-  color: #dfcbb5;
-  font:
-    italic 15px/1.45 'Iowan Old Style',
-    Georgia,
-    serif;
+.listener-request-copy a {
+  text-decoration-color: rgba(230, 166, 83, 0.45);
+  text-underline-offset: 3px;
 }
-.lyric-section,
-.lyric-line,
-.lyric-line .lyric-primary,
-.lyric-line .lyric-secondary {
-  display: block;
+.listener-request-copy a:hover {
+  color: #eab66f;
+  text-decoration-color: currentColor;
 }
-.lyric-section {
-  padding: 8px 12px;
+.listener-request-copy small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.35;
+}
+.listener-up-next ol,
+.listener-waiting ol,
+.listener-declined ol,
+.listener-setlist {
+  margin: 9px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+  list-style: none;
+}
+.listener-up-next li,
+.listener-waiting li,
+.listener-declined li,
+.listener-setlist li {
+  min-width: 0;
+  margin: 0;
+  padding: 10px 11px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(249, 237, 218, 0.1);
   border-radius: 8px;
-  background: rgba(230, 166, 83, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(230, 166, 83, 0.16);
+  background: rgba(8, 24, 23, 0.24);
 }
-.lyric-line {
-  opacity: 0.55;
+.listener-up-next li,
+.listener-waiting li {
+  border-color: transparent;
+  background: rgba(8, 24, 23, 0.3);
 }
-.lyric-line + .lyric-line {
-  margin-top: 5px;
+.listener-declined li {
+  border-color: transparent;
+  background: rgba(8, 24, 23, 0.18);
+  opacity: 0.78;
 }
-.lyric-line-current {
-  opacity: 1;
-  text-shadow: 0 0 18px rgba(249, 237, 218, 0.3);
+.listener-request-position {
+  color: rgba(230, 166, 83, 0.8);
+  font:
+    700 11px/1 'Iowan Old Style',
+    Georgia,
+    serif;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
-.lyric-line-upcoming {
-  opacity: 0.36;
+.listener-queue-empty {
+  margin: 12px 0;
+  color: rgba(221, 203, 184, 0.76);
+  font-size: 10px;
+  line-height: 1.5;
 }
-.lyric-line.lyric-cue {
-  opacity: 1;
+.setlist-shelf {
+  padding-top: 1px;
 }
 .player-shell {
   position: fixed;
@@ -349,7 +437,7 @@ textarea {
   padding: 10px 16px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 34px;
-  background: rgba(122, 54, 45, 0.96);
+  background: rgba(21, 63, 56, 0.95);
   transform: translateX(-50%);
 }
 .record {
@@ -449,21 +537,59 @@ textarea {
   display: none;
 }
 .enable-audio {
-  padding: 8px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 18px;
-  color: white;
-  background: rgba(20, 30, 30, 0.5);
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  color: #3d2a20;
+  background: var(--amber);
+  box-shadow: 0 5px 14px rgba(7, 18, 17, 0.24);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  transition:
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
-.play-error {
-  grid-column: 2/-1;
-  margin: 0;
-  color: #ffe0cb;
-  font-size: 10px;
+.enable-audio:hover {
+  background: #f0ba70;
+  box-shadow: 0 7px 18px rgba(7, 18, 17, 0.32);
+  transform: translateY(-1px);
+}
+.enable-audio:active {
+  box-shadow: 0 3px 9px rgba(7, 18, 17, 0.26);
+  transform: translateY(0);
+}
+.enable-audio svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+@keyframes scene-in {
+  from {
+    filter: blur(2px);
+    transform: scale(1.06);
+  }
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+    transform: scale(0.78);
   }
 }
 @media (max-width: 850px) {
@@ -490,8 +616,7 @@ textarea {
   .room-layout {
     width: calc(100% - 24px);
   }
-  .field-row,
-  .room-shelves {
+  .field-row {
     grid-template-columns: 1fr;
   }
   .room-menu {
@@ -517,6 +642,19 @@ textarea {
   .player-state {
     width: 40px;
     height: 40px;
+  }
+  .enable-audio {
+    width: 40px;
+    min-height: 40px;
+    padding: 0;
+  }
+  .enable-audio-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .player-progress time {
     min-width: 60px;

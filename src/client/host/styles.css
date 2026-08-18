@@ -4,6 +4,7 @@
   --night: #142e2d;
   --leaf: #1b473e;
   --terracotta: #9f4939;
+  --amber: #e6a653;
   --red: #bf3934;
   --paper: #f4dfbd;
   --shadow: 0 26px 70px rgba(7, 22, 20, 0.38);
@@ -770,45 +771,6 @@ select option {
   color: #2f2720;
   background: #f2e3c2;
 }
-/* Something to read, nothing to operate. */
-.lyric-reveal {
-  margin-top: 9px;
-  padding: 14px 16px;
-  border-left: 1px solid rgba(230, 166, 83, 0.5);
-  border-radius: 0 5px 5px 0;
-  background: linear-gradient(90deg, rgba(230, 166, 83, 0.09), transparent);
-  animation: rise 0.5s both;
-}
-.reveal-language {
-  display: block;
-  margin-bottom: 7px;
-  color: #dfc39a;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-.reveal-lines {
-  margin: 0;
-  max-height: 190px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(230, 166, 83, 0.4) transparent;
-  color: var(--ink);
-  font:
-    italic 15px/1.72 'Iowan Old Style',
-    Georgia,
-    serif;
-  white-space: pre-wrap;
-}
-.reveal-lines::-webkit-scrollbar {
-  width: 4px;
-}
-.reveal-lines::-webkit-scrollbar-thumb {
-  border-radius: 2px;
-  background: rgba(230, 166, 83, 0.4);
-}
-
 .field {
   display: block;
   margin-top: 17px;
@@ -1370,111 +1332,6 @@ input::placeholder {
   backdrop-filter: blur(8px);
   text-shadow: 0 2px 12px #000;
 }
-.performance .lyric-reveal {
-  position: relative;
-  margin: 0 auto;
-  padding: 25px 34px 28px;
-  border-block: 1px solid rgba(230, 166, 83, 0.34);
-  border-radius: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(7, 27, 25, 0.74) 12%,
-    rgba(35, 25, 21, 0.72) 50%,
-    rgba(7, 27, 25, 0.74) 88%,
-    transparent
-  );
-  box-shadow: 0 25px 55px rgba(4, 15, 14, 0.2);
-  backdrop-filter: blur(9px);
-  text-align: left;
-}
-.performance .reveal-language {
-  color: #e9c27f;
-  text-align: center;
-}
-.performance-timing {
-  display: block;
-  margin: 4px 0 14px;
-  color: #cfbda8;
-  font-size: 10px;
-  font-style: italic;
-  letter-spacing: 0.03em;
-  text-align: center;
-}
-.performance-timing[hidden] {
-  display: none;
-}
-.performance .reveal-lines {
-  max-height: max(140px, min(52svh, 430px, calc(100svh - 340px)));
-  font-size: clamp(18px, 2.3vw, 25px);
-  line-height: 1.55;
-  text-align: center;
-}
-.lyric-line {
-  display: block;
-  color: rgba(249, 237, 218, 0.78);
-  opacity: 0.72;
-  transition:
-    color 0.35s,
-    opacity 0.35s,
-    text-shadow 0.35s,
-    transform 0.35s;
-}
-.lyric-line.lyric-line-upcoming {
-  opacity: 0.42;
-}
-.lyric-line.lyric-line-current {
-  opacity: 1;
-  text-shadow: 0 0 18px rgba(249, 237, 218, 0.3);
-  transform: scale(1.015);
-}
-.lyric-line[hidden] {
-  display: none;
-}
-.lyric-line + .lyric-line {
-  margin-top: 0.2em;
-}
-.lyric-line:not([hidden]) {
-  animation: lyric-arrive 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-.lyric-line.lyric-cue {
-  margin-block: 0.95em 0.4em;
-  color: #e6a653;
-  font:
-    800 10px/1.2 'Avenir Next',
-    'Gill Sans',
-    sans-serif;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  opacity: 1;
-}
-.lyric-section {
-  display: block;
-  padding: 0.25em 0.55em;
-  border-radius: 5px;
-  transition:
-    background 0.25s,
-    box-shadow 0.25s,
-    opacity 0.25s;
-}
-.lyric-section + .lyric-section {
-  margin-top: 0.7em;
-}
-.lyric-section-current {
-  background: rgba(230, 166, 83, 0.09);
-  box-shadow: inset 0 0 0 1px rgba(230, 166, 83, 0.18);
-}
-.lyric-primary {
-  display: block;
-  color: #fff8ec;
-}
-.lyric-secondary {
-  display: block;
-  margin-top: 0.1em;
-  color: #d8c3aa;
-  font-size: 0.68em;
-  line-height: 1.35;
-}
 .performance-replay {
   margin-top: 22px;
   padding: 11px 19px;
@@ -1679,13 +1536,6 @@ input::placeholder {
     opacity: 0;
   }
 }
-@keyframes lyric-arrive {
-  from {
-    opacity: 0;
-    filter: blur(3px);
-    transform: translateY(7px);
-  }
-}
 @keyframes room-panel-in {
   from {
     opacity: 0.6;
@@ -1852,14 +1702,6 @@ input::placeholder {
     top: 12px;
     right: 12px;
   }
-  .performance .lyric-reveal {
-    padding: 18px 14px;
-  }
-  .performance .reveal-lines {
-    max-height: max(140px, min(55svh, calc(100svh - 330px)));
-    font-size: 18px;
-    line-height: 1.55;
-  }
 }
 @keyframes token-help-sheet-in {
   from {
@@ -1881,15 +1723,6 @@ input::placeholder {
   }
   .performance .peek {
     margin-top: 12px;
-  }
-  .performance .lyric-reveal {
-    padding: 14px 22px 16px;
-  }
-  .performance-timing {
-    margin: 2px 0 8px;
-  }
-  .performance .reveal-lines {
-    max-height: max(88px, calc(100svh - 302px));
   }
   .performance-replay {
     margin-top: 12px;

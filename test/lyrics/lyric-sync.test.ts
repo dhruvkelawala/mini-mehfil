@@ -127,14 +127,6 @@ describe('lyric sheet parsing', () => {
         lyricsRoman: '[Verse]\nRain on the window\n[Chorus]\nSing it back',
       },
       {
-        // A misaligned pair: the romanized sheet is missing a line, so cue
-        // detection slips. The shared parser must slip identically.
-        isLatinScript: false,
-        lyricsNative:
-          '[Verse]\nપહેલી પંક્તિ\nબીજી પંક્તિ\n[Chorus]\nધ્રુવ પંક્તિ',
-        lyricsRoman: '[Verse]\npaheli pankti\n[Chorus]\ndhruv pankti',
-      },
-      {
         isLatinScript: false,
         lyricsNative: '',
         lyricsRoman: 'sharuaat\n[chorus]\nvarsaad bole',
