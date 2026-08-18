@@ -1,17 +1,53 @@
 # Mini Mehfil
 
-A tiny local song room for [MiniMax Music 3](https://platform.minimax.io/docs/api-reference/music-generation), inspired by the immersive single-room feeling of [saloon.wtf](https://saloon.wtf/). The name is a pun on MiniMax: a _mehfil_ is an intimate gathering for music, and this one is mini.
+> Write the words. Set the mood. Let them sing.
 
-Type a few keywords in any language — `aloo puri`, `monsoon in Mumbai`, `first day of a new job` — and a lyricist model writes a full structured song in the language it detects, then MiniMax Music 3 records it in front of you. Lyrics stay hidden unless you press the button that says _don't press me_.
+**Mini Mehfil turns a few words in any language into a finished song with
+[MiniMax Music 3](https://platform.minimax.io/docs/api-reference/music-generation).**
+It is a tiny, atmospheric song room rather than another API playground —
+inspired by the immersive single-room feeling of
+[saloon.wtf](https://saloon.wtf/). Bring your own MiniMax key, describe the
+song, and watch the lyrics and recording come together in one courtyard.
 
-## Run
+[Try Mini Mehfil](https://minimehfil.wtf) ·
+[Get a MiniMax API key](https://platform.minimax.io/)
+
+_The name is a pun on MiniMax: a mehfil is an intimate gathering for music, and
+this one is mini._
+
+## What it does
+
+- **Writes in your language.** Enter a thought such as `monsoon in Mumbai`,
+  `aloo puri`, or `first day of a new job`. The lyricist detects the language
+  and writes a full structured song in native script, with romanization for you
+  to follow. Lyrics stay hidden unless you press the button that says _don't
+  press me_.
+- **Records a complete song.** MiniMax Music 3 turns those lyrics and your
+  optional vibe into a playable track, recorded in front of you.
+- **Keeps the experience simple.** One page, one key, and one flow: write →
+  record → listen.
+- **Lets you keep or share the result.** Download the recording, create an
+  expiring public link, or open a live mehfil where friends can request songs
+  and listen together.
+- **Keeps the stack focused.** The host and listener are built with Solid and
+  TypeScript. `solid-js` is the only browser runtime library; the rest of the
+  toolchain exists to build, type-check, test, and deploy the app.
+
+## Quick start
+
+You need [Node.js 24 or newer](https://nodejs.org/),
+[pnpm](https://pnpm.io/), and a
+[MiniMax API key](https://platform.minimax.io/).
 
 ```bash
+git clone https://github.com/dhruvkelawala/mini-mehfil.git
+cd mini-mehfil
 pnpm install
 pnpm run dev
 ```
 
-Then open [http://127.0.0.1:4173](http://127.0.0.1:4173) and paste your MiniMax API key ([get one here](https://platform.minimax.io/)). Mini Mehfil requires Node 24 or newer.
+Open [http://127.0.0.1:4173](http://127.0.0.1:4173), paste your key, and start
+the mehfil.
 
 To build and serve the production app locally:
 
@@ -22,7 +58,10 @@ pnpm start
 
 ## Cost
 
-Bring your own key. Lyrics cost roughly a tenth of a cent (MiniMax M3 text model); each recorded song is about **$0.15** (MiniMax Music 3). Both calls use the same key.
+Mini Mehfil is bring-your-own-key. Writing the lyrics costs roughly a tenth of
+a cent (MiniMax M3 text model); each recorded song is about **$0.15** (MiniMax
+Music 3). Both calls use the same key, and a paid recording begins only after
+you explicitly start it.
 
 ## Privacy
 
@@ -30,6 +69,22 @@ Bring your own key. Lyrics cost roughly a tenth of a cent (MiniMax M3 text model
 - Lyrics and prompts stay local unless you explicitly share a finished song. A share stores the MP3 and its lyric sheet in the configured R2 bucket until its lifecycle rule expires them.
 - Generated MiniMax audio URLs expire after 24 hours; use **Save** to download tracks you want to keep. If the optional share Worker is configured, **Share** copies a production `/s/…` courtyard link after an explicit click.
 - Hosted deployments should configure the Worker so a finished recording can be recovered when iOS suspends the page or drops the original response. Recovery stores only a private 24-hour job checkpoint; it never stores the MiniMax token, prompt, or lyrics.
+
+## Live mehfils
+
+With the optional sharing Worker configured, press **Open this mehfil to
+friends** and copy the public listener link. Listeners join without an account,
+API key, or installation, submit song requests, and hear finished recordings
+together. The host accepts and orders requests, then explicitly presses
+**Record** before any paid generation begins; all generation costs remain on
+the host's MiniMax key.
+
+Rooms are transient and host-controlled. The host's player is authoritative: play,
+pause, and seeking are synchronized to listeners, whose room page shows the
+same active lyric section and approximately paced current line as the host. The
+public join URL contains only an eight-character room code. The separate host
+credential stays in that browser tab's `sessionStorage`, while the MiniMax key
+continues to travel only between the host browser and local proxy.
 
 ## Sharing and lifecycle-safe recovery
 
@@ -48,17 +103,6 @@ On Vercel, `vercel.mjs` reads `MEHFIL_SHARE_URL` at build time and reverse-proxi
 The Vercel deployment gives the paid request a five-minute function window and stops the upstream generation after four minutes so there is time to save its final status. A claimed job that still has no final status after five minutes becomes a stable failed checkpoint; it never remains pending indefinitely and is never automatically charged again.
 
 Sharing remains opt-in for each finished song. The proxy resolves a completed private job, downloads its audio, and uploads the MP3 plus the explicitly supplied lyric sheet through an authenticated, idempotent request. The browser never contacts the Worker directly, and neither the MiniMax token nor the Worker secret is exposed to it. In the tab, `sessionStorage` retains one versioned pending job ID and lyric sheet for recovery; it does not retain the token, idea, vibe, request payload, audio URL, or diagnostics.
-
-## Optional live rooms
-
-The same sharing configuration enables live mehfils. Press **Open this mehfil to friends** locally and copy the public listener link. Listeners join without an account, API key, or installation, submit song requests, and hear finished recordings together. The host accepts and orders requests, then explicitly presses **Record** before any paid generation begins; all generation costs remain on the host's MiniMax key.
-
-Rooms are transient and host-controlled. The host's player is authoritative: play,
-pause, and seeking are synchronized to listeners, whose room page shows the
-same active lyric section and approximately paced current line as the host. The
-public join URL contains only an eight-character room code. The separate host
-credential stays in that browser tab's `sessionStorage`, while the MiniMax key
-continues to travel only between the host browser and local proxy.
 
 ## How it works
 
@@ -104,10 +148,6 @@ Both line pacing and the vocal-entry gate are approximate render-time
 heuristics. Nothing from provider analysis is kept except normalized section
 boundaries; transcripts, trace identifiers, feature identifiers, signed URLs
 and derived pacing never enter the persisted timing artifact.
-
-The project intentionally keeps dependencies focused. `solid-js` is the only
-browser runtime library; Vite, TypeScript, Vitest, Playwright, ESLint, Prettier,
-and Wrangler provide build and verification tooling.
 
 ## Test
 

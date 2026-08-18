@@ -1,5 +1,9 @@
 # Mobile playback investigation — 2026-08-15
 
+> Historical record. File references such as `server.js` and `public/app.js`
+> describe the pre-migration JavaScript layout; that code now lives under
+> `src/server/` and `src/client/host/` after the Solid/TypeScript migration.
+
 ## Executive summary
 
 The reported physical-iPhone failure was **not reproducible in the available

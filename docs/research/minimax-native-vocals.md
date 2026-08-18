@@ -2,6 +2,9 @@
 
 Researched 2026-08-14 against MiniMax primary sources (platform.minimax.io docs, minimax.io blog/news, MiniMax's own GitHub/Hugging Face/Replicate pages), with community sources clearly labeled as secondary.
 
+> Historical record. References to `lyricist.mjs` describe the pre-migration
+> layout; the lyricist now lives at `src/server/lyricist.ts`.
+
 ## What Mini Mehfil should change (actionable summary)
 
 Relative to the current lyricist system prompt in `/Users/sumo-deus/minimax-mehfil/lyricist.mjs`:
