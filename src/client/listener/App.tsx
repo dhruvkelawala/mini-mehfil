@@ -1,6 +1,15 @@
-import { createMemo, Show, For, untrack } from 'solid-js';
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  Show,
+  For,
+  untrack,
+} from 'solid-js';
 
 import { LyricPerformance } from '../shared/LyricPerformance.tsx';
+import { copyLink } from '../shared/copy-link.ts';
+import { createShareLabel } from '../shared/share-label.ts';
 import { parseLyricTimeline } from '../shared/lyric-timeline.ts';
 import { RoomActivity } from './components/RoomActivity.tsx';
 import {
@@ -51,12 +60,41 @@ export function App(props: {
     if (!duration) return 0;
     return Math.min(controller.currentTime() / duration, 1);
   });
+  const shareLabel = createShareLabel();
+  /** Holds the link when the clipboard refuses it, so it stays reachable. */
+  const [shareNotice, setShareNotice] = createSignal('');
+  /**
+   * A listener hears the song from this origin, so the page it can pass on is
+   * the sibling of the audio it is already streaming.
+   */
+  const songUrl = createMemo(() => {
+    const shareId = controller.snapshot()?.currentSong?.shareId;
+    return shareId ? `${location.origin}/s/${shareId}` : null;
+  });
+  createEffect(() => {
+    songUrl();
+    shareLabel.reset();
+    setShareNotice('');
+  });
   let nameInput: HTMLInputElement | undefined;
   let requestForm: HTMLFormElement | undefined;
 
   const join = (event: SubmitEvent) => {
     event.preventDefault();
     controller.connect(nameInput?.value ?? '');
+  };
+  const shareSong = async () => {
+    const url = songUrl();
+    if (!url) return;
+    shareLabel.hold('Sharing');
+    setShareNotice('');
+    try {
+      await copyLink(url);
+      shareLabel.settle('Copied');
+    } catch {
+      shareLabel.settle('Link');
+      setShareNotice(url);
+    }
   };
   const requestSong = (event: SubmitEvent) => {
     event.preventDefault();
@@ -251,6 +289,15 @@ export function App(props: {
                       'The host controls playback'}
                   </p>
                   <p>{controller.playbackLabel()}</p>
+                  <Show when={shareNotice()}>
+                    {(url) => (
+                      <p>
+                        <a class="share-notice" href={url()}>
+                          {url()}
+                        </a>
+                      </p>
+                    )}
+                  </Show>
                   <Show when={snapshot().currentSong}>
                     <div class="player-progress">
                       <div
@@ -276,6 +323,19 @@ export function App(props: {
                   ref={(element) => controller.bindAudio(element)}
                   preload="metadata"
                 />
+                <Show when={snapshot().currentSong}>
+                  <button
+                    class="player-share"
+                    type="button"
+                    aria-label="Share this song"
+                    onClick={() => void shareSong()}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M9 8.5 12 5l3 3.5M12 5v10M7 11.5H5.5A1.5 1.5 0 0 0 4 13v4.5A1.5 1.5 0 0 0 5.5 19h13a1.5 1.5 0 0 0 1.5-1.5V13a1.5 1.5 0 0 0-1.5-1.5H17" />
+                    </svg>
+                    <span>{shareLabel.label()}</span>
+                  </button>
+                </Show>
                 <Show when={snapshot().currentSong}>
                   <Show
                     when={!controller.audioBlocked()}

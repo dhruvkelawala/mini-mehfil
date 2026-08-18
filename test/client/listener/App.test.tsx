@@ -82,6 +82,92 @@ describe('listener app', () => {
     expect(document.querySelector('.play-error')).toBeNull();
   });
 
+  test('offers the room song as a link a listener can pass on', async () => {
+    const copied: string[] = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: (value: string) => {
+          copied.push(value);
+          return Promise.resolve();
+        },
+      },
+    });
+    const controller = listenerController({
+      hostPresent: true,
+      listenerCount: 1,
+      queue: [],
+      recordingQueue: [],
+      currentRecording: null,
+      currentSong: {
+        shareId: 'song-reference',
+        title: 'Monsoon Song',
+        language: 'English',
+        playback: { status: 'playing', positionMs: 0, changedAt: 1 },
+        lyrics: {
+          title: 'Monsoon Song',
+          language: 'English',
+          nativeScriptName: 'Latin',
+          isLatinScript: true,
+          lyricsNative: '[Verse]\nRain at the window',
+          lyricsRoman: '[Verse]\nRain at the window',
+        },
+      },
+      setlist: [],
+    });
+
+    render(() => <App roomId="ABCDEFGH" controller={controller} />);
+    const share = screen.getByRole('button', { name: 'Share this song' });
+    expect(share.parentElement?.classList.contains('player-shell')).toBe(true);
+
+    share.click();
+    await vi.waitFor(() => expect(share.textContent).toContain('Copied'));
+    expect(copied).toEqual([`${location.origin}/s/song-reference`]);
+  });
+
+  test('keeps the refused link reachable when the clipboard rejects it', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: () => Promise.reject(new Error('denied')),
+      },
+    });
+    const controller = listenerController({
+      hostPresent: true,
+      listenerCount: 1,
+      queue: [],
+      recordingQueue: [],
+      currentRecording: null,
+      currentSong: {
+        shareId: 'song-reference',
+        title: 'Monsoon Song',
+        language: 'English',
+        playback: { status: 'playing', positionMs: 0, changedAt: 1 },
+        lyrics: {
+          title: 'Monsoon Song',
+          language: 'English',
+          nativeScriptName: 'Latin',
+          isLatinScript: true,
+          lyricsNative: '[Verse]\nRain at the window',
+          lyricsRoman: '[Verse]\nRain at the window',
+        },
+      },
+      setlist: [],
+    });
+
+    render(() => <App roomId="ABCDEFGH" controller={controller} />);
+    screen.getByRole('button', { name: 'Share this song' }).click();
+
+    // The player shell carries no status line, so a link the clipboard refused
+    // has to appear as something the listener can still act on.
+    const notice = await vi.waitFor(() =>
+      screen.getByRole<HTMLAnchorElement>('link', {
+        name: `${location.origin}/s/song-reference`,
+      }),
+    );
+    expect(notice.pathname).toBe('/s/song-reference');
+  });
+
   test('keeps the accessible join flow', () => {
     const connect = vi.fn();
     const controller = listenerController(null, connect);

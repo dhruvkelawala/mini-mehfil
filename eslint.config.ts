@@ -1,9 +1,13 @@
+import { fileURLToPath } from 'node:url';
+
 import eslint from '@eslint/js';
 import solid from 'eslint-plugin-solid/configs/typescript';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
-const projectRoot = new URL('.', import.meta.url).pathname;
+// fileURLToPath, not URL.pathname: a checkout path holding a space arrives
+// percent-encoded from pathname, and TypeScript then cannot find the configs.
+const projectRoot = fileURLToPath(new URL('.', import.meta.url));
 
 export default tseslint.config(
   {

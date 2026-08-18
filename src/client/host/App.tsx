@@ -16,6 +16,8 @@ import {
 } from '../../lyrics/lyric-sync.ts';
 import type { LyricsSheet, SongRequest } from '../../room/protocol.ts';
 import { LyricPerformance } from '../shared/LyricPerformance.tsx';
+import { copyLink } from '../shared/copy-link.ts';
+import { createShareLabel } from '../shared/share-label.ts';
 import { parseLyricTimeline } from '../shared/lyric-timeline.ts';
 import {
   createGenerationController,
@@ -93,7 +95,13 @@ export function App() {
   const generation = createGenerationController({ player, timingAnalysis });
   const [performanceOpen, setPerformanceOpen] = createSignal(false);
   const [manualLyricsOpen, setManualLyricsOpen] = createSignal(false);
-  const [shareLabel, setShareLabel] = createSignal('Share');
+  const shareLabel = createShareLabel();
+  /**
+   * The status line that normally carries a link lives in main, which the open
+   * performance view hides, so an uncopyable link is repeated where the Share
+   * button itself is visible.
+   */
+  const [shareNotice, setShareNotice] = createSignal('');
   const [tokenVisible, setTokenVisible] = createSignal(false);
   const [tokenHelpOpen, setTokenHelpOpen] = createSignal(false);
   const [tokenHelpAnchor, setTokenHelpAnchor] = createSignal({
@@ -117,6 +125,22 @@ export function App() {
   const activeLyrics = createMemo(
     () => room.currentSong()?.lyrics ?? generation.lyrics(),
   );
+  /**
+   * A room song is published before it ever reaches the setlist, so its link
+   * is already known. Sharing it is a copy, not a second trip to the share
+   * service — the host may not even hold the MiniMax reference any more.
+   */
+  const roomSongUrl = createMemo(() => {
+    const song = room.currentSong();
+    const details = room.details();
+    if (!song || !details) return null;
+    return `${new URL(details.joinUrl).origin}/s/${song.shareId}`;
+  });
+  createEffect(() => {
+    roomSongUrl();
+    shareLabel.reset();
+    setShareNotice('');
+  });
   const lyricTimeline = createMemo(() =>
     parseLyricTimeline(activeLyrics(), player.timing()),
   );
@@ -247,21 +271,6 @@ export function App() {
     setTokenHelpOpen(false);
     tokenHelpOpener?.focus();
   };
-  const copyLink = async (url: string) => {
-    try {
-      await navigator.clipboard.writeText(url);
-    } catch {
-      const field = document.createElement('textarea');
-      field.value = url;
-      field.readOnly = true;
-      Object.assign(field.style, { position: 'fixed', opacity: '0' });
-      document.body.append(field);
-      field.select();
-      if (!document.execCommand('copy'))
-        throw new Error('Copy the link from the field.');
-      field.remove();
-    }
-  };
   const settleRoomTiming = async (
     song: GeneratedSong,
   ): Promise<LyricTiming | null> => {
@@ -302,7 +311,8 @@ export function App() {
     setRoomError('');
     setManualLyricsOpen(false);
     setPerformanceOpen(true);
-    setShareLabel('Share');
+    shareLabel.reset();
+    setShareNotice('');
     try {
       await generation.generate(
         {
@@ -320,12 +330,25 @@ export function App() {
     }
   };
   const share = async () => {
-    setShareLabel('Sharing');
+    const published = roomSongUrl();
+    shareLabel.hold('Sharing');
+    setShareNotice('');
     try {
+      if (published) {
+        try {
+          await copyLink(published);
+          shareLabel.settle('Copied');
+        } catch {
+          shareLabel.settle('Link');
+          setShareNotice(published);
+        }
+        return;
+      }
       const url = await generation.share(true);
-      setShareLabel(url?.copied ? 'Copied' : url ? 'Link ready' : 'Share');
+      shareLabel.settle(url?.copied ? 'Copied' : url ? 'Link' : 'Share');
+      if (url && !url.copied) setShareNotice(url.url);
     } catch (error) {
-      setShareLabel('Retry');
+      shareLabel.settle('Retry');
       setRoomError(error instanceof Error ? error.message : 'Sharing failed.');
     }
   };
@@ -1215,7 +1238,16 @@ export function App() {
               role="status"
               aria-live="polite"
             >
-              {generation.generating() ? generation.status() : ''}
+              <Show
+                when={shareNotice()}
+                fallback={generation.generating() ? generation.status() : ''}
+              >
+                {(url) => (
+                  <a class="share-notice" href={url()}>
+                    {url()}
+                  </a>
+                )}
+              </Show>
             </div>
             <Show when={generation.checkGenerationVisible()}>
               <button
@@ -1378,13 +1410,13 @@ export function App() {
           class="share"
           type="button"
           aria-label="Share this song"
-          disabled={!generation.shareReference()}
+          disabled={!roomSongUrl() && !generation.shareReference()}
           onClick={() => void share()}
         >
           <svg class="player-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M9 8.5 12 5l3 3.5M12 5v10M7 11.5H5.5A1.5 1.5 0 0 0 4 13v4.5A1.5 1.5 0 0 0 5.5 19h13a1.5 1.5 0 0 0 1.5-1.5V13a1.5 1.5 0 0 0-1.5-1.5H17" />
           </svg>
-          <span>{shareLabel()}</span>
+          <span>{shareLabel.label()}</span>
         </button>
         <a
           id="download"

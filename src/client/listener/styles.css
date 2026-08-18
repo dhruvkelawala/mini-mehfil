@@ -431,7 +431,7 @@ textarea {
   width: min(720px, calc(100% - 32px));
   min-height: 92px;
   display: grid;
-  grid-template-columns: 68px 1fr auto;
+  grid-template-columns: 68px 1fr auto auto;
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
@@ -536,6 +536,43 @@ textarea {
 .player-shell audio {
   display: none;
 }
+.share-notice {
+  color: var(--amber);
+  overflow-wrap: anywhere;
+}
+.player-share {
+  min-width: 46px;
+  min-height: 46px;
+  display: grid;
+  row-gap: 3px;
+  align-content: center;
+  justify-items: center;
+  padding: 0;
+  border: 0;
+  color: var(--ink);
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+.player-share:hover {
+  color: #fff;
+}
+.player-share svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.player-share span {
+  font-size: 8px;
+  white-space: nowrap;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
 .enable-audio {
   min-height: 46px;
   display: inline-flex;
@@ -628,7 +665,10 @@ textarea {
   }
   .player-shell {
     bottom: 12px;
-    grid-template-columns: 50px minmax(0, 1fr) 40px;
+    grid-template-columns: 50px minmax(0, 1fr) auto 40px;
+  }
+  .player-share {
+    min-width: 40px;
   }
   .record {
     width: 50px;
