@@ -535,6 +535,32 @@ describe('section timeline mapping', () => {
     ]);
   });
 
+  test('a sandwiched section is not family evidence for later repeats', () => {
+    // The sandwich rule distrusts the provider label by construction, so its
+    // assignment must not seed family inheritance: a trailing chorus repeat
+    // inherits the chorus, not the bridge that a mislabeled chorus adopted.
+    const parsed = sections(
+      '[Verse]\nOne\n[Chorus]\nHook\n[Bridge]\nTurn\n[Outro]\nClose',
+    );
+    const timeline = buildSectionTimeline(
+      parsed,
+      timingOf([
+        { start: 0, end: 10, label: 'verse' },
+        { start: 10, end: 20, label: 'chorus' },
+        { start: 20, end: 30, label: 'chorus' },
+        { start: 30, end: 40, label: 'outro' },
+        { start: 40, end: 50, label: 'chorus' },
+      ]),
+    );
+    expect(timeline?.map((entry) => entry.sectionIndex)).toEqual([
+      0, // verse
+      1, // chorus
+      2, // sandwiched: the sung bridge the provider heard as chorus
+      3, // outro
+      1, // trailing repeat inherits the chorus, not the bridge
+    ]);
+  });
+
   test('keeps unmappable segments only when at least two and half of non-silence segments map', () => {
     const parsed = sections('[Verse]\nFirst\n[Chorus]\nHook');
 

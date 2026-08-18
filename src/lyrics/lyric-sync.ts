@@ -391,6 +391,9 @@ export function buildSectionTimeline(
     // unmatched sung segment sits between two aligned segments whose sections
     // sandwich exactly one unmatched written section, pair them positionally
     // even though the provider used a different label for it.
+    // A sandwiched assignment contradicts its provider label by construction,
+    // so it is display-only: it must never become family evidence.
+    const sandwiched = new Set<number>();
     for (let at = 1; at < sung.length - 1; at += 1) {
       const position = sung[at]!.position;
       if (assigned[position] !== null) continue;
@@ -398,6 +401,7 @@ export function buildSectionTimeline(
       const after = assigned[sung[at + 1]!.position] ?? null;
       if (before === null || after === null || after - before !== 2) continue;
       assigned[position] = before + 1;
+      sandwiched.add(position);
     }
 
     // Unmatched sung segments are provider splits or repeats: give them the
@@ -408,16 +412,18 @@ export function buildSectionTimeline(
     const lastByFamily = new Map<string, number>();
     for (const { label, position } of sung) {
       const index = assigned[position] ?? null;
-      if (index !== null) lastByFamily.set(label, index);
-      else if (lastByFamily.has(label))
+      if (index !== null) {
+        if (!sandwiched.has(position)) lastByFamily.set(label, index);
+      } else if (lastByFamily.has(label))
         assigned[position] = lastByFamily.get(label)!;
     }
     const nextByFamily = new Map<string, number>();
     for (let at = sung.length - 1; at >= 0; at -= 1) {
       const { label, position } = sung[at]!;
       const index = assigned[position] ?? null;
-      if (index !== null) nextByFamily.set(label, index);
-      else if (position > firstAnchor && nextByFamily.has(label))
+      if (index !== null) {
+        if (!sandwiched.has(position)) nextByFamily.set(label, index);
+      } else if (position > firstAnchor && nextByFamily.has(label))
         assigned[position] = nextByFamily.get(label)!;
     }
 
