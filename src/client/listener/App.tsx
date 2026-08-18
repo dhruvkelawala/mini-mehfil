@@ -274,33 +274,37 @@ export function App(props: {
                   preload="metadata"
                 />
                 <Show when={snapshot().currentSong}>
-                  <span class="player-state" aria-hidden="true">
-                    <Show
-                      when={controller.playing()}
-                      fallback={
-                        <svg viewBox="0 0 18 18">
-                          <path d="m6.5 4.5 7 4.5-7 4.5z" />
+                  <Show
+                    when={!controller.audioBlocked()}
+                    fallback={
+                      <button
+                        class="enable-audio"
+                        type="button"
+                        onClick={() => void controller.enableAudio()}
+                      >
+                        <svg viewBox="0 0 20 20" aria-hidden="true">
+                          <path d="M3.5 8h3l4-3.25v10.5L6.5 12h-3z" />
+                          <path d="M13.25 7.25a4 4 0 0 1 0 5.5M15.25 5.25a6.75 6.75 0 0 1 0 9.5" />
                         </svg>
-                      }
-                    >
-                      <svg viewBox="0 0 18 18">
-                        <path d="M6.5 5v8M11.5 5v8" />
-                      </svg>
-                    </Show>
-                  </span>
-                </Show>
-                <Show when={controller.audioBlocked()}>
-                  <button
-                    class="enable-audio"
-                    type="button"
-                    onClick={() => void controller.enableAudio()}
+                        <span class="enable-audio-label">Enable sound</span>
+                      </button>
+                    }
                   >
-                    Enable sound
-                  </button>
-                  <p class="play-error" role="alert">
-                    Your browser blocked shared audio. Enable sound once to join
-                    the music.
-                  </p>
+                    <span class="player-state" aria-hidden="true">
+                      <Show
+                        when={controller.playing()}
+                        fallback={
+                          <svg viewBox="0 0 18 18">
+                            <path d="m6.5 4.5 7 4.5-7 4.5z" />
+                          </svg>
+                        }
+                      >
+                        <svg viewBox="0 0 18 18">
+                          <path d="M6.5 5v8M11.5 5v8" />
+                        </svg>
+                      </Show>
+                    </span>
+                  </Show>
                 </Show>
               </section>
             </section>

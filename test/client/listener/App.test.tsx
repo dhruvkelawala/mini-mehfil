@@ -44,6 +44,44 @@ function listenerController(
 }
 
 describe('listener app', () => {
+  test('uses the player action slot for blocked-audio recovery', () => {
+    const enableAudio = vi.fn(() => Promise.resolve());
+    const controller = {
+      ...listenerController({
+        hostPresent: true,
+        listenerCount: 1,
+        queue: [],
+        recordingQueue: [],
+        currentRecording: null,
+        currentSong: {
+          shareId: 'song-reference',
+          title: 'Monsoon Song',
+          language: 'English',
+          playback: { status: 'playing', positionMs: 0, changedAt: 1 },
+          lyrics: {
+            title: 'Monsoon Song',
+            language: 'English',
+            nativeScriptName: 'Latin',
+            isLatinScript: true,
+            lyricsNative: '[Verse]\nRain at the window',
+            lyricsRoman: '[Verse]\nRain at the window',
+          },
+        },
+        setlist: [],
+      }),
+      audioBlocked: () => true,
+      enableAudio,
+    };
+
+    render(() => <App roomId="ABCDEFGH" controller={controller} />);
+    const action = screen.getByRole('button', { name: 'Enable sound' });
+
+    expect(action.parentElement?.classList.contains('player-shell')).toBe(true);
+    action.click();
+    expect(enableAudio).toHaveBeenCalledOnce();
+    expect(document.querySelector('.play-error')).toBeNull();
+  });
+
   test('keeps the accessible join flow', () => {
     const connect = vi.fn();
     const controller = listenerController(null, connect);
