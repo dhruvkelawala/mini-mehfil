@@ -506,6 +506,7 @@ test('upload to playback round trip preserves title, language, and both lyric sc
   // A player card needs domain approval from X; a large summary card renders
   // the courtyard image today, so the page must not claim the player card.
   assert.match(html, /name="twitter:card" content="summary_large_image"/);
+  assert.match(html, /name="twitter:site" content="@dhruv_kelawala"/);
   assert.doesNotMatch(html, /name="twitter:(card" content="player|player)"/);
   assert.match(
     html,

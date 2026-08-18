@@ -5,6 +5,7 @@ import { test } from 'vitest';
 
 const CARD_URL = 'https://minimehfil.wtf/og/mini-mehfil-card.jpg';
 const CARD_PATH = new URL('../public/og/mini-mehfil-card.jpg', import.meta.url);
+const SITE_HANDLE = '@dhruv_kelawala';
 
 /** Prettier wraps long meta tags, so match against one flat line of markup. */
 function read(path: string): string {
@@ -59,6 +60,10 @@ test('the home page sends a large summary card for its own link', () => {
   assert.match(html, new RegExp(`property="og:image" content="${CARD_URL}"`));
   assert.match(html, /name="twitter:card" content="summary_large_image"/);
   assert.match(html, new RegExp(`name="twitter:image" content="${CARD_URL}"`));
+  assert.match(
+    html,
+    new RegExp(`name="twitter:site" content="${SITE_HANDLE}"`),
+  );
 });
 
 test('a room invitation sends a large summary card without a stale URL', () => {
@@ -68,6 +73,10 @@ test('a room invitation sends a large summary card without a stale URL', () => {
   assert.match(html, /property="og:type" content="website"/);
   assert.match(html, new RegExp(`property="og:image" content="${CARD_URL}"`));
   assert.match(html, /name="twitter:card" content="summary_large_image"/);
+  assert.match(
+    html,
+    new RegExp(`name="twitter:site" content="${SITE_HANDLE}"`),
+  );
   // Every room has its own /r/CODE address, so a fixed og:url would point
   // every invitation at the wrong page. Readers fall back to the request URL.
   assert.doesNotMatch(html, /property="og:url"/);
