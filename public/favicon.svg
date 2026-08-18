@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Mini Mehfil">
+  <rect width="64" height="64" rx="14" fill="#142e2d"/>
+  <g fill="#e6a653">
+    <ellipse cx="42.6" cy="11" rx="4.3" ry="3.3" transform="rotate(-20 42.6 11)"/>
+    <path d="M45.4 9.9V3.1h2.3V9.9Z"/>
+    <path d="M47.7 3.1c2.3.9 3.8 2.3 3.8 4.5 0 1-.4 1.9-1.2 2.5.2-1.6-.8-2.8-2.6-3.7Z"/>
+  </g>
+  <path d="M37.02 59.0H44.63V28.01H50.42V22.0H13.58V28.01H21.58V38.87L18.49 41.3C18.49 43.95 19.92 48.47 23.07 50.78H28.91V45.27H37.02ZM37.02 28.01V38.49H29.19V28.01Z" fill="#f9edda"/>
+</svg>

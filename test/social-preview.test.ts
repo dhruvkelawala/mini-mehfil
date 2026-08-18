@@ -6,6 +6,7 @@ import { test } from 'vitest';
 const CARD_URL = 'https://minimehfil.wtf/og/mini-mehfil-card.jpg';
 const CARD_PATH = new URL('../public/og/mini-mehfil-card.jpg', import.meta.url);
 const SITE_HANDLE = '@dhruv_kelawala';
+const ICON_PATHS = ['favicon.ico', 'favicon.svg', 'apple-touch-icon.png'];
 
 /** Prettier wraps long meta tags, so match against one flat line of markup. */
 function read(path: string): string {
@@ -91,4 +92,42 @@ test('the worker is configured with the deployed preview card', () => {
     new RegExp(`"SHARE_PREVIEW_IMAGE_URL":\\s*"${CARD_URL}"`),
   );
   assert.match(wrangler, /"MEHFIL_PUBLIC_URL":\s*"https:\/\/minimehfil\.wtf"/);
+});
+
+test('the tab icon ships in the three formats browsers ask for', () => {
+  for (const name of ICON_PATHS) {
+    const path = new URL(`../public/${name}`, import.meta.url);
+    assert.ok(statSync(path).size > 0, `${name} must exist and be non-empty`);
+  }
+  // The SVG carries the glyph as an outline, never a font-family: a browser
+  // with no Devanagari font installed would otherwise render tofu.
+  const svg = readFileSync(
+    new URL('../public/favicon.svg', import.meta.url),
+    'utf8',
+  );
+  assert.doesNotMatch(svg, /font-family|<text/);
+  assert.match(svg, /<path[^>]+d="M/);
+});
+
+test('every surface links the tab icon, worker pages absolutely', () => {
+  const host = read('../src/client/host/index.html');
+  for (const name of ICON_PATHS) {
+    assert.match(host, new RegExp(`href="/${name}"`));
+  }
+
+  // The Worker origin serves only dist/listener, so public/ never reaches it;
+  // relative icon links would 404 on every room and share page.
+  for (const path of [
+    '../src/client/listener/index.html',
+    '../src/worker/playback-page.ts',
+  ]) {
+    const markup = read(path);
+    for (const name of ICON_PATHS) {
+      assert.match(
+        markup,
+        new RegExp(`href="https://minimehfil.wtf/${name}"`),
+        `${path} ${name}`,
+      );
+    }
+  }
 });
