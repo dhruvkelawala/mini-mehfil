@@ -270,7 +270,7 @@ rejection reasons, and no lyric text, URLs, tokens, or audio bytes.
 
 Benchmark through a common adapter, in this order:
 
-1. **HTDemucs vocal separation → `torchaudio.pipelines.MMS_FA` forced
+1. **HTDemucs vocal separation -> `torchaudio.pipelines.MMS_FA` forced
    alignment** of the known line/word sequence (primary candidate; Hindi and
    Gujarati in-model). Score with and without separation to quantify the
    separation lever.
@@ -337,9 +337,9 @@ model revisions, public interface smaller than its implementation:
   discriminated low-confidence/terminal failure;
 - one loopback-only health endpoint (version, ready/busy, numeric queue
   depth);
-- pipeline per job: download to NVMe → HTDemucs vocal stem → forced-align
-  known text → derive line spans → validate (monotonic, in-duration,
-  anchor coverage) → emit line indexes + seconds only → delete temp files in
+- pipeline per job: download to NVMe -> HTDemucs vocal stem -> forced-align
+  known text -> derive line spans -> validate (monotonic, in-duration,
+  anchor coverage) -> emit line indexes + seconds only -> delete temp files in
   `finally`;
 - one warm model instance, one inference worker, FIFO queue capped at six,
   deterministic 429 with bounded `Retry-After` when full, idempotent dedupe
@@ -361,17 +361,17 @@ concurrent fixture requests: one runs, six queue FIFO, the rest get bounded
 Add a provider interface beside `analyzeMiniMaxTiming` and a composition
 layer in the `/api/analyze-timing` route (`src/server/index.ts:464`):
 
-- local configured + ready/validated → return the line artifact;
-- local low-confidence/invalid/malformed → MiniMax sections, within the
-  browser's existing 2×180 s budget;
-- local offline/auth-failed/queue-full after bounded wait → MiniMax sections;
-- no local configuration → MiniMax only (today's behavior, byte-identical);
-- cancellation/stale song → suppress all results;
+- local configured + ready/validated -> return the line artifact;
+- local low-confidence/invalid/malformed -> MiniMax sections, within the
+  browser's existing 2x180 s budget;
+- local offline/auth-failed/queue-full after bounded wait -> MiniMax sections;
+- no local configuration -> MiniMax only (today's behavior, byte-identical);
+- cancellation/stale song -> suppress all results;
 - retries are idempotent with bounded backoff — never duplicate local decodes.
 
 The route may send exact lyrics/language to the configured operator-owned
 service only; never the MiniMax token, prompt, idea, vibe, room data, or
-share credentials. Authenticate server→service with an operator secret that
+share credentials. Authenticate server -> service with an operator secret that
 never reaches the browser; service binds to loopback and is reached via an
 authenticated outbound tunnel.
 
@@ -403,7 +403,7 @@ response can come from the real local service over saved audio:
 - share and room publication wait for ready/terminal and carry the version-2
   artifact; old untimed/section shares stay compatible;
 - host, live listener, and standalone shared page agree at sampled clocks;
-- local failure → MiniMax fixture sections; double failure → Atmospheric.
+- local failure -> MiniMax fixture sections; double failure -> Atmospheric.
 
 Record the proof video from the saved-audio path. No test reads a real token
 or issues a paid request.
@@ -460,8 +460,8 @@ from the executor session.
 - Controller (model after `test/client/host/timing-analysis-controller.test.ts`):
   bounded queue-wait retry; cancel/replace suppression; share/room-safe
   settlement.
-- Browser (model after `test/browser/sync-replay.spec.ts`): pending → local
-  line-timed; local fail → MiniMax sections; both fail → Atmospheric;
+- Browser (model after `test/browser/sync-replay.spec.ts`): pending -> local
+  line-timed; local fail -> MiniMax sections; both fail -> Atmospheric;
   overload; backward seek; listener reconnect; three-surface equality.
 
 ## Done criteria
@@ -499,7 +499,7 @@ Stop and report instead of improvising if:
   credential.
 - Audio sources cannot be constrained against SSRF via allowlist or bounded
   authenticated upload.
-- Separation + alignment latency cannot fit the browser's 2×180 s budget
+- Separation + alignment latency cannot fit the browser's 2x180 s budget
   within the queue bound on the 16 GB host.
 - The NVMe is unavailable and large writes would land on the internal disk.
 - Script-index mapping proves unsound for real code-switched sheets (native
@@ -511,7 +511,7 @@ Stop and report instead of improvising if:
 
 - The benchmark manifest and scored report are the regression contract for
   any future model/decoder upgrade; rerun before rollout.
-- Queue capacity 6 derives from measured per-song latency and the 2×180 s
+- Queue capacity 6 derives from measured per-song latency and the 2x180 s
   browser budget; recompute from production p95 before raising it.
 - The line artifact is deliberately text-free. If word-level karaoke is ever
   wanted, that is a version-3 artifact and a new plan — do not smuggle word

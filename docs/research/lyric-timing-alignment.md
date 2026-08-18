@@ -35,14 +35,14 @@ sources are labeled as such. Written against the current contract in
 
 3. **Concrete pipeline to prototype on the Mac, ranked by expected robustness
    for sung, code-switched, script-mixed lyrics:**
-   - **Primary: HTDemucs vocal separation → MMS forced-alignment (`torchaudio.pipelines.MMS_FA`, CTC forced-align) using the _known_ lyric line/word sequence as the label string.** MMS_FA's acoustic model covers 1,100+ languages including Hindi and Gujarati (VERIFIED via [PyTorch docs](https://docs.pytorch.org/audio/2.8/tutorials/forced_alignment_for_multilingual_data_tutorial.html) and the underlying [Meta MMS paper](https://ai.meta.com/research/publications/scaling-speech-technology-to-1000-languages/): "a single multilingual automatic speech recognition model for 1,107 languages" and pretrained wav2vec2 models for 1,406 languages). This is forced _alignment_, not ASR — it never has to guess the words, only their timing, which matches Mini Mehfil's actual problem far better than the Whisper-transcription approach Plan 007 already tried and found imperfect on Gujarati (hallucination at 143s, mitigated only by pinning language + temperature 0, per `plans/007-local-mlx-timing-service.md`).
+   - **Primary: HTDemucs vocal separation -> MMS forced-alignment (`torchaudio.pipelines.MMS_FA`, CTC forced-align) using the _known_ lyric line/word sequence as the label string.** MMS_FA's acoustic model covers 1,100+ languages including Hindi and Gujarati (VERIFIED via [PyTorch docs](https://docs.pytorch.org/audio/2.8/tutorials/forced_alignment_for_multilingual_data_tutorial.html) and the underlying [Meta MMS paper](https://ai.meta.com/research/publications/scaling-speech-technology-to-1000-languages/): "a single multilingual automatic speech recognition model for 1,107 languages" and pretrained wav2vec2 models for 1,406 languages). This is forced _alignment_, not ASR — it never has to guess the words, only their timing, which matches Mini Mehfil's actual problem far better than the Whisper-transcription approach Plan 007 already tried and found imperfect on Gujarati (hallucination at 143s, mitigated only by pinning language + temperature 0, per `plans/007-local-mlx-timing-service.md`).
    - **Fallback per-line refinement: WhisperX's wav2vec2 alignment stage** — already evaluated in Plan 007 as `KalebJS/whispermlx` and rejected only as a full-stack dependency, not on accuracy; WhisperX ships default aligners for `{en, fr, de, es, it}` and needs a Hugging Face CTC model for other languages (VERIFIED: [WhisperX README](https://github.com/m-bain/whisperX), `DEFAULT_ALIGN_MODELS_HF` in [`alignment.py`](https://github.com/m-bain/whisperX/blob/main/whisperx/alignment.py)) — Hindi/Gujarati would need an explicit HF model swap, unlike MMS_FA which covers them out of the box.
    - **Preprocessing that measurably matters:** run source separation before alignment. Music/vocal interference is the dominant error source in lyric alignment literature — a 2026 paper on Whisper-based automatic lyrics transcription reports that "models that align words to vocal tracks separated by Demucs outperform other methods and obtain competitive results with state-of-the-art approaches" ([arXiv:2506.15514](https://arxiv.org/pdf/2506.15514)), and the DALI dataset construction pipeline itself is built around time-aligned lyrics at note/word/line/paragraph granularity for exactly this reason ([DALI project, cited via arXiv:2506.15514](https://arxiv.org/pdf/2506.15514)).
    - **Code-switched / dual-script matching:** since Mini Mehfil already carries both native-script and romanized lyric text, do NOT rely on the aligner's own tokenizer to handle script-mixing. Instead run the forced aligner against whichever script its acoustic model was trained on, then map the resulting phoneme/word timings back onto line boundaries in _both_ scripts by index — this sidesteps romanization ambiguity entirely and requires no new alignment component. This is the standard "known-text forced alignment" pattern; robustness comes from having ground-truth text, not from clever fuzzy matching. (No primary source claims MMS/WhisperX do script transliteration internally — treat that mapping step as our own responsibility, UNVERIFIED against any library doing it for us.)
 
 4. **Second-best if Plan 007's Mac path stalls or the operator wants a zero-ops
    alternative: ElevenLabs' Forced Alignment API, operator-side optional key.**
-   It is explicitly a forced-alignment product (known text + audio → aligned
+   It is explicitly a forced-alignment product (known text + audio -> aligned
    transcript), matching Mini Mehfil's problem exactly, and lists Hindi among
    its 29 supported languages — but **not Gujarati** (VERIFIED:
    [ElevenLabs Forced Alignment docs](https://elevenlabs.io/docs/overview/capabilities/forced-alignment)).
@@ -360,11 +360,11 @@ section call.
 
 ```
 Finished MP3 (public URL, ≤6 min, same as today)
-        │
-        ▼
+        |
+        v
 [Operator Mac service — extends Plan 007's services/local-timing/ boundary]
    1. Download to NVMe (existing Plan 007 pattern)
-   2. HTDemucs vocal separation → isolated vocal stem
+   2. HTDemucs vocal separation -> isolated vocal stem
    3. Forced-align known lyric sheet (native-script line/word sequence)
       against the vocal stem via torchaudio MMS_FA (primary) or a
       WhisperX HF CTC aligner for the detected language (secondary)
@@ -377,14 +377,14 @@ Finished MP3 (public URL, ≤6 min, same as today)
       no transcript, no provider payload — matching the existing "only
       normalized section boundaries persist" rule in docs/section-timing.md,
       extended to line granularity
-        │
-        ▼
+        |
+        v
 [Server: provider-neutral timing contract, exactly Plan 007 Step 3/5]
-   local line-artifact ready → use it
-   local low-confidence/offline/queue-full → fall back to MiniMax
+   local line-artifact ready -> use it
+   local low-confidence/offline/queue-full -> fall back to MiniMax
       music_cover_preprocess section artifact (today's path, unchanged)
-        │
-        ▼
+        |
+        v
 [Existing player-controller.ts contract]
    Same non-blocking, no-reload, no-seek apply; same host/listener/share
    parity; new artifact mode is line-level, honestly labeled in the UI copy
@@ -395,8 +395,8 @@ This is additive to Plan 007, not a competing plan: it reuses the isolated
 Python service boundary, the warm-model/bounded-queue design, the
 provider-neutral `TimingAnalysisOutcome` contract, and the MiniMax-fallback
 rule already specified there. The only structural change is Plan 007 Step 2's
-candidate list (open decoding → known-text forced alignment) and Step 3's
-artifact (section-only → line-level, still no lyric text stored).
+candidate list (open decoding -> known-text forced alignment) and Step 3's
+artifact (section-only -> line-level, still no lyric text stored).
 
 ## Open risks / unknowns
 
@@ -415,7 +415,7 @@ artifact (section-only → line-level, still no lyric text stored).
 - **Deepgram word-timing docs URL 404'd in this session** — general
   word-timestamp support is well known but wasn't reconfirmed against a live
   Deepgram doc here.
-- **Script-remapping (native ↔ romanized line association) has no library
+- **Script-remapping (native-to-romanized line association) has no library
   support found** — it is Mini Mehfil's own responsibility either way, and
   is unverified as "trivial" — code-switched lines where word order differs
   between scripts could break the positional mapping assumed above; this
