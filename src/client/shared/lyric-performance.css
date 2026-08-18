@@ -77,6 +77,10 @@
   color: var(--ink, #f9edda);
 }
 
+.lyric-performance .lyric-line[hidden] {
+  display: none;
+}
+
 .lyric-performance .lyric-primary {
   font-weight: 650;
   line-height: 1.35;

@@ -101,14 +101,18 @@ export function LyricPerformance(props: LyricPerformanceProps) {
         ),
   );
   createEffect(() => {
-    if (timed()) return;
+    if (props.mode !== 'live' || timed()) return;
     shownSpokenCount();
     queueMicrotask(() => {
       if (!atmosphericScroller) return;
       if (typeof atmosphericScroller.scrollTo === 'function') {
         atmosphericScroller.scrollTo({
           top: atmosphericScroller.scrollHeight,
-          behavior: 'smooth',
+          behavior:
+            typeof matchMedia === 'function' &&
+            matchMedia('(prefers-reduced-motion: reduce)').matches
+              ? 'auto'
+              : 'smooth',
         });
       } else atmosphericScroller.scrollTop = atmosphericScroller.scrollHeight;
     });

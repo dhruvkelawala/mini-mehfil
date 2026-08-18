@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { LyricPerformance } from '../../../src/client/shared/LyricPerformance.tsx';
 import {
+  buildLyricLinePacing,
   lyricFrameAt,
   parseLyricTimeline,
 } from '../../../src/client/shared/lyric-timeline.ts';
@@ -205,6 +206,14 @@ describe('shared lyric performance semantics', () => {
     expect(
       document.querySelectorAll('.lyric-performance__context'),
     ).toHaveLength(1);
+
+    expect(
+      lyricFrameAt(timeline, 20, 20, buildLyricLinePacing(timeline)),
+    ).toMatchObject({
+      kind: 'section',
+      section: { tag: 'chorus' },
+      activeLine: { sectionIndex: 1, lineIndexInSection: 2 },
+    });
   });
 
   test('holds timed lyrics on the section cue until vocals are released', () => {
@@ -274,5 +283,49 @@ describe('shared lyric performance semantics', () => {
     expect(screen.getByRole('heading', { name: 'Bridge' })).toBeTruthy();
     expect(screen.getByText('Eight')).toBeTruthy();
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+  });
+
+  test('does not auto-scroll transcripts and honors reduced motion in live mode', async () => {
+    const timeline = parseLyricTimeline({
+      isLatinScript: true,
+      lyricsRoman: '[Verse]\nOne\nTwo',
+    });
+    const scrollTo = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      value: scrollTo,
+    });
+
+    const transcript = render(() => (
+      <LyricPerformance
+        timeline={timeline}
+        title="Two-line Song"
+        language="English"
+        currentTime={20}
+        duration={20}
+        mode="transcript"
+      />
+    ));
+    await Promise.resolve();
+    expect(scrollTo).not.toHaveBeenCalled();
+    transcript.unmount();
+
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: true })),
+    );
+    render(() => (
+      <LyricPerformance
+        timeline={timeline}
+        title="Two-line Song"
+        language="English"
+        currentTime={20}
+        duration={20}
+        mode="live"
+      />
+    ));
+    await Promise.resolve();
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' });
+    vi.unstubAllGlobals();
   });
 });

@@ -386,17 +386,25 @@ test('a timed share follows its sections and never shows stale sung lines', asyn
   await page.seekTo(60);
   assert.match(page.lines()[0].text, /Sing it back/);
 
-  // A backward seek is a fresh lookup, and past the analyzed end nothing shows.
+  // A backward seek is a fresh lookup, and the final lyric holds at song end.
   await page.seekTo(5);
   assert.match(page.lines()[0].text, /Ooh/);
   await page.seekTo(95);
-  assert.equal(page.lines().length, 0);
+  assert.equal(page.lines().length, 1);
+  assert.match(page.lines()[0].text, /Sing it back/);
+  assert.ok(
+    page
+      .lines()[0]
+      .children.some(
+        (child) => child.attributes.get('aria-current') === 'true',
+      ),
+  );
 });
 
 test('a timed share falls back to the approximate reveal when the audio does not match', async () => {
   const page = await playbackHarness(TIMED_LYRICS, 140);
   await page.audio.emit('loadedmetadata');
-  assert.equal(page.timingNote(), 'Atmospheric reveal · timing is approximate');
+  assert.equal(page.timingNote(), 'Atmospheric reveal · not synchronized');
   // Re-validating the same mismatch keeps the approximate reveal.
   await page.audio.emit('loadedmetadata');
   assert.equal(page.timingNote(), 'Atmospheric reveal · not synchronized');

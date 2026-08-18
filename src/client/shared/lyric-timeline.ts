@@ -78,7 +78,15 @@ export function lyricFrameAt(
 ): LyricFrame {
   const clock = safeClock(currentTime);
   if (timeline.entries) {
-    const entry = activeTimelineEntry(timeline.entries, clock);
+    const timelineEnd =
+      timeline.entries.at(-1)?.end ?? Number.POSITIVE_INFINITY;
+    const finalMappedEntry = [...timeline.entries]
+      .reverse()
+      .find((candidate) => candidate.sectionIndex !== null);
+    const holdingFinalFrame = clock >= timelineEnd && Boolean(finalMappedEntry);
+    const entry =
+      activeTimelineEntry(timeline.entries, clock) ??
+      (holdingFinalFrame ? finalMappedEntry : undefined);
     if (!entry) return { kind: 'empty' };
     if (entry.sectionIndex === null) {
       if (entry.label === 'inst') return { kind: 'rest', cue: 'Instrumental' };
@@ -92,7 +100,15 @@ export function lyricFrameAt(
     return {
       kind: 'section',
       section,
-      activeLine: activePacedLine(linePacing, clock),
+      activeLine:
+        activePacedLine(linePacing, clock) ??
+        (holdingFinalFrame
+          ? ([...linePacing]
+              .reverse()
+              .find(
+                (candidate) => candidate.sectionIndex === entry.sectionIndex,
+              ) ?? null)
+          : null),
     };
   }
 

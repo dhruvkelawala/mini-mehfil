@@ -789,6 +789,8 @@ test('host and listener share the live lyric performance', async ({
 
   await assertSharedFrame(hostPerformance, 'पहली पंक्ति', 'Pehli pankti');
   await assertSharedFrame(listenerPerformance, 'पहली पंक्ति', 'Pehli pankti');
+  await expect(hostPerformance.getByText('तीसरी पंक्ति')).toBeHidden();
+  await expect(listenerPerformance.getByText('तीसरी पंक्ति')).toBeHidden();
 
   for (const target of [page, listener]) {
     await target.evaluate(() => {
