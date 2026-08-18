@@ -53,6 +53,10 @@ test('sensitive diagnostic keys are always redacted', () => {
   });
 });
 test('media snapshots expose WebKit state without exposing its source URL', () => {
+  // SAFETY: the fixture carries every media property mediaSnapshot reads
+  // (currentSrc, src, paused, ended, seeking, currentTime, duration,
+  // readyState, networkState, error) with compatible types, so the literal is
+  // a faithful HTMLMediaElement stand-in.
   const snapshot = mediaSnapshot(
     {
       currentSrc: 'https://cdn.example.com/private/song.mp3?signature=secret',
@@ -65,7 +69,7 @@ test('media snapshots expose WebKit state without exposing its source URL', () =
       readyState: 1,
       networkState: 2,
       error: { code: 4, message: 'Unsupported source' },
-    } as unknown as HTMLMediaElement,
+    } as HTMLMediaElement,
     BASE,
   );
   expect(snapshot).toEqual({

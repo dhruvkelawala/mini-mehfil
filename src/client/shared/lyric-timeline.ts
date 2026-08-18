@@ -12,6 +12,7 @@ import {
   type ParsedLyricSheet,
   type TimelineEntry,
 } from '../../lyrics/lyric-sync.ts';
+import type { JsonValue } from '../../room/primitives.ts';
 
 export interface LyricTimeline {
   sheet: ParsedLyricSheet;
@@ -35,8 +36,8 @@ export type LyricFrame =
 
 /** Builds the presentation model on top of the canonical synchronization data. */
 export function parseLyricTimeline(
-  sheet: unknown,
-  timing: unknown = null,
+  sheet: JsonValue | undefined,
+  timing: JsonValue | undefined = null,
 ): LyricTimeline {
   const parsed = parseLyricSheet(sheet);
   return {

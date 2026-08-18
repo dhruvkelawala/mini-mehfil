@@ -79,11 +79,9 @@ function memoryStorage() {
 function jobRequest(path, { method = 'GET', body, authorized = true } = {}) {
   const headers = authorized ? { authorization: `Bearer ${SECRET}` } : {};
   if (body !== undefined) headers['content-type'] = 'application/json';
-  return new Request(`https://share.example${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const init = { method, headers };
+  if (body !== undefined && method !== 'GET') init.body = JSON.stringify(body);
+  return new Request(`https://share.example${path}`, init);
 }
 
 function uploadFormRequest(form, headers = {}) {

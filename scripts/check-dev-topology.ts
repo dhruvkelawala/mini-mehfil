@@ -31,6 +31,9 @@ function reservePort(): Promise<Reservation> {
     server.once('error', reject);
     server.listen(0, LOOPBACK, () => {
       server.removeListener('error', reject);
+      // SAFETY: we are inside the listen() callback of a server bound to a
+      // TCP port on the loopback (never a unix socket), so address() returns
+      // an AddressInfo carrying the assigned port.
       const address = server.address() as AddressInfo;
       resolve({ server, port: address.port });
     });
@@ -302,7 +305,7 @@ async function main(): Promise<void> {
   }
 }
 
-void main().catch((error: unknown) => {
+void main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });

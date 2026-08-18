@@ -9,6 +9,8 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+// SAFETY: sync-replay-song.json is a checked-in fixture whose top level is
+// exactly `{ audioBasename: string }`; no other field is read from it.
 const fixture = JSON.parse(
   readFileSync(resolve('test/fixtures/sync-replay-song.json'), 'utf8'),
 ) as { audioBasename: string };

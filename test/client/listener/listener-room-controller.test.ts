@@ -2,7 +2,11 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import type { LyricTiming } from '../../../src/lyrics/lyric-sync.ts';
-import { createListenerRoomController } from '../../../src/client/listener/listener-room-controller.ts';
+import {
+  createListenerRoomController,
+  type ListenerSnapshot,
+  type ListenerSong,
+} from '../../../src/client/listener/listener-room-controller.ts';
 
 class MemoryStorage implements Storage {
   readonly values = new Map<string, string>();
@@ -26,8 +30,21 @@ class MemoryStorage implements Storage {
   }
 }
 
-class FakeSocket extends EventTarget {
-  readyState = 0;
+class FakeSocket extends EventTarget implements WebSocket {
+  readonly CONNECTING = 0;
+  readonly OPEN = 1;
+  readonly CLOSING = 2;
+  readonly CLOSED = 3;
+  binaryType: BinaryType = 'blob';
+  bufferedAmount = 0;
+  extensions = '';
+  onclose: ((this: WebSocket, ev: CloseEvent) => any) | null = null;
+  onerror: ((this: WebSocket, ev: Event) => any) | null = null;
+  onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null = null;
+  onopen: ((this: WebSocket, ev: Event) => any) | null = null;
+  protocol = '';
+  readyState: 0 | 1 | 2 | 3 = 0;
+  url = '';
   readonly sent: string[] = [];
   send(value: string) {
     this.sent.push(value);
@@ -36,7 +53,7 @@ class FakeSocket extends EventTarget {
     this.readyState = WebSocket.OPEN;
     this.dispatchEvent(new Event('open'));
   }
-  message(state: unknown) {
+  message(state: ListenerSnapshot) {
     this.dispatchEvent(
       new MessageEvent('message', {
         data: JSON.stringify({ type: 'snapshot', state }),
@@ -79,6 +96,16 @@ class FakeAudio extends EventTarget {
   }
 }
 
+/**
+ * FakeAudio deliberately stands in for the HTMLAudioElement surface the
+ * controller binds; the predicate marks the test double as the real element.
+ */
+function isHtmlAudioElement(
+  audio: HTMLAudioElement | FakeAudio,
+): audio is HTMLAudioElement {
+  return audio instanceof FakeAudio;
+}
+
 const TIMING = {
   version: 1,
   mode: 'minimax-section-asr',
@@ -101,12 +128,8 @@ const snapshot = ({
     changedAt: number;
   };
   lyricTiming?: LyricTiming | null;
-}) => ({
-  hostPresent: true,
-  listenerCount: 1,
-  queue: [],
-  currentRecording: null,
-  currentSong: {
+}): ListenerSnapshot => {
+  const currentSong: ListenerSong = {
     shareId,
     title: 'Rain',
     language: 'Hindi',
@@ -119,10 +142,18 @@ const snapshot = ({
       lyricsRoman: '[Verse]\nbaarish\n[Chorus]\nphir',
     },
     playback,
-    ...(lyricTiming === undefined ? {} : { lyricTiming }),
-  },
-  setlist: [],
-});
+  };
+  if (lyricTiming !== undefined) currentSong.lyricTiming = lyricTiming;
+  return {
+    hostPresent: true,
+    listenerCount: 1,
+    queue: [],
+    recordingQueue: [],
+    currentRecording: null,
+    currentSong,
+    setlist: [],
+  };
+};
 
 afterEach(() => {
   vi.useRealTimers();
@@ -135,13 +166,13 @@ describe('listener room timing and media clock', () => {
     const controller = createListenerRoomController({
       roomId: 'ABCDEFGH',
       storage: new MemoryStorage(),
-      socketFactory: () => socket as unknown as WebSocket,
+      socketFactory: () => socket,
     });
     const audio = new FakeAudio();
     const play = vi
       .spyOn(audio, 'play')
       .mockRejectedValue(new Error('NotAllowedError'));
-    controller.bindAudio(audio as unknown as HTMLAudioElement);
+    if (isHtmlAudioElement(audio)) controller.bindAudio(audio);
     controller.connect('Ada');
     socket.open();
     socket.message(
@@ -168,11 +199,11 @@ describe('listener room timing and media clock', () => {
     const controller = createListenerRoomController({
       roomId: 'ABCDEFGH',
       storage: new MemoryStorage(),
-      socketFactory: () => socket as unknown as WebSocket,
+      socketFactory: () => socket,
     });
     const audio = new FakeAudio();
     vi.spyOn(audio, 'play').mockRejectedValueOnce(new Error('NotAllowedError'));
-    controller.bindAudio(audio as unknown as HTMLAudioElement);
+    if (isHtmlAudioElement(audio)) controller.bindAudio(audio);
     controller.connect('Ada');
     socket.open();
     socket.message(
@@ -200,10 +231,10 @@ describe('listener room timing and media clock', () => {
     const controller = createListenerRoomController({
       roomId: 'ABCDEFGH',
       storage: new MemoryStorage(),
-      socketFactory: () => socket as unknown as WebSocket,
+      socketFactory: () => socket,
     });
     const audio = new FakeAudio();
-    controller.bindAudio(audio as unknown as HTMLAudioElement);
+    if (isHtmlAudioElement(audio)) controller.bindAudio(audio);
     controller.connect('Ada');
     socket.open();
     socket.message(snapshot({}));
@@ -247,11 +278,11 @@ describe('listener room timing and media clock', () => {
       socketFactory: () => {
         const socket = new FakeSocket();
         sockets.push(socket);
-        return socket as unknown as WebSocket;
+        return socket;
       },
     });
     const audio = new FakeAudio();
-    controller.bindAudio(audio as unknown as HTMLAudioElement);
+    if (isHtmlAudioElement(audio)) controller.bindAudio(audio);
     controller.connect('Ada');
     sockets[0]?.open();
     sockets[0]?.message(snapshot({ lyricTiming: TIMING }));

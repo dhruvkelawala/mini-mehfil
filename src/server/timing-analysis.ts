@@ -1,5 +1,11 @@
 import { normalizeLyricTiming } from '../lyrics/lyric-sync.ts';
 import {
+  isNumber,
+  isRecord,
+  isString,
+  type JsonValue,
+} from '../room/primitives.ts';
+import {
   type TimingAnalysisOutcome,
   type TimingFailureReason,
 } from '../timing/timing-analysis.ts';
@@ -19,12 +25,6 @@ export interface AnalyzeMiniMaxTimingOptions {
   timeoutMs: number;
   /** Test-only seam for a loopback replay provider. */
   allowLocalHttpSource?: boolean;
-}
-
-type JsonRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is JsonRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function unavailable(
@@ -55,15 +55,16 @@ function safeAnalysisSource(
   }
 }
 
-function errorName(error: unknown): string {
-  return error instanceof Error ? error.name : '';
-}
+type TimingFailure = {
+  reason: TimingFailureReason;
+  retryable: boolean;
+};
 
 function providerFailure(
   status: number,
-  message: unknown,
-): { reason: TimingFailureReason; retryable: boolean } {
-  const text = typeof message === 'string' ? message : '';
+  message: JsonValue | undefined,
+): TimingFailure {
+  const text = isString(message) ? message : '';
   if (
     status === 401 ||
     status === 403 ||
@@ -105,14 +106,14 @@ export async function analyzeMiniMaxTiming(
       },
     );
   } catch (error) {
-    const timedOut =
-      errorName(error) === 'AbortError' || errorName(error) === 'TimeoutError';
+    const name = error instanceof Error ? error.name : '';
+    const timedOut = name === 'AbortError' || name === 'TimeoutError';
     return unavailable(timedOut ? 'timeout' : 'network', true);
   }
 
-  let value: unknown;
+  let value: JsonValue | undefined;
   try {
-    value = JSON.parse(await response.text()) as unknown;
+    value = JSON.parse(await response.text());
   } catch {
     if (!response.ok) {
       const failure = providerFailure(response.status, '');
@@ -124,15 +125,13 @@ export async function analyzeMiniMaxTiming(
   const record = isRecord(value) ? value : null;
   const baseResponse =
     record && isRecord(record.base_resp) ? record.base_resp : {};
-  const providerStatus =
-    typeof baseResponse.status_code === 'number'
-      ? baseResponse.status_code
-      : undefined;
+  const statusCode = baseResponse.status_code;
+  const providerStatus = isNumber(statusCode) ? statusCode : undefined;
 
   if (!response.ok) {
     const failure = providerFailure(
       response.status,
-      baseResponse.status_msg ?? (record && record.error),
+      baseResponse.status_msg ?? record?.error,
     );
     return unavailable(failure.reason, failure.retryable);
   }
@@ -141,20 +140,22 @@ export async function analyzeMiniMaxTiming(
     const failure = providerFailure(providerStatus, baseResponse.status_msg);
     return unavailable(failure.reason, failure.retryable);
   }
-  if (typeof record.structure_result !== 'string')
+  const structureResult = record.structure_result;
+  if (!isString(structureResult))
     return unavailable('malformed-response', false);
 
-  let structure: unknown;
+  let structure: JsonValue | undefined;
   try {
-    structure = JSON.parse(record.structure_result) as unknown;
+    structure = JSON.parse(structureResult);
   } catch {
     return unavailable('malformed-response', false);
   }
+  const durationSeconds = record.audio_duration;
   const timing = normalizeLyricTiming({
     version: 1,
     mode: 'minimax-section-asr',
-    durationSeconds: record.audio_duration,
-    segments: isRecord(structure) ? structure.segments : undefined,
+    durationSeconds: durationSeconds ?? null,
+    segments: isRecord(structure) ? (structure.segments ?? null) : null,
   });
   if (!timing) return unavailable('invalid-timing', false);
   return { status: 'ready', timing };

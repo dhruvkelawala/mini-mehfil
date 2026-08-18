@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 
 import type { LyricTiming } from '../../../src/lyrics/lyric-sync.ts';
+import type { JsonValue } from '../../../src/room/primitives.ts';
 import type { LyricsSheet, RoomState } from '../../../src/room/protocol.ts';
 import { projectRoomState } from '../../../src/room/state.ts';
 import {
@@ -31,10 +32,22 @@ class MemoryStorage implements Storage {
     this.values.set(key, value);
   }
 }
-class FakeSocket extends EventTarget {
+class FakeSocket extends EventTarget implements WebSocket {
   static readonly OPEN = 1;
   readonly OPEN = 1;
-  readyState = 0;
+  readonly CONNECTING = 0;
+  readonly CLOSING = 2;
+  readonly CLOSED = 3;
+  binaryType: BinaryType = 'blob';
+  bufferedAmount = 0;
+  extensions = '';
+  onclose: ((this: WebSocket, ev: CloseEvent) => any) | null = null;
+  onerror: ((this: WebSocket, ev: Event) => any) | null = null;
+  onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null = null;
+  onopen: ((this: WebSocket, ev: Event) => any) | null = null;
+  protocol = '';
+  readyState: 0 | 1 | 2 | 3 = 0;
+  url = '';
   readonly sent: string[] = [];
   throwOnSend = false;
   send(value: string) {
@@ -49,7 +62,7 @@ class FakeSocket extends EventTarget {
     this.readyState = 3;
     this.dispatchEvent(Object.assign(new Event('close'), { code }));
   }
-  message(value: unknown) {
+  message(value: JsonValue | undefined) {
     this.dispatchEvent(
       new MessageEvent('message', { data: JSON.stringify(value) }),
     );
@@ -103,7 +116,7 @@ describe('typed host room parity', () => {
     const socket = new FakeSocket();
     createHostRoomController({
       storage,
-      socketFactory: () => socket as unknown as WebSocket,
+      socketFactory: () => socket,
     });
     socket.open();
     expect(JSON.parse(socket.sent[0] ?? '{}')).toEqual({
@@ -119,7 +132,7 @@ describe('typed host room parity', () => {
     const socket = new FakeSocket();
     const room = createHostRoomController({
       storage,
-      socketFactory: () => socket as unknown as WebSocket,
+      socketFactory: () => socket,
     });
     socket.open();
     socket.message({ type: 'snapshot', state: hostSnapshot() });
@@ -144,7 +157,7 @@ describe('typed host room parity', () => {
     const socket = new FakeSocket();
     const room = createHostRoomController({
       storage,
-      socketFactory: () => socket as unknown as WebSocket,
+      socketFactory: () => socket,
     });
     socket.open();
     socket.message({ type: 'snapshot', state: hostSnapshot() });
@@ -168,7 +181,7 @@ describe('typed host room parity', () => {
     const socket = new FakeSocket();
     const room = createHostRoomController({
       storage,
-      socketFactory: () => socket as unknown as WebSocket,
+      socketFactory: () => socket,
     });
     socket.open();
     socket.message({ type: 'snapshot', state: hostSnapshot() });
@@ -183,7 +196,7 @@ describe('typed host room parity', () => {
     const socket = new FakeSocket();
     const room = createHostRoomController({
       storage,
-      socketFactory: () => socket as unknown as WebSocket,
+      socketFactory: () => socket,
     });
     socket.open();
     socket.message({ type: 'snapshot', state: hostSnapshot() });
@@ -196,6 +209,8 @@ describe('typed host room parity', () => {
   });
 
   test('host reorder targets use full queue indices when terminal rows are hidden', () => {
+    // SAFETY: roomReorderTargets reads only id and status from each entry,
+    // both supplied with SongRequest-compatible types.
     const queue = [
       { id: 'done', status: 'ready' },
       { id: 'a', status: 'pending' },
@@ -250,7 +265,7 @@ describe('typed host room parity', () => {
     const socket = new FakeSocket();
     const room = createHostRoomController({
       storage,
-      socketFactory: () => socket as unknown as WebSocket,
+      socketFactory: () => socket,
     });
     room.abandon();
     expect(room.terminal()).toBe(true);

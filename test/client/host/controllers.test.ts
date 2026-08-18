@@ -19,6 +19,7 @@ import {
   type PlayerController,
 } from '../../../src/client/host/player-controller.ts';
 import { trustedRemoteAudioSource } from '../../../src/client/host/replay-source.ts';
+import type { JsonValue } from '../../../src/room/primitives.ts';
 import {
   activeTimelineEntry,
   buildSectionTimeline,
@@ -204,6 +205,16 @@ class FakeAudio {
   }
 }
 
+/**
+ * FakeAudio deliberately stands in for the HTMLAudioElement surface the
+ * player binds; the predicate marks the test double as the real element.
+ */
+function isHtmlAudioElement(
+  audio: HTMLAudioElement | FakeAudio,
+): audio is HTMLAudioElement {
+  return audio instanceof FakeAudio;
+}
+
 const SECTION_TIMING = {
   version: 1,
   mode: 'minimax-section-asr',
@@ -216,10 +227,16 @@ const SECTION_TIMING = {
   ],
 } satisfies LyricTiming;
 
-async function loadedPlayer(timing: unknown, mediaDuration: number) {
+async function loadedPlayer(
+  timing: JsonValue | undefined,
+  mediaDuration: number,
+) {
   const audio = new FakeAudio();
   const player = createPlayerController(createMediaDiagnostics());
-  player.bindAudio(audio as unknown as HTMLAudioElement);
+  // SAFETY: FakeAudio mirrors the HTMLAudioElement surface the player
+  // touches (play, pause, load, src, duration, currentTime, listeners), so
+  // the predicate re-asserts the test double's substitution for the element.
+  if (isHtmlAudioElement(audio)) player.bindAudio(audio);
   await player.load('https://cdn.example/song.mp3', lyrics, null, timing);
   audio.duration = mediaDuration;
   audio.emit('loadedmetadata');
@@ -250,7 +267,10 @@ describe('host section timing', () => {
   test('applies matching late timing without restarting, seeking, or mutating it', async () => {
     const audio = new FakeAudio();
     const player = createPlayerController(createMediaDiagnostics());
-    player.bindAudio(audio as unknown as HTMLAudioElement);
+    // SAFETY: FakeAudio mirrors the HTMLAudioElement surface the player
+    // touches (play, pause, load, src, duration, currentTime, listeners), so
+    // the predicate re-asserts the test double's substitution for the element.
+    if (isHtmlAudioElement(audio)) player.bindAudio(audio);
     const load = vi.spyOn(audio, 'load');
     const play = vi.spyOn(audio, 'play');
     await player.load('https://cdn.example/song.mp3', lyrics);
@@ -365,7 +385,10 @@ describe('host section timing', () => {
   test('exposes analysis bytes only for inline-hex audio and skips URL sources', async () => {
     const audio = new FakeAudio();
     const player = createPlayerController(createMediaDiagnostics());
-    player.bindAudio(audio as unknown as HTMLAudioElement);
+    // SAFETY: FakeAudio mirrors the HTMLAudioElement surface the player
+    // touches (play, pause, load, src, duration, currentTime, listeners), so
+    // the predicate re-asserts the test double's substitution for the element.
+    if (isHtmlAudioElement(audio)) player.bindAudio(audio);
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
     try {
@@ -414,7 +437,10 @@ describe('host section timing', () => {
   test('retains normalized timing when the host loads a room song', () => {
     const audio = new FakeAudio();
     const player = createPlayerController(createMediaDiagnostics());
-    player.bindAudio(audio as unknown as HTMLAudioElement);
+    // SAFETY: FakeAudio mirrors the HTMLAudioElement surface the player
+    // touches (play, pause, load, src, duration, currentTime, listeners), so
+    // the predicate re-asserts the test double's substitution for the element.
+    if (isHtmlAudioElement(audio)) player.bindAudio(audio);
     player.loadRoomSong(
       {
         requestId: null,

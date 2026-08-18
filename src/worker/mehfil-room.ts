@@ -1,7 +1,13 @@
 import { DurableObject } from 'cloudflare:workers';
 
-import { randomBase64Url } from '../room/primitives.ts';
-import { isRecord } from '../room/protocol.ts';
+import {
+  isBoolean,
+  isNumber,
+  isRecord,
+  isString,
+  randomBase64Url,
+  type JsonValue,
+} from '../room/primitives.ts';
 import type { RoomSession } from '../room/protocol.ts';
 import type {
   RoomConnections,
@@ -10,27 +16,34 @@ import type {
 } from '../room/transport.ts';
 import { createRoomTransport } from '../room/transport.ts';
 
-function createCloudflareRoomAdapters(ctx: DurableObjectState): {
+type CloudflareRoomAdapters = {
   storage: RoomStorage;
   connections: RoomConnections<WebSocket>;
-} {
-  const parseSession = (value: unknown): RoomSession | undefined => {
-    if (!isRecord(value) || typeof value.authenticated !== 'boolean') {
+};
+
+function createCloudflareRoomAdapters(
+  ctx: DurableObjectState,
+): CloudflareRoomAdapters {
+  const parseSession = (
+    value: JsonValue | undefined,
+  ): RoomSession | undefined => {
+    if (!isRecord(value) || !isBoolean(value.authenticated)) {
       return undefined;
     }
-    return {
-      authenticated: value.authenticated,
-      ...(typeof value.connectedAt === 'number'
-        ? { connectedAt: value.connectedAt }
-        : {}),
-      ...(value.role === 'host' || value.role === 'listener'
-        ? { role: value.role }
-        : {}),
-      ...(typeof value.participantId === 'string'
-        ? { participantId: value.participantId }
-        : {}),
-    };
+    const session: RoomSession = { authenticated: value.authenticated };
+    const connectedAt = value.connectedAt;
+    if (isNumber(connectedAt)) session.connectedAt = connectedAt;
+    const role = value.role;
+    if (role === 'host' || role === 'listener') session.role = role;
+    const participantId = value.participantId;
+    if (isString(participantId)) session.participantId = participantId;
+    return session;
   };
+  // SAFETY: attachments are always RoomSessions written by setSession; the
+  // assertion only bridges the runtime's unknown return, and parseSession
+  // re-validates every field with isRecord/isBoolean before it is used.
+  const readSession = (socket: WebSocket): RoomSession | undefined =>
+    parseSession(socket.deserializeAttachment() as JsonValue | undefined);
   const storage: RoomStorage = {
     get: (key) => ctx.storage.get(key),
     put: (key, value) => ctx.storage.put(key, value),
@@ -42,7 +55,7 @@ function createCloudflareRoomAdapters(ctx: DurableObjectState): {
     },
     broadcast(createMessage) {
       for (const socket of ctx.getWebSockets()) {
-        const session = parseSession(socket.deserializeAttachment());
+        const session = readSession(socket);
         if (session?.authenticated) socket.send(createMessage(session));
       }
     },
@@ -53,34 +66,37 @@ function createCloudflareRoomAdapters(ctx: DurableObjectState): {
       socket.serializeAttachment(value);
     },
     getSession(socket) {
-      return parseSession(socket.deserializeAttachment());
+      return readSession(socket);
     },
     list: () => ctx.getWebSockets(),
   };
   return { storage, connections };
 }
 
-function parseInitialization(value: unknown): {
+type RoomInitializationPayload = {
   roomId: string;
   hostDigest: string;
   openedAt: number;
   expiresAt: number;
-} | null {
+};
+
+function parseInitialization(
+  value: JsonValue | undefined,
+): RoomInitializationPayload | null {
+  if (!isRecord(value)) return null;
+  const roomId = value.roomId;
+  const hostDigest = value.hostDigest;
+  const openedAt = value.openedAt;
+  const expiresAt = value.expiresAt;
   if (
-    !isRecord(value) ||
-    typeof value.roomId !== 'string' ||
-    typeof value.hostDigest !== 'string' ||
-    typeof value.openedAt !== 'number' ||
-    typeof value.expiresAt !== 'number'
+    !isString(roomId) ||
+    !isString(hostDigest) ||
+    !isNumber(openedAt) ||
+    !isNumber(expiresAt)
   ) {
     return null;
   }
-  return {
-    roomId: value.roomId,
-    hostDigest: value.hostDigest,
-    openedAt: value.openedAt,
-    expiresAt: value.expiresAt,
-  };
+  return { roomId, hostDigest, openedAt, expiresAt };
 }
 
 /** Thin Cloudflare lifecycle adapter; room policy stays in the transport. */
@@ -122,7 +138,10 @@ export class MehfilRoom extends DurableObject<Env> {
   }
 
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
-    await this.transport.message(socket, message);
+    // SAFETY: the transport parses only JSON text and rejects every other
+    // payload shape with the same invalid-message error, so collapsing the
+    // runtime's string|ArrayBuffer union to JsonValue cannot change behavior.
+    await this.transport.message(socket, message as JsonValue);
   }
 
   async webSocketClose(socket: WebSocket) {

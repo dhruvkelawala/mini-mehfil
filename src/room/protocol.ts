@@ -1,4 +1,10 @@
-import { isRecord } from './primitives.ts';
+import {
+  isRecord,
+  isString,
+  isNumber,
+  isBoolean,
+  type JsonValue,
+} from './primitives.ts';
 import {
   normalizeLyricTiming,
   type LyricTiming,
@@ -17,34 +23,32 @@ export type RequestStatus =
   | 'ready';
 export type PlaybackStatus = 'playing' | 'paused';
 
-export interface LyricsSheet {
+export type LyricsSheet = {
   title: string;
   language: string;
   nativeScriptName: string;
   isLatinScript: boolean;
   lyricsNative: string;
   lyricsRoman: string;
-}
+};
 
 export function parseLyricsSheet(
-  value: unknown,
+  value: JsonValue | undefined,
   fallback: Partial<Pick<LyricsSheet, 'title' | 'language'>> = {},
 ): LyricsSheet | null {
   if (
     !isRecord(value) ||
-    typeof value.nativeScriptName !== 'string' ||
-    typeof value.isLatinScript !== 'boolean' ||
-    typeof value.lyricsNative !== 'string' ||
-    typeof value.lyricsRoman !== 'string'
+    !isString(value.nativeScriptName) ||
+    !isBoolean(value.isLatinScript) ||
+    !isString(value.lyricsNative) ||
+    !isString(value.lyricsRoman)
   ) {
     return null;
   }
-  const title =
-    typeof value.title === 'string' ? value.title : (fallback.title ?? '');
-  const language =
-    typeof value.language === 'string'
-      ? value.language
-      : (fallback.language ?? '');
+  const title = isString(value.title) ? value.title : (fallback.title ?? '');
+  const language = isString(value.language)
+    ? value.language
+    : (fallback.language ?? '');
   if (!title || !language) return null;
   return {
     title,
@@ -56,14 +60,14 @@ export function parseLyricsSheet(
   };
 }
 
-export interface Participant {
+export type Participant = {
   id: string;
   name: string;
   connected: boolean;
   joinedAt: number;
-}
+};
 
-export interface SongRequest {
+export type SongRequest = {
   id: string;
   participantId: string;
   idea: string;
@@ -71,15 +75,15 @@ export interface SongRequest {
   language: string;
   status: RequestStatus;
   submittedAt: number;
-}
+};
 
-export interface RoomPlayback {
+export type RoomPlayback = {
   status: PlaybackStatus;
   positionMs: number;
   changedAt: number;
-}
+};
 
-export interface RoomSong {
+export type RoomSong = {
   requestId: string | null;
   shareId: string;
   title: string;
@@ -88,9 +92,9 @@ export interface RoomSong {
   lyrics: LyricsSheet;
   lyricTiming?: LyricTiming | null;
   playback: RoomPlayback;
-}
+};
 
-export interface SetlistSong {
+export type SetlistSong = {
   requestId: string | null;
   shareId: string;
   title: string;
@@ -98,16 +102,16 @@ export interface SetlistSong {
   startedAt: number;
   lyrics: LyricsSheet | null;
   lyricTiming?: LyricTiming | null;
-}
+};
 
-export interface CurrentRecording {
+export type CurrentRecording = {
   requestId: string;
   coordinatorId: string;
   startedAt: number;
   lyrics: LyricsSheet | null;
-}
+};
 
-export interface RoomState {
+export type RoomState = {
   version: 1;
   roomId: string;
   openedAt: number;
@@ -121,18 +125,18 @@ export interface RoomState {
   currentRecording: CurrentRecording | null;
   currentSong: RoomSong | null;
   setlist: SetlistSong[];
-}
+};
 
 export type HostRoomProjection = Omit<RoomState, 'kickedParticipantIds'> & {
   listenerCount: number;
 };
 
-interface EventBase {
+type EventBase = {
   role: RoomRole;
   at: number;
   actorId?: string;
   trustedAlarm?: boolean;
-}
+};
 
 export type RoomEvent =
   | (EventBase & { type: 'room-opened' })
@@ -172,7 +176,7 @@ export type RoomEvent =
   | (EventBase & {
       type: 'lyrics-ready';
       requestId: string;
-      lyrics: unknown;
+      lyrics: JsonValue;
     })
   | (EventBase & { type: 'recording-failed'; requestId: string })
   | (EventBase & {
@@ -180,17 +184,17 @@ export type RoomEvent =
       requestId: string;
       shareId: string;
       startedAt: number;
-      lyrics?: unknown;
+      lyrics?: JsonValue;
       title?: string;
       language?: string;
-      lyricTiming?: unknown;
+      lyricTiming?: JsonValue;
     })
   | (EventBase & {
       type: 'song-shared';
       shareId: string;
-      lyrics: unknown;
+      lyrics: JsonValue;
       startedAt: number;
-      lyricTiming?: unknown;
+      lyricTiming?: JsonValue;
     })
   | (EventBase & { type: 'song-selected'; shareId: string })
   | (EventBase & {
@@ -231,12 +235,12 @@ export type TransitionResult =
       error: { code: RoomErrorCode };
     };
 
-export interface RoomSession {
+export type RoomSession = {
   authenticated: boolean;
   connectedAt?: number;
   role?: RoomRole;
   participantId?: string;
-}
+};
 
 export type ClientMessage =
   | { type: 'auth-host'; secret: string }
@@ -254,7 +258,7 @@ export type ClientMessage =
   | { type: 'recording-reordered'; requestId: string; toIndex: number }
   | { type: 'recording-removed'; requestId: string }
   | { type: 'recording-started'; requestId: string; coordinatorId: string }
-  | { type: 'lyrics-ready'; requestId: string; lyrics: unknown }
+  | { type: 'lyrics-ready'; requestId: string; lyrics: JsonValue }
   | { type: 'recording-failed'; requestId: string }
   | {
       type: 'song-ready';
@@ -265,7 +269,7 @@ export type ClientMessage =
   | {
       type: 'song-shared';
       shareId: string;
-      lyrics: unknown;
+      lyrics: JsonValue;
       lyricTiming?: LyricTiming | null;
     }
   | { type: 'song-selected'; shareId: string }
@@ -312,7 +316,7 @@ function isRequestStatus(value: string): value is RequestStatus {
 }
 
 function optionalLyricTiming(
-  value: unknown,
+  value: JsonValue | undefined,
 ): { lyricTiming?: LyricTiming | null } | null {
   if (value === undefined) return {};
   if (value === null) return { lyricTiming: null };
@@ -320,42 +324,42 @@ function optionalLyricTiming(
   return timing ? { lyricTiming: timing } : null;
 }
 
-export function parseClientMessage(value: unknown): ClientMessage | null {
-  if (!isRecord(value) || typeof value.type !== 'string') return null;
+export function parseClientMessage(
+  value: JsonValue | undefined,
+): ClientMessage | null {
+  if (!isRecord(value) || !isString(value.type)) return null;
+  // SAFETY: CLIENT_TYPES contains exactly the ClientMessage discriminants; the
+  // membership test below rejects any other value before the switch dispatches.
   if (!CLIENT_TYPES.has(value.type as ClientMessage['type'])) return null;
   switch (value.type) {
     case 'auth-host':
-      return typeof value.secret === 'string'
+      return isString(value.secret)
         ? { type: 'auth-host', secret: value.secret }
         : null;
-    case 'join':
-      if (value.name !== undefined && typeof value.name !== 'string')
+    case 'join': {
+      if (value.name !== undefined && !isString(value.name)) return null;
+      if (value.resume !== undefined && !isString(value.resume)) return null;
+      const message: ClientMessage = { type: 'join' };
+      if (value.name !== undefined) message.name = value.name;
+      if (value.resume !== undefined) message.resume = value.resume;
+      return message;
+    }
+    case 'request-submitted': {
+      if (!isString(value.idea)) return null;
+      if (value.vibe !== undefined && !isString(value.vibe)) return null;
+      if (value.language !== undefined && !isString(value.language))
         return null;
-      if (value.resume !== undefined && typeof value.resume !== 'string')
-        return null;
-      return {
-        type: 'join',
-        ...(typeof value.name === 'string' ? { name: value.name } : {}),
-        ...(typeof value.resume === 'string' ? { resume: value.resume } : {}),
-      };
-    case 'request-submitted':
-      if (typeof value.idea !== 'string') return null;
-      if (value.vibe !== undefined && typeof value.vibe !== 'string')
-        return null;
-      if (value.language !== undefined && typeof value.language !== 'string')
-        return null;
-      return {
+      const message: ClientMessage = {
         type: 'request-submitted',
         idea: value.idea,
-        ...(typeof value.vibe === 'string' ? { vibe: value.vibe } : {}),
-        ...(typeof value.language === 'string'
-          ? { language: value.language }
-          : {}),
       };
+      if (value.vibe !== undefined) message.vibe = value.vibe;
+      if (value.language !== undefined) message.language = value.language;
+      return message;
+    }
     case 'request-reordered':
     case 'recording-reordered':
-      return typeof value.requestId === 'string' &&
-        typeof value.toIndex === 'number'
+      return isString(value.requestId) && isNumber(value.toIndex)
         ? {
             type: value.type,
             requestId: value.requestId,
@@ -363,15 +367,11 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
           }
         : null;
     case 'lyrics-ready':
-      return typeof value.requestId === 'string'
+      return isString(value.requestId) && value.lyrics !== undefined
         ? { type: value.type, requestId: value.requestId, lyrics: value.lyrics }
         : null;
     case 'song-ready':
-      if (
-        typeof value.requestId !== 'string' ||
-        typeof value.shareId !== 'string'
-      )
-        return null;
+      if (!isString(value.requestId) || !isString(value.shareId)) return null;
       {
         const timing = optionalLyricTiming(value.lyricTiming);
         return timing
@@ -384,7 +384,7 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
           : null;
       }
     case 'song-shared': {
-      if (typeof value.shareId !== 'string') return null;
+      if (!isString(value.shareId) || value.lyrics === undefined) return null;
       const timing = optionalLyricTiming(value.lyricTiming);
       return timing
         ? {
@@ -396,13 +396,13 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
         : null;
     }
     case 'song-selected':
-      return typeof value.shareId === 'string'
+      return isString(value.shareId)
         ? { type: value.type, shareId: value.shareId }
         : null;
     case 'playback-updated':
-      return typeof value.shareId === 'string' &&
+      return isString(value.shareId) &&
         (value.status === 'playing' || value.status === 'paused') &&
-        typeof value.positionMs === 'number'
+        isNumber(value.positionMs)
         ? {
             type: value.type,
             shareId: value.shareId,
@@ -411,7 +411,7 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
           }
         : null;
     case 'kicked':
-      return typeof value.participantId === 'string'
+      return isString(value.participantId)
         ? { type: value.type, participantId: value.participantId }
         : null;
     case 'request-accepted':
@@ -419,12 +419,11 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
     case 'recording-enqueued':
     case 'recording-removed':
     case 'recording-failed':
-      return typeof value.requestId === 'string'
+      return isString(value.requestId)
         ? { type: value.type, requestId: value.requestId }
         : null;
     case 'recording-started':
-      return typeof value.requestId === 'string' &&
-        typeof value.coordinatorId === 'string'
+      return isString(value.requestId) && isString(value.coordinatorId)
         ? {
             type: value.type,
             requestId: value.requestId,
@@ -437,20 +436,20 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
   return null;
 }
 
-export function parseRoomState(value: unknown): RoomState | null {
+export function parseRoomState(value: JsonValue | undefined): RoomState | null {
   if (!isRecord(value)) return null;
   if (
     value.version !== 1 ||
-    typeof value.roomId !== 'string' ||
-    typeof value.openedAt !== 'number' ||
-    typeof value.expiresAt !== 'number' ||
+    !isString(value.roomId) ||
+    !isNumber(value.openedAt) ||
+    !isNumber(value.expiresAt) ||
     !Array.isArray(value.participants) ||
     !Array.isArray(value.kickedParticipantIds) ||
     !Array.isArray(value.queue) ||
     !Array.isArray(value.setlist) ||
     (value.recordingQueue !== undefined &&
       (!Array.isArray(value.recordingQueue) ||
-        !value.recordingQueue.every((item) => typeof item === 'string')))
+        !value.recordingQueue.every((item) => isString(item))))
   ) {
     return null;
   }
@@ -458,10 +457,10 @@ export function parseRoomState(value: unknown): RoomState | null {
   for (const item of value.participants) {
     if (
       !isRecord(item) ||
-      typeof item.id !== 'string' ||
-      typeof item.name !== 'string' ||
-      typeof item.connected !== 'boolean' ||
-      typeof item.joinedAt !== 'number'
+      !isString(item.id) ||
+      !isString(item.name) ||
+      !isBoolean(item.connected) ||
+      !isNumber(item.joinedAt)
     ) {
       return null;
     }
@@ -476,14 +475,14 @@ export function parseRoomState(value: unknown): RoomState | null {
   for (const item of value.queue) {
     if (
       !isRecord(item) ||
-      typeof item.id !== 'string' ||
-      typeof item.participantId !== 'string' ||
-      typeof item.idea !== 'string' ||
-      typeof item.vibe !== 'string' ||
-      typeof item.language !== 'string' ||
-      typeof item.status !== 'string' ||
+      !isString(item.id) ||
+      !isString(item.participantId) ||
+      !isString(item.idea) ||
+      !isString(item.vibe) ||
+      !isString(item.language) ||
+      !isString(item.status) ||
       !isRequestStatus(item.status) ||
-      typeof item.submittedAt !== 'number'
+      !isNumber(item.submittedAt)
     ) {
       return null;
     }
@@ -497,13 +496,13 @@ export function parseRoomState(value: unknown): RoomState | null {
       submittedAt: item.submittedAt,
     });
   }
-  const parseSetlist = (item: unknown): SetlistSong | null => {
+  const parseSetlist = (item: JsonValue | undefined): SetlistSong | null => {
     if (
       !isRecord(item) ||
-      typeof item.shareId !== 'string' ||
-      typeof item.title !== 'string' ||
-      typeof item.language !== 'string' ||
-      typeof item.startedAt !== 'number'
+      !isString(item.shareId) ||
+      !isString(item.title) ||
+      !isString(item.language) ||
+      !isNumber(item.startedAt)
     ) {
       return null;
     }
@@ -513,13 +512,13 @@ export function parseRoomState(value: unknown): RoomState | null {
     if (
       item.requestId !== undefined &&
       item.requestId !== null &&
-      typeof item.requestId !== 'string'
+      !isString(item.requestId)
     )
       return null;
     const timing = optionalLyricTiming(item.lyricTiming);
     if (!timing) return null;
     return {
-      requestId: typeof item.requestId === 'string' ? item.requestId : null,
+      requestId: isString(item.requestId) ? item.requestId : null,
       shareId: item.shareId,
       title: item.title,
       language: item.language,
@@ -538,24 +537,23 @@ export function parseRoomState(value: unknown): RoomState | null {
   if (value.currentRecording !== null) {
     if (
       !isRecord(value.currentRecording) ||
-      typeof value.currentRecording.requestId !== 'string' ||
+      !isString(value.currentRecording.requestId) ||
       (value.currentRecording.coordinatorId !== undefined &&
-        typeof value.currentRecording.coordinatorId !== 'string') ||
-      typeof value.currentRecording.startedAt !== 'number'
+        !isString(value.currentRecording.coordinatorId)) ||
+      !isNumber(value.currentRecording.startedAt)
     ) {
       return null;
     }
     const lyrics =
-      value.currentRecording.lyrics === null
+      value.currentRecording.lyrics == null
         ? null
         : parseLyricsSheet(value.currentRecording.lyrics);
     if (value.currentRecording.lyrics !== null && !lyrics) return null;
     currentRecording = {
       requestId: value.currentRecording.requestId,
-      coordinatorId:
-        typeof value.currentRecording.coordinatorId === 'string'
-          ? value.currentRecording.coordinatorId
-          : '',
+      coordinatorId: isString(value.currentRecording.coordinatorId)
+        ? value.currentRecording.coordinatorId
+        : '',
       startedAt: value.currentRecording.startedAt,
       lyrics,
     };
@@ -564,15 +562,18 @@ export function parseRoomState(value: unknown): RoomState | null {
   if (value.currentSong !== null) {
     if (!isRecord(value.currentSong)) return null;
     const base = parseSetlist(value.currentSong);
-    const lyrics = parseLyricsSheet(value.currentSong.lyrics);
+    const lyrics =
+      value.currentSong.lyrics === undefined
+        ? null
+        : parseLyricsSheet(value.currentSong.lyrics);
     const playback = value.currentSong.playback;
     if (
       !base ||
       !lyrics ||
       !isRecord(playback) ||
       (playback.status !== 'playing' && playback.status !== 'paused') ||
-      typeof playback.positionMs !== 'number' ||
-      typeof playback.changedAt !== 'number'
+      !isNumber(playback.positionMs) ||
+      !isNumber(playback.changedAt)
     ) {
       return null;
     }
@@ -587,9 +588,9 @@ export function parseRoomState(value: unknown): RoomState | null {
     };
   }
   if (
-    !value.kickedParticipantIds.every((item) => typeof item === 'string') ||
-    (value.expiredAt !== null && typeof value.expiredAt !== 'number') ||
-    typeof value.hostPresent !== 'boolean'
+    !value.kickedParticipantIds.every((item) => isString(item)) ||
+    (value.expiredAt !== null && !isNumber(value.expiredAt)) ||
+    !isBoolean(value.hostPresent)
   ) {
     return null;
   }
@@ -604,9 +605,7 @@ export function parseRoomState(value: unknown): RoomState | null {
     kickedParticipantIds: value.kickedParticipantIds,
     queue,
     recordingQueue: Array.isArray(value.recordingQueue)
-      ? value.recordingQueue.filter(
-          (item): item is string => typeof item === 'string',
-        )
+      ? value.recordingQueue.filter((item): item is string => isString(item))
       : queue.filter((item) => item.status === 'queued').map((item) => item.id),
     currentRecording,
     currentSong,
@@ -615,9 +614,9 @@ export function parseRoomState(value: unknown): RoomState | null {
 }
 
 export function parseHostRoomProjection(
-  value: unknown,
+  value: JsonValue | undefined,
 ): HostRoomProjection | null {
-  if (!isRecord(value) || typeof value.listenerCount !== 'number') return null;
+  if (!isRecord(value) || !isNumber(value.listenerCount)) return null;
   const parsed = parseRoomState({ ...value, kickedParticipantIds: [] });
   if (!parsed) return null;
   const { kickedParticipantIds, ...projection } = parsed;

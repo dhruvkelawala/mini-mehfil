@@ -5,23 +5,23 @@ import { test } from 'vitest';
 
 import handler from '../../api/index.ts';
 import { createVercelConfig } from '../../src/server/vercel-config.ts';
+import { isString } from '../../src/room/primitives.ts';
 
 test('package metadata declares the typed Vercel entrypoint', () => {
   const packageJson = JSON.parse(
     readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
-  ) as { main?: unknown };
-  assert.equal(packageJson.main, 'api/index.ts');
-  assert.equal(
-    existsSync(new URL(`../../${String(packageJson.main)}`, import.meta.url)),
-    true,
   );
+  const main = isString(packageJson.main) ? packageJson.main : undefined;
+  assert.ok(main !== undefined);
+  assert.equal(main, 'api/index.ts');
+  assert.equal(existsSync(new URL(`../../${main}`, import.meta.url)), true);
 });
 
 test('Vercel gives the catch-all function enough time to finish one paid generation', () => {
   const config = createVercelConfig({
     MEHFIL_SHARE_URL: 'https://share.example',
   });
-  assert.equal(typeof handler, 'function');
+  assert.equal(handler instanceof Function, true);
   assert.equal('builds' in config, false);
   assert.equal('routes' in config, false);
   assert.deepEqual(config.functions, {

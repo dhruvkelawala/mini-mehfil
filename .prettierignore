@@ -11,3 +11,4 @@ public/
 worker-configuration.d.ts
 docs/mobile-playback-investigation-2026-08-15.md
 docs/research/minimax-native-vocals.md
+tools/oxlint/anti-slop/

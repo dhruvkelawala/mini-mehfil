@@ -3,6 +3,11 @@ import { createSignal, getOwner, onCleanup } from 'solid-js';
 import { normalizeLyricTiming } from '../../lyrics/lyric-sync.ts';
 import { isRecord, parseLyricsSheet } from '../../room/protocol.ts';
 import {
+  isString,
+  type JsonRecord,
+  type JsonValue,
+} from '../../room/primitives.ts';
+import {
   createRecoveryCoordinator,
   type GenerationContext,
   type HostLyrics,
@@ -32,12 +37,12 @@ const RECORDING_LINES = [
   'Almost there. Good songs take a moment…',
 ];
 
-export interface GenerateInput {
+export type GenerateInput = {
   token: string;
   idea: string;
   vibe: string;
   language: string;
-}
+};
 export interface GeneratedSong {
   lyricSheet: HostLyrics;
   shareReference: string | null;
@@ -93,30 +98,26 @@ interface HttpError extends Error {
   httpStatus?: number;
 }
 
-function parseLyrics(value: unknown): HostLyrics | null {
+function parseLyrics(value: JsonValue | undefined): HostLyrics | null {
   const sheet = parseLyricsSheet(value);
-  if (!sheet || !isRecord(value) || typeof value.prompt !== 'string')
-    return null;
+  if (!sheet || !isRecord(value) || !isString(value.prompt)) return null;
   return {
     ...sheet,
-    languageCode:
-      typeof value.languageCode === 'string' ? value.languageCode : '',
+    languageCode: isString(value.languageCode) ? value.languageCode : '',
     prompt: value.prompt,
   };
 }
-function audioSource(value: Record<string, unknown>): string | null {
-  if (typeof value.audio === 'string') return value.audio;
-  if (isRecord(value.audio) && typeof value.audio.url === 'string')
+function audioSource(value: JsonRecord): string | null {
+  if (isString(value.audio)) return value.audio;
+  if (isRecord(value.audio) && isString(value.audio.url))
     return value.audio.url;
-  return isRecord(value.data) && typeof value.data.audio === 'string'
+  return isRecord(value.data) && isString(value.data.audio)
     ? value.data.audio
     : null;
 }
-async function responseJson(
-  response: Response,
-): Promise<Record<string, unknown>> {
+async function responseJson(response: Response): Promise<JsonRecord> {
   try {
-    const value: unknown = await response.json();
+    const value: JsonValue | undefined = await response.json();
     return isRecord(value) ? value : {};
   } catch {
     return { error: 'The server returned an unreadable response.' };
@@ -129,7 +130,7 @@ export function createGenerationController({
   storage = sessionStorage,
   now = Date.now,
   visible = () =>
-    typeof document === 'undefined' || document.visibilityState === 'visible',
+    !('document' in globalThis) || document.visibilityState === 'visible',
   timingAnalysis,
 }: {
   player: PlayerController;
@@ -183,8 +184,8 @@ export function createGenerationController({
 
   const requestJson = async (
     url: string,
-    payload: unknown,
-  ): Promise<Record<string, unknown>> => {
+    payload: JsonValue,
+  ): Promise<JsonRecord> => {
     const response = await fetcher(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -192,8 +193,10 @@ export function createGenerationController({
     });
     const value = await responseJson(response);
     if (!response.ok) {
+      // SAFETY: the next statement stamps httpStatus on this error before it
+      // can escape to any caller, so the HttpError contract is established.
       const error = new Error(
-        typeof value.error === 'string' ? value.error : 'Something went wrong.',
+        isString(value.error) ? value.error : 'Something went wrong.',
       ) as HttpError;
       error.httpStatus = response.status;
       throw error;
@@ -211,7 +214,7 @@ export function createGenerationController({
     if (!background) setPerformanceAvailable(false);
   };
   const finalize = async (
-    result: Record<string, unknown>,
+    result: JsonRecord,
     pending: PendingGeneration & { run: number },
   ): Promise<GeneratedSong | null> => {
     if (
@@ -234,8 +237,7 @@ export function createGenerationController({
       return null;
     }
     if (!background) setLyrics(pending.lyricSheet);
-    const reference =
-      typeof result.share_ref === 'string' ? result.share_ref : null;
+    const reference = isString(result.share_ref) ? result.share_ref : null;
     if (!background) {
       setShareReference(reference);
       setShareUrl(null);
@@ -306,7 +308,7 @@ export function createGenerationController({
       setGenerating(true);
     },
     onComplete: (value, pending) => {
-      void finalize(value, pending).catch((value: unknown) => {
+      void finalize(value, pending).catch((value) => {
         const error =
           value instanceof Error ? value : new Error('Generation failed.');
         const background = pending.context?.kind === 'room-recording';
@@ -318,7 +320,7 @@ export function createGenerationController({
       if (pending.run !== run) return;
       analysisTokens.delete(pending.jobId);
       const error = new Error(
-        typeof value.error === 'string' ? value.error : 'Generation failed.',
+        isString(value.error) ? value.error : 'Generation failed.',
       );
       const background = pending.context?.kind === 'room-recording';
       fail(error.message, !background, background);
@@ -328,7 +330,7 @@ export function createGenerationController({
       if (pending.run !== run) return;
       analysisTokens.delete(pending.jobId);
       const error = new Error(
-        typeof value.error === 'string'
+        isString(value.error)
           ? value.error
           : 'That recording can no longer be recovered.',
       );
@@ -369,6 +371,9 @@ export function createGenerationController({
         if (!sheet) throw new Error('Could not write lyrics.');
         return sheet;
       } catch (error) {
+        // SAFETY: requestJson stamps httpStatus on HTTP failures before
+        // throwing; any other rejection leaves it undefined, which the
+        // Number.isInteger check below treats as an interruption.
         const http = (error as HttpError).httpStatus;
         const interrupted =
           !Number.isInteger(http) && lifecycleBackgroundVersion !== background;
@@ -442,7 +447,7 @@ export function createGenerationController({
       const previous = recovery.read();
       if (
         previous &&
-        typeof confirm === 'function' &&
+        'confirm' in globalThis &&
         !confirm(
           'A recording is still being followed in this tab. Start a new song and stop checking it?',
         )
@@ -486,7 +491,7 @@ export function createGenerationController({
         };
         analysisTokens.set(jobId, input.token);
         generationRequestInFlight = true;
-        let result: Record<string, unknown>;
+        let result: JsonRecord;
         try {
           result = await requestJson('/api/generate', {
             jobId,
@@ -507,7 +512,7 @@ export function createGenerationController({
           (await finalize(
             {
               ...result,
-              jobId: typeof result.jobId === 'string' ? result.jobId : jobId,
+              jobId: isString(result.jobId) ? result.jobId : jobId,
             },
             pending,
           )) ?? undefined
@@ -518,6 +523,9 @@ export function createGenerationController({
         if (
           stage === 'generate-music' &&
           pending &&
+          // SAFETY: requestJson stamps httpStatus on HTTP failures before
+          // throwing; any other rejection leaves it undefined, which
+          // Number.isInteger treats as an interruption.
           !Number.isInteger((error as HttpError).httpStatus)
         ) {
           resumePending('generate-request-rejected', hooks, pending);
@@ -566,7 +574,7 @@ export function createGenerationController({
         });
         if (requestRun !== run || (!song && reference !== shareReference()))
           return undefined;
-        if (typeof result.url !== 'string')
+        if (!isString(result.url))
           throw new Error('The share service returned an invalid link.');
         url = result.url;
         if (!song) setShareUrl(url);

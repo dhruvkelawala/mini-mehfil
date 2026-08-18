@@ -1,5 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import {
+  isRecord,
+  type JsonRecord,
+  type JsonValue,
+} from '../../src/room/primitives.ts';
 import { createRoomState, projectRoomState } from '../../src/room/state.ts';
 import { playbackPage } from '../../src/worker/playback-page.ts';
 import {
@@ -37,6 +42,9 @@ async function installTimingBrowserHarness(
 ) {
   await page.addInitScript(
     ({ initialTime, mediaDuration }) => {
+      // SAFETY: the defineProperties calls below read and write
+      // __mediaCurrentTime / __mediaPaused on window, establishing the
+      // properties this cast declares.
       const fixtureWindow = window as typeof window & {
         __mediaCurrentTime?: number;
         __mediaPaused?: boolean;
@@ -84,13 +92,15 @@ async function fillSong(page: Page) {
   await page.getByLabel(/What's the song about\?/).fill('Monsoon Song');
 }
 
-async function sentFrames(page: Page) {
+async function sentFrames(page: Page): Promise<JsonValue[]> {
   return page.evaluate(() => {
+    // SAFETY: the WebSocket harness installed by installWebSocketHarness
+    // exposes __mehfilSockets on window via addInitScript.
     const fixtureWindow = window as typeof window & {
       __mehfilSockets: Array<{ sent: string[] }>;
     };
     return fixtureWindow.__mehfilSockets.flatMap((socket) =>
-      socket.sent.map((frame) => JSON.parse(frame) as unknown),
+      socket.sent.map((frame) => JSON.parse(frame)),
     );
   });
 }
@@ -103,6 +113,9 @@ test('a generated song can be revealed, shared, and reopened', async ({
       configurable: true,
       value: {
         writeText(value: string) {
+          // SAFETY: the clipboard stub in this addInitScript writes
+          // __copiedText onto window, establishing the property this cast
+          // declares.
           (window as typeof window & { __copiedText?: string }).__copiedText =
             value;
           return Promise.resolve();
@@ -130,6 +143,8 @@ test('a generated song can be revealed, shared, and reopened', async ({
     page.getByRole('button', { name: 'Share this song' }),
   ).toContainText('Copied');
   expect(
+    // SAFETY: the clipboard stub installed above writes __copiedText onto
+    // window, so the cast reads the value the stub recorded.
     await page.evaluate(
       () => (window as typeof window & { __copiedText?: string }).__copiedText,
     ),
@@ -351,8 +366,10 @@ test('a host manages a request through recording and publication', async ({
     },
   );
   await page.evaluate((state) => {
+    // SAFETY: the WebSocket harness installed by installWebSocketHarness
+    // defines __mehfilSockets on window with a serverMessage method.
     const fixtureWindow = window as typeof window & {
-      __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
+      __mehfilSockets: Array<{ serverMessage(value: JsonValue): void }>;
     };
     fixtureWindow.__mehfilSockets[0]?.serverMessage({
       type: 'snapshot',
@@ -382,13 +399,15 @@ test('a host manages a request through recording and publication', async ({
   await expect
     .poll(async () =>
       (await sentFrames(page)).some(
-        (frame) => (frame as { type?: string }).type === 'recording-enqueued',
+        (frame) => isRecord(frame) && frame.type === 'recording-enqueued',
       ),
     )
     .toBe(true);
   await page.evaluate(() => {
+    // SAFETY: the WebSocket harness installed by installWebSocketHarness
+    // defines __mehfilSockets on window with a serverMessage method.
     const fixtureWindow = window as typeof window & {
-      __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
+      __mehfilSockets: Array<{ serverMessage(value: JsonValue): void }>;
     };
     fixtureWindow.__mehfilSockets[0]?.serverMessage({
       type: 'snapshot',
@@ -434,19 +453,26 @@ test('a host manages a request through recording and publication', async ({
   await expect
     .poll(async () =>
       (await sentFrames(page)).find(
-        (frame) => (frame as { type?: string }).type === 'recording-started',
+        (frame) => isRecord(frame) && frame.type === 'recording-started',
       ),
     )
     .toBeTruthy();
   const recordingStarted = (await sentFrames(page)).find(
-    (frame) => (frame as { type?: string }).type === 'recording-started',
-  ) as { coordinatorId?: string } | undefined;
+    (frame): frame is JsonRecord =>
+      isRecord(frame) && frame.type === 'recording-started',
+  );
   if (!recordingStarted?.coordinatorId)
     throw new Error('Host did not claim the queued recording');
+  // SAFETY: the host app generates coordinator ids as non-empty strings in
+  // recording-started frames, and the guard above already rejected falsy
+  // values before this assertion.
+  const coordinatorId = recordingStarted.coordinatorId as string;
 
   await page.evaluate((coordinatorId) => {
+    // SAFETY: the WebSocket harness installed by installWebSocketHarness
+    // defines __mehfilSockets on window with a serverMessage method.
     const fixtureWindow = window as typeof window & {
-      __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
+      __mehfilSockets: Array<{ serverMessage(value: JsonValue): void }>;
     };
     fixtureWindow.__mehfilSockets[0]?.serverMessage({
       type: 'snapshot',
@@ -492,16 +518,10 @@ test('a host manages a request through recording and publication', async ({
         setlist: [],
       },
     });
-  }, recordingStarted.coordinatorId);
+  }, coordinatorId);
   await expect(page.getByText('Your recording is ready.')).toBeVisible();
 
-  const messages = (await sentFrames(page)) as Array<{
-    type?: string;
-    participantId?: string;
-    requestId?: string;
-    toIndex?: number;
-    shareId?: string;
-  }>;
+  const messages = (await sentFrames(page)).filter(isRecord);
   expect(messages).toEqual(
     expect.arrayContaining([
       { type: 'kicked', participantId: 'listener-1' },
@@ -536,7 +556,7 @@ test('delayed timing upgrades host, listener, and shared playback at the same me
     releaseAnalysis = resolve;
   });
   let shareCalls = 0;
-  const sharedBodies: Array<Record<string, unknown>> = [];
+  const sharedBodies: Array<JsonRecord> = [];
 
   await installWebSocketHarness(page);
   await installTimingBrowserHarness(page);
@@ -567,9 +587,9 @@ test('delayed timing upgrades host, listener, and shared playback at the same me
   });
   await page.route('**/api/share', async (route) => {
     shareCalls += 1;
-    sharedBodies.push(
-      route.request().postDataJSON() as Record<string, unknown>,
-    );
+    // SAFETY: the app's share POST body is app-authored JSON; the test only
+    // compares its lyricTiming field.
+    sharedBodies.push(route.request().postDataJSON() as JsonRecord);
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
@@ -594,6 +614,8 @@ test('delayed timing upgrades host, listener, and shared playback at the same me
     page.getByText('Analyzing MiniMax sections · music is ready'),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+  // SAFETY: the locator('audio') targets the page's <audio> player element,
+  // so the evaluated element is an HTMLAudioElement exposing currentTime.
   expect(
     await page
       .locator('audio')
@@ -612,6 +634,8 @@ test('delayed timing upgrades host, listener, and shared playback at the same me
     .locator('#lyric-reveal [aria-current="true"] .lyric-primary')
     .textContent();
   expect(hostLine).toBeTruthy();
+  // SAFETY: the same <audio> player element as above, re-read after the
+  // timing upgrade to prove the media clock did not reset.
   expect(
     await page
       .locator('audio')
@@ -622,7 +646,7 @@ test('delayed timing upgrades host, listener, and shared playback at the same me
   await expect
     .poll(async () =>
       (await sentFrames(page)).find(
-        (frame) => (frame as { type?: string }).type === 'song-shared',
+        (frame) => isRecord(frame) && frame.type === 'song-shared',
       ),
     )
     .toEqual(
@@ -666,8 +690,10 @@ test('delayed timing upgrades host, listener, and shared playback at the same me
   await listener.getByLabel('Your name').fill('Listener');
   await listener.getByRole('button', { name: 'Join the mehfil' }).click();
   await listener.evaluate((state) => {
+    // SAFETY: the WebSocket harness installed by installWebSocketHarness
+    // defines __mehfilSockets on window with a serverMessage method.
     const fixtureWindow = window as typeof window & {
-      __mehfilSockets: Array<{ serverMessage(value: unknown): void }>;
+      __mehfilSockets: Array<{ serverMessage(value: JsonValue): void }>;
     };
     fixtureWindow.__mehfilSockets[0]?.serverMessage({
       type: 'snapshot',
@@ -741,7 +767,7 @@ test('a listener submits a request and resumes the same seat after reload', asyn
 
   await page.reload();
   await expect(page.getByText('The host is here.')).toBeVisible();
-  const resumed = (await sentFrames(page)) as Array<Record<string, unknown>>;
+  const resumed = (await sentFrames(page)).filter(isRecord);
   expect(resumed[0]).toEqual({ type: 'join', resume: 'resume-fixture' });
   await expect(
     page.getByRole('button', { name: 'Join the mehfil' }),
@@ -752,6 +778,9 @@ test('shared playback refreshes progress and lyrics between media events', async
   page,
 }) => {
   await page.addInitScript(() => {
+    // SAFETY: the defineProperties calls below read and write
+    // __mediaCurrentTime / __mediaPaused (and the clipboard stub writes
+    // __copiedText) on window, establishing the properties this cast declares.
     const media = window as typeof window & {
       __copiedText?: string;
       __mediaCurrentTime?: number;
@@ -797,6 +826,8 @@ test('shared playback refreshes progress and lyrics between media events', async
   await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
 
   await page.evaluate(() => {
+    // SAFETY: the media-clock init script installed above defines
+    // __mediaCurrentTime on window.
     (
       window as typeof window & { __mediaCurrentTime?: number }
     ).__mediaCurrentTime = 50;
@@ -809,6 +840,8 @@ test('shared playback refreshes progress and lyrics between media events', async
     page.getByRole('button', { name: 'Copy this song link' }),
   ).toContainText('Copied');
   expect(
+    // SAFETY: the clipboard stub installed above writes __copiedText onto
+    // window, so the cast reads the value the stub recorded.
     await page.evaluate(
       () => (window as typeof window & { __copiedText?: string }).__copiedText,
     ),

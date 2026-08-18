@@ -1,6 +1,11 @@
 import { createMemo, createSignal, getOwner, onCleanup } from 'solid-js';
 
-import { isRoomId } from '../../room/primitives.ts';
+import {
+  isNumber,
+  isRoomId,
+  isString,
+  type JsonValue,
+} from '../../room/primitives.ts';
 import type { LyricTiming } from '../../lyrics/lyric-sync.ts';
 import {
   isRecord,
@@ -76,20 +81,20 @@ export type RoomFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 function createCoordinatorId(): string {
-  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  if (crypto.randomUUID !== undefined) return crypto.randomUUID();
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
-function parseDetails(value: unknown): RoomDetails | null {
+function parseDetails(value: JsonValue | undefined): RoomDetails | null {
   if (
     !isRecord(value) ||
     !isRoomId(value.roomId) ||
-    typeof value.joinUrl !== 'string' ||
-    typeof value.socketUrl !== 'string' ||
-    typeof value.hostSecret !== 'string' ||
+    !isString(value.joinUrl) ||
+    !isString(value.socketUrl) ||
+    !isString(value.hostSecret) ||
     value.hostSecret.length < 32 ||
-    typeof value.expiresAt !== 'number'
+    !isNumber(value.expiresAt)
   )
     return null;
   try {
@@ -114,10 +119,7 @@ function parseDetails(value: unknown): RoomDetails | null {
     expiresAt: value.expiresAt,
   };
 }
-export function roomReorderTargets(
-  queue: SongRequest[],
-  itemId: string,
-): { up: number; down: number } {
+export function roomReorderTargets(queue: SongRequest[], itemId: string) {
   const movable = queue.filter(
     (item) => item.status !== 'declined' && item.status !== 'ready',
   );
@@ -274,16 +276,18 @@ export function createHostRoomController({
         } satisfies ClientMessage),
       );
     });
-    next.addEventListener('message', (event: MessageEvent<unknown>) => {
-      if (typeof event.data !== 'string') return;
-      let value: unknown;
+    next.addEventListener('message', (event: MessageEvent<JsonValue>) => {
+      if (!isString(event.data)) return;
+      let value: JsonValue | undefined;
       try {
         value = JSON.parse(event.data);
       } catch {
         return;
       }
-      if (!isRecord(value) || typeof value.type !== 'string') return;
-      if (value.type === 'snapshot') {
+      if (!isRecord(value)) return;
+      const type = value.type;
+      if (!isString(type)) return;
+      if (type === 'snapshot') {
         const state = parseHostRoomProjection(value.state);
         if (!state) return;
         setAuthenticated(true);
@@ -291,7 +295,7 @@ export function createHostRoomController({
         setSnapshot(state);
         setStatus(state.expiredAt ? 'expired' : 'connected');
         if (state.expiredAt) abandon();
-      } else if (value.type === 'error' && typeof value.code === 'string') {
+      } else if (type === 'error' && isString(value.code)) {
         setMessage(value.code);
         if (value.code === 'auth-failed' || value.code === 'room-expired')
           abandon();
@@ -372,7 +376,7 @@ export function createHostRoomController({
           headers: { 'content-type': 'application/json' },
           body: '{}',
         });
-        let value: unknown;
+        let value: JsonValue | undefined;
         try {
           value = await response.json();
         } catch {
@@ -381,7 +385,7 @@ export function createHostRoomController({
         const room = parseDetails(value);
         if (!response.ok || !room)
           throw new Error(
-            isRecord(value) && typeof value.error === 'string'
+            isRecord(value) && isString(value.error)
               ? value.error
               : 'The room could not be opened.',
           );

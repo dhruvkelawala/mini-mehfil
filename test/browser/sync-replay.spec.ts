@@ -7,6 +7,8 @@ import { createRoomState, projectRoomState } from '../../src/room/state.ts';
 import { installWebSocketHarness } from '../fixtures/websocket-harness.ts';
 
 const sharedSongId = 'AbCdEfGhIjKlMnOp';
+// SAFETY: sync-replay-song.json is a checked-in fixture with a fixed
+// lyrics/timing shape that the shared player renders verbatim.
 const replaySong = JSON.parse(
   readFileSync(
     new URL('../fixtures/sync-replay-song.json', import.meta.url),
@@ -35,6 +37,8 @@ const replaySong = JSON.parse(
 
 async function installProofCapture(page: Page): Promise<void> {
   await page.addInitScript(() => {
+    // SAFETY: the clipboard stub below writes __copiedText onto window,
+    // establishing the property this cast declares.
     const proof = window as typeof window & {
       __copiedText?: string;
     };
@@ -57,6 +61,8 @@ async function seekActive(
 ): Promise<{ section: string; line: string }> {
   const audio = page.locator('audio');
   await audio.evaluate((element, time) => {
+    // SAFETY: this locator targets the page's <audio> element, which the
+    // browser renders as an HTMLAudioElement.
     const media = element as HTMLAudioElement;
     media.currentTime = time;
     media.dispatchEvent(new Event('timeupdate'));
@@ -90,11 +96,15 @@ test('local MiniMax replay keeps host, listener, and share on one real-audio clo
   ).toBeVisible();
   await page.waitForTimeout(350);
   const hostAudio = page.locator('audio');
+  // SAFETY: hostAudio targets the player's <audio> element, so the evaluated
+  // element is an HTMLAudioElement whose duration is read here.
   await expect
     .poll(() =>
       hostAudio.evaluate((element) => (element as HTMLAudioElement).duration),
     )
     .toBeGreaterThan(150);
+  // SAFETY: same <audio> element as above; currentSrc is read from the
+  // HTMLAudioElement to confirm the upgrade keeps the same source.
   const sourceBeforeUpgrade = await hostAudio.evaluate(
     (element) => (element as HTMLAudioElement).currentSrc,
   );
@@ -105,6 +115,8 @@ test('local MiniMax replay keeps host, listener, and share on one real-audio clo
     page.getByText('Lines follow MiniMax sections · timing is approximate'),
   ).toBeVisible();
   await page.waitForTimeout(350);
+  // SAFETY: the same host <audio> element as above, re-read after the timing
+  // upgrade to prove the source was not swapped.
   expect(
     await hostAudio.evaluate(
       (element) => (element as HTMLAudioElement).currentSrc,
@@ -153,6 +165,8 @@ test('local MiniMax replay keeps host, listener, and share on one real-audio clo
   await expect(
     listener.locator('.lyric-performance .lyric-section'),
   ).toHaveCount(1);
+  // SAFETY: the listener's locator('audio') is its <audio> player element,
+  // so the evaluated element is an HTMLAudioElement exposing duration.
   await expect
     .poll(() =>
       listener
@@ -167,6 +181,8 @@ test('local MiniMax replay keeps host, listener, and share on one real-audio clo
   await expect(standalone.locator('#reveal-lines .lyric-section')).toHaveCount(
     1,
   );
+  // SAFETY: the shared page's locator('audio') is its <audio> player element,
+  // so the evaluated element is an HTMLAudioElement exposing duration.
   await expect
     .poll(() =>
       standalone

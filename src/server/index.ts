@@ -5,7 +5,12 @@ import { Buffer } from 'node:buffer';
 
 import { isDirectEntry, parseTcpPort } from '../config/runtime.ts';
 import { normalizeLyricTiming } from '../lyrics/lyric-sync.ts';
-import { isRoomId } from '../room/primitives.ts';
+import {
+  isRoomId,
+  isString,
+  type JsonRecord,
+  type JsonValue,
+} from '../room/primitives.ts';
 import { isRecord } from '../room/protocol.ts';
 import type { LyricsResult, WriteLyricsOptions } from './lyricist.ts';
 import { analyzeMiniMaxTiming } from './timing-analysis.ts';
@@ -18,16 +23,15 @@ const JOB_ID_PATTERN = /^[A-Za-z0-9_-]{24}$/;
 const RECOVERY_TIMEOUT_MS = 15 * 1000;
 const GENERATION_TIMEOUT_MS = 4 * 60 * 1000;
 export const ANALYSIS_TIMEOUT_MS = 180 * 1000;
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-};
+const MIME = new Map<string, string>([
+  ['.html', 'text/html; charset=utf-8'],
+  ['.css', 'text/css; charset=utf-8'],
+  ['.js', 'text/javascript; charset=utf-8'],
+  ['.svg', 'image/svg+xml'],
+  ['.png', 'image/png'],
+  ['.ico', 'image/x-icon'],
+]);
 
-type JsonRecord = Record<string, unknown>;
 type HttpError = Error & { status?: number; code?: string };
 
 export interface ServerOptions {
@@ -53,20 +57,20 @@ export type ServerFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-function errorDetails(error: unknown): HttpError {
-  return error instanceof Error ? error : new Error('Unexpected server error.');
+function errorDetails(error: HttpError | undefined): HttpError {
+  return error ?? new Error('Unexpected server error.');
 }
 
 function parseJsonRecord(text: string): JsonRecord | null {
   try {
-    const value: unknown = JSON.parse(text);
+    const value: JsonValue | undefined = JSON.parse(text);
     return isRecord(value) ? value : null;
   } catch {
     return null;
   }
 }
 
-function sendJson(res: http.ServerResponse, status: number, value: unknown) {
+function sendJson(res: http.ServerResponse, status: number, value: JsonValue) {
   const body = JSON.stringify(value);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -96,7 +100,7 @@ function readJson(
     });
     req.on('end', () => {
       try {
-        const parsed: unknown = JSON.parse(
+        const parsed: JsonValue | undefined = JSON.parse(
           Buffer.concat(chunks).toString('utf8'),
         );
         if (!isRecord(parsed)) throw new Error('Invalid JSON');
@@ -116,8 +120,7 @@ function audioSource(
   const data = isRecord(result.data) ? result.data : {};
   const audio = isRecord(result.audio) ? result.audio : {};
   const source = data.audio || audio.url || result.audio;
-  if (typeof source !== 'string' || !source || source.length > 32 * 1024)
-    return null;
+  if (!isString(source) || !source || source.length > 32 * 1024) return null;
   if (
     /^(?:0x)?[0-9a-f]+$/i.test(source) &&
     source.replace(/^0x/i, '').length % 2 === 0
@@ -201,8 +204,8 @@ function decodeAudioSource(
   return audio;
 }
 
-function normalizeShareBaseUrl(value: unknown): string {
-  if (typeof value !== 'string' || !value) return '';
+function normalizeShareBaseUrl(value: JsonValue | undefined): string {
+  if (!isString(value) || !value) return '';
   try {
     const url = new URL(value);
     const localHttp =
@@ -224,20 +227,22 @@ function normalizeShareBaseUrl(value: unknown): string {
 }
 
 function completedGeneration(record: JsonRecord): JsonRecord {
-  const result: JsonRecord = {
-    jobId: record.jobId,
-    status: 'complete',
-    data: { audio: record.source },
-    share_ref: record.jobId,
-  };
-  if (record.traceId) result.trace_id = record.traceId;
+  const result: JsonRecord = {};
+  if (record.jobId !== undefined) result.jobId = record.jobId;
+  result.status = 'complete';
+  result.data = record.source !== undefined ? { audio: record.source } : {};
+  if (record.jobId !== undefined) result.share_ref = record.jobId;
+  if (record.traceId !== undefined) result.trace_id = record.traceId;
   const timing = normalizeLyricTiming(record.lyricTiming);
   if (timing) result.lyric_timing = timing;
   return result;
 }
 
-function publicFailure(message: unknown, code = 'GENERATION_FAILED') {
-  const upstream = typeof message === 'string' ? message : '';
+function publicFailure(
+  message: JsonValue | undefined,
+  code = 'GENERATION_FAILED',
+) {
+  const upstream = isString(message) ? message : '';
   let safe = 'MiniMax could not make the recording. Please try again.';
   if (/token|auth|unauthori[sz]ed|forbidden/i.test(upstream))
     safe = 'MiniMax rejected the API token. Check it and try again.';
@@ -278,7 +283,7 @@ function staticFile(
       : '';
     res.writeHead(200, {
       'Content-Type':
-        MIME[path.extname(filePath)] || 'application/octet-stream',
+        MIME.get(path.extname(filePath)) || 'application/octet-stream',
       'Cache-Control': 'no-cache',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
@@ -294,6 +299,11 @@ let lyricistPromise: Promise<typeof import('./lyricist.ts')> | undefined;
 function loadLyricist() {
   lyricistPromise = lyricistPromise || import('./lyricist.ts');
   return lyricistPromise;
+}
+
+function bodyString(body: JsonRecord, key: string): string {
+  const value = body[key];
+  return isString(value) ? value.trim() : '';
 }
 
 export function createServer(options: ServerOptions = {}): http.Server {
@@ -329,21 +339,17 @@ export function createServer(options: ServerOptions = {}): http.Server {
 
   async function recoveryRequest(
     pathname: string,
-    { method = 'GET', body }: { method?: string; body?: unknown } = {},
+    { method = 'GET', body }: { method?: string; body?: JsonValue } = {},
   ): Promise<{ response: Response; value: JsonRecord }> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), RECOVERY_TIMEOUT_MS);
     let response: Response;
     try {
-      response = await fetchImpl(`${shareBaseUrl}${pathname}`, {
-        method,
-        headers: {
-          Authorization: `Bearer ${shareSecret}`,
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        signal: controller.signal,
-      });
+      const headers = new Headers({ Authorization: `Bearer ${shareSecret}` });
+      if (body !== undefined) headers.set('Content-Type', 'application/json');
+      const init: RequestInit = { method, headers, signal: controller.signal };
+      if (body !== undefined) init.body = JSON.stringify(body);
+      response = await fetchImpl(`${shareBaseUrl}${pathname}`, init);
     } catch {
       throw Object.assign(
         new Error(
@@ -354,9 +360,9 @@ export function createServer(options: ServerOptions = {}): http.Server {
     } finally {
       clearTimeout(timeout);
     }
-    let value: unknown;
+    let value: JsonValue | undefined;
     try {
-      value = JSON.parse(await response.text()) as unknown;
+      value = JSON.parse(await response.text());
     } catch {
       throw Object.assign(
         new Error(
@@ -377,7 +383,7 @@ export function createServer(options: ServerOptions = {}): http.Server {
 
   async function checkpoint(
     jobId: string,
-    body: unknown,
+    body: JsonValue,
   ): Promise<JsonRecord | null> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
@@ -393,9 +399,9 @@ export function createServer(options: ServerOptions = {}): http.Server {
     return null;
   }
 
-  const checkpointFailure = (jobId: string, failure: unknown) =>
+  const checkpointFailure = (jobId: string, failure: JsonValue) =>
     checkpoint(jobId, { status: 'failed', error: failure }).then(Boolean);
-  const checkpointComplete = (jobId: string, completion: unknown) =>
+  const checkpointComplete = (jobId: string, completion: JsonValue) =>
     checkpoint(jobId, completion);
   const roomTimeoutMs = options.roomTimeoutMs || 2 * 60 * 1000;
   const handleRequest = async (
@@ -405,11 +411,10 @@ export function createServer(options: ServerOptions = {}): http.Server {
     if (req.method === 'POST' && req.url === '/api/write-lyrics') {
       try {
         const body = await readJson(req);
-        const token = typeof body.token === 'string' ? body.token.trim() : '';
-        const idea = typeof body.idea === 'string' ? body.idea.trim() : '';
-        const vibe = typeof body.vibe === 'string' ? body.vibe.trim() : '';
-        const language =
-          typeof body.language === 'string' ? body.language.trim() : 'auto';
+        const token = bodyString(body, 'token');
+        const idea = bodyString(body, 'idea');
+        const vibe = bodyString(body, 'vibe');
+        const language = bodyString(body, 'language') || 'auto';
 
         if (!token)
           return sendJson(res, 400, { error: 'Add your MiniMax API token.' });
@@ -445,7 +450,9 @@ export function createServer(options: ServerOptions = {}): http.Server {
           clearTimeout(timeout);
         }
       } catch (error) {
-        const details = errorDetails(error);
+        const details = errorDetails(
+          error instanceof Error ? error : undefined,
+        );
         if (details.name === 'AbortError')
           return sendJson(res, 504, {
             error: 'The lyricist took too long. Try again.',
@@ -462,9 +469,8 @@ export function createServer(options: ServerOptions = {}): http.Server {
     if (req.method === 'POST' && req.url === '/api/analyze-timing') {
       try {
         const body = await readJson(req);
-        const token = typeof body.token === 'string' ? body.token.trim() : '';
-        const source =
-          typeof body.source === 'string' ? body.source.trim() : '';
+        const token = bodyString(body, 'token');
+        const source = bodyString(body, 'source');
         let outcome: TimingAnalysisOutcome;
         if (!validMiniMaxToken(token)) {
           outcome = {
@@ -500,12 +506,11 @@ export function createServer(options: ServerOptions = {}): http.Server {
       let audioReady = false;
       try {
         const body = await readJson(req);
-        const token = typeof body.token === 'string' ? body.token.trim() : '';
-        const lyrics =
-          typeof body.lyrics === 'string' ? body.lyrics.trim() : '';
-        const prompt =
-          typeof body.prompt === 'string' ? body.prompt.trim() : '';
-        const jobId = typeof body.jobId === 'string' ? body.jobId : '';
+        const token = bodyString(body, 'token');
+        const lyrics = bodyString(body, 'lyrics');
+        const prompt = bodyString(body, 'prompt');
+        const jobIdValue = body.jobId;
+        const jobId = isString(jobIdValue) ? jobIdValue : '';
 
         if (!token)
           return sendJson(res, 400, { error: 'Add your MiniMax API token.' });
@@ -596,10 +601,11 @@ export function createServer(options: ServerOptions = {}): http.Server {
         const resultError = isRecord(result.error) ? result.error : {};
 
         if (!upstream.ok || baseResponse.status_code) {
+          const resultErrorText = result.error;
           const message =
             baseResponse.status_msg ||
             resultError.message ||
-            (typeof result.error === 'string' ? result.error : '') ||
+            (isString(resultErrorText) ? resultErrorText : '') ||
             `MiniMax request failed (${upstream.status})`;
           const failure = publicFailure(message, 'MINIMAX_FAILED');
           if (claimedJobId && !(await checkpointFailure(claimedJobId, failure)))
@@ -629,11 +635,14 @@ export function createServer(options: ServerOptions = {}): http.Server {
           const resultData = isRecord(result.data) ? result.data : {};
           const traceId =
             result.trace_id || result.traceId || resultData.trace_id;
-          const checkpoint = await checkpointComplete(claimedJobId, {
-            status: 'complete',
-            source,
-            ...(typeof traceId === 'string' ? { traceId } : {}),
-          });
+          const checkpointValue: JsonRecord = {};
+          checkpointValue.status = 'complete';
+          checkpointValue.source = source;
+          if (isString(traceId)) checkpointValue.traceId = traceId;
+          const checkpoint = await checkpointComplete(
+            claimedJobId,
+            checkpointValue,
+          );
           if (!checkpoint)
             return sendJson(res, 503, {
               error:
@@ -643,7 +652,9 @@ export function createServer(options: ServerOptions = {}): http.Server {
         }
         return sendJson(res, 200, result);
       } catch (error) {
-        const details = errorDetails(error);
+        const details = errorDetails(
+          error instanceof Error ? error : undefined,
+        );
         if (details.name === 'AbortError') {
           const failure = publicFailure(
             'Generation timed out.',
@@ -715,7 +726,9 @@ export function createServer(options: ServerOptions = {}): http.Server {
           });
         return sendJson(res, 200, { jobId, status: 'pending' });
       } catch (error) {
-        const details = errorDetails(error);
+        const details = errorDetails(
+          error instanceof Error ? error : undefined,
+        );
         return sendJson(res, details.status || 503, {
           error:
             details.message ||
@@ -731,15 +744,16 @@ export function createServer(options: ServerOptions = {}): http.Server {
             error: 'Sharing is not configured on this mehfil.',
           });
         const body = await readJson(req);
-        const shareReference =
-          typeof body.shareRef === 'string' ? body.shareRef : '';
+        const shareRefValue = body.shareRef;
+        const shareReference = isString(shareRefValue) ? shareRefValue : '';
         if (!JOB_ID_PATTERN.test(shareReference))
           return sendJson(res, 404, {
             error:
               'That recording is no longer ready to share. Make it again and retry.',
           });
-        if (sharedUrls.has(shareReference))
-          return sendJson(res, 201, { url: sharedUrls.get(shareReference) });
+        const existingUrl = sharedUrls.get(shareReference);
+        if (existingUrl !== undefined)
+          return sendJson(res, 201, { url: existingUrl });
         const recovered = await recoveryRequest(
           `/generation-jobs/${shareReference}`,
         );
@@ -748,11 +762,9 @@ export function createServer(options: ServerOptions = {}): http.Server {
             error:
               'That recording is no longer ready to share. Make it again and retry.',
           });
+        const recoveredSource = recovered.value.source;
         const entry = {
-          source:
-            typeof recovered.value.source === 'string'
-              ? recovered.value.source
-              : '',
+          source: isString(recoveredSource) ? recoveredSource : '',
         };
         const lyricTiming = normalizeLyricTiming(body.lyricTiming);
         if (body.lyricTiming != null && !lyricTiming)
@@ -760,18 +772,18 @@ export function createServer(options: ServerOptions = {}): http.Server {
             error: 'The section timing artifact is invalid.',
           });
 
+        const title = body.title;
+        const shareLanguage = body.language;
+        const nativeScriptName = body.nativeScriptName;
+        const lyricsNative = body.lyricsNative;
+        const lyricsRoman = body.lyricsRoman;
         const metadata = {
-          title: typeof body.title === 'string' ? body.title : '',
-          language: typeof body.language === 'string' ? body.language : '',
-          nativeScriptName:
-            typeof body.nativeScriptName === 'string'
-              ? body.nativeScriptName
-              : '',
+          title: isString(title) ? title : '',
+          language: isString(shareLanguage) ? shareLanguage : '',
+          nativeScriptName: isString(nativeScriptName) ? nativeScriptName : '',
           isLatinScript: Boolean(body.isLatinScript),
-          lyricsNative:
-            typeof body.lyricsNative === 'string' ? body.lyricsNative : '',
-          lyricsRoman:
-            typeof body.lyricsRoman === 'string' ? body.lyricsRoman : '',
+          lyricsNative: isString(lyricsNative) ? lyricsNative : '',
+          lyricsRoman: isString(lyricsRoman) ? lyricsRoman : '',
           // The opaque share reference still proves this is a server-issued
           // recording. The browser supplies only the normalized artifact from
           // the separate, request-only timing analysis.
@@ -834,10 +846,11 @@ export function createServer(options: ServerOptions = {}): http.Server {
           return sendJson(res, response.status, {
             error: result.error || 'The song could not be shared.',
           });
-        let publicUrl;
+        let publicUrl: URL;
         try {
-          if (typeof result.url !== 'string') throw new Error('Invalid link');
-          publicUrl = new URL(result.url);
+          const urlValue = result.url;
+          if (!isString(urlValue)) throw new Error('Invalid link');
+          publicUrl = new URL(urlValue);
         } catch {
           throw Object.assign(
             new Error('The share service returned an invalid link.'),
@@ -858,7 +871,9 @@ export function createServer(options: ServerOptions = {}): http.Server {
         sharedUrls.set(shareReference, cleanUrl);
         return sendJson(res, 201, { url: cleanUrl });
       } catch (error) {
-        const details = errorDetails(error);
+        const details = errorDetails(
+          error instanceof Error ? error : undefined,
+        );
         if (details.name === 'AbortError')
           return sendJson(res, 504, {
             error: 'Sharing took too long. Please retry.',
@@ -900,7 +915,8 @@ export function createServer(options: ServerOptions = {}): http.Server {
           return sendJson(res, response.status, {
             error: result.error || 'The room could not be opened.',
           });
-        const roomId = typeof result.roomId === 'string' ? result.roomId : '';
+        const roomIdValue = result.roomId;
+        const roomId = isString(roomIdValue) ? roomIdValue : '';
         if (!isRoomId(roomId))
           throw Object.assign(
             new Error('The room service returned invalid room details.'),
@@ -908,14 +924,13 @@ export function createServer(options: ServerOptions = {}): http.Server {
           );
         let joinUrl: URL;
         let socketUrl: URL;
+        const joinUrlValue = result.joinUrl;
+        const socketUrlValue = result.socketUrl;
         try {
-          if (
-            typeof result.joinUrl !== 'string' ||
-            typeof result.socketUrl !== 'string'
-          )
+          if (!isString(joinUrlValue) || !isString(socketUrlValue))
             throw new Error('Invalid room URLs');
-          joinUrl = new URL(result.joinUrl);
-          socketUrl = new URL(result.socketUrl);
+          joinUrl = new URL(joinUrlValue);
+          socketUrl = new URL(socketUrlValue);
         } catch {
           throw Object.assign(
             new Error('The room service returned invalid room details.'),
@@ -939,14 +954,13 @@ export function createServer(options: ServerOptions = {}): http.Server {
           !socketUrl.hash &&
           !socketUrl.username &&
           !socketUrl.password;
-        const validSecret =
-          typeof result.hostSecret === 'string' &&
-          /^[A-Za-z0-9_-]{43}$/.test(result.hostSecret);
+        const hostSecret = result.hostSecret;
         const expiresAt = Number(result.expiresAt);
         if (
           !validJoin ||
           !validSocket ||
-          !validSecret ||
+          !isString(hostSecret) ||
+          !/^[A-Za-z0-9_-]{43}$/.test(hostSecret) ||
           !Number.isFinite(expiresAt) ||
           expiresAt <= Date.now()
         )
@@ -958,11 +972,13 @@ export function createServer(options: ServerOptions = {}): http.Server {
           roomId,
           joinUrl: joinUrl.href,
           socketUrl: socketUrl.href,
-          hostSecret: result.hostSecret,
+          hostSecret,
           expiresAt,
         });
       } catch (error) {
-        const details = errorDetails(error);
+        const details = errorDetails(
+          error instanceof Error ? error : undefined,
+        );
         if (details.name === 'AbortError')
           return sendJson(res, 504, {
             error: 'Opening the room took too long. Please retry.',

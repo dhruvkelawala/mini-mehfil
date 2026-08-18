@@ -4,6 +4,7 @@ import {
   randomBase64Url,
   ROOM_ID_ALPHABET,
   ROOM_ID_SOURCE,
+  type JsonValue,
 } from '../room/primitives.ts';
 
 const ROOM_LIFETIME_MS = 6 * 60 * 60 * 1000;
@@ -34,7 +35,7 @@ interface RoomRouterOptions {
 }
 
 function json(
-  value: unknown,
+  value: JsonValue,
   status = 200,
   headers: HeadersInit = {},
 ): Response {
