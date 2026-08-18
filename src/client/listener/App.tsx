@@ -1,6 +1,5 @@
 import { createMemo, Show, For, untrack } from 'solid-js';
 
-import { COURTYARD_SCENE } from '../../worker/courtyard.ts';
 import { LyricPerformance } from '../shared/LyricPerformance.tsx';
 import { parseLyricTimeline } from '../shared/lyric-timeline.ts';
 import { RoomActivity } from './components/RoomActivity.tsx';
@@ -77,9 +76,10 @@ export function App(props: {
 
   return (
     <>
-      {/* The courtyard is a repository-owned static SVG constant, never user input. */}
-      {/* eslint-disable-next-line solid/no-innerhtml */}
-      <div class="scene" aria-hidden="true" innerHTML={COURTYARD_SCENE} />
+      <div
+        class={`scene ${controller.playing() ? 'is-performing' : ''}`}
+        aria-hidden="true"
+      />
       <div class="grain" aria-hidden="true" />
       <header class="topbar">
         <div class="topbar-room">

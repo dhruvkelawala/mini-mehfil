@@ -62,7 +62,7 @@ continues to travel only between the host browser and local proxy.
 
 ## How it works
 
-- `src/client/host/` — the Solid host surface and typed controllers. The courtyard scene remains a single hand-built SVG.
+- `src/client/host/` — the Solid host surface and typed controllers. The folk-modern scene is shared with listener and Worker playback surfaces through the bundled background assets.
 - `src/server/` — the typed Node proxy and provider boundary.
 - `src/lyrics/` — platform-independent lyric parsing, section timing, and derived line pacing shared by the host and the Worker.
 - `src/room/` — platform-independent room protocol, state transitions, and transport ports.

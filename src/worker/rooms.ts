@@ -184,6 +184,7 @@ export function createRoomRouter({
           'content-security-policy': [
             "default-src 'none'",
             "connect-src 'self'",
+            "img-src 'self' data:",
             "media-src 'self' blob:",
             "style-src 'self'",
             "script-src 'self'",
