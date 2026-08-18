@@ -20,6 +20,7 @@ const formatTime = (seconds: number) =>
     : '0:00';
 
 const languages = [
+  'English',
   'auto',
   'Gujarati',
   'Hindi',
@@ -28,7 +29,6 @@ const languages = [
   'Bengali',
   'Marathi',
   'Urdu',
-  'English',
   'Spanish',
   'French',
   'Arabic',
@@ -259,7 +259,10 @@ export function App(props: {
                         <select name="language">
                           <For each={languages}>
                             {(language) => (
-                              <option value={language}>
+                              <option
+                                value={language}
+                                selected={language === 'auto'}
+                              >
                                 {language === 'auto' ? 'Auto-detect' : language}
                               </option>
                             )}
