@@ -4,8 +4,9 @@ A tiny local song room for MiniMax Music 3. Keywords in any language go in; a
 lyricist model writes structured native-script lyrics and a production prompt,
 and MiniMax Music 3 sings them.
 
-`PRODUCT.md` and the README privacy/timing sections are binding product
-contracts: change the code and those documents together or not at all.
+`PRODUCT.md`, the README privacy section, and `docs/section-timing.md` are
+binding product contracts: change the code and those documents together or not
+at all.
 Preserve the one-key BYOK privacy model and require an explicit user action
 before every paid generation.
 
