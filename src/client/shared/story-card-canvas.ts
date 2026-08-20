@@ -101,6 +101,18 @@ interface MeasuredLine {
   height: number;
 }
 
+interface StoryLayout {
+  title: { lines: string[]; size: number };
+  labelBaseline: number;
+  stanza: MeasuredLine[];
+  stanzaTop: number;
+}
+
+const measuredLayouts = new WeakMap<
+  HTMLCanvasElement,
+  { card: StoryCard; layout: StoryLayout }
+>();
+
 function setFont(
   context: CanvasRenderingContext2D,
   weight: string,
@@ -252,6 +264,32 @@ function measureStanza(
   return measured;
 }
 
+function measureStoryLayout(
+  canvas: HTMLCanvasElement,
+  context: CanvasRenderingContext2D,
+  card: StoryCard,
+  maxWidth: number,
+): StoryLayout {
+  const cached = measuredLayouts.get(canvas);
+  if (cached?.card === card) return cached.layout;
+
+  const title = fitTitle(context, card.title, maxWidth);
+  const labelBaseline =
+    TITLE_BASELINE + title.lines.length * title.size * TITLE_LINE_HEIGHT + 18;
+  const top = labelBaseline - 18 + STANZA_TOP_GAP;
+  const available = STANZA_BOTTOM - top;
+  const stanza = measureStanza(context, card, maxWidth, available);
+  const height = stanza.reduce((sum, entry) => sum + entry.height, 0);
+  const layout = {
+    title,
+    labelBaseline,
+    stanza,
+    stanzaTop: top + Math.max(0, (available - height) / 2),
+  };
+  measuredLayouts.set(canvas, { card, layout });
+  return layout;
+}
+
 /**
  * Paints the whole card. The canvas is sized here rather than by the caller so
  * every surface produces the same 1080x1920 picture. Pass a `frame` to draw
@@ -263,13 +301,22 @@ export function drawStoryCard(
   image: HTMLImageElement | null,
   frame?: StoryFrame,
 ): void {
-  canvas.width = WIDTH;
-  canvas.height = HEIGHT;
+  // Reassigning either dimension clears and reallocates the entire 2 MP
+  // backing store. A moving card renders repeatedly, so size it only when the
+  // caller actually handed us a different canvas.
+  if (canvas.width !== WIDTH) canvas.width = WIDTH;
+  if (canvas.height !== HEIGHT) canvas.height = HEIGHT;
   const context = canvas.getContext('2d');
   if (!context) throw new Error('This browser cannot draw a story card.');
   const centerX = WIDTH / 2;
   const maxWidth = WIDTH - PADDING * 2;
+  const layout = measureStoryLayout(canvas, context, card, maxWidth);
 
+  // The backing store now survives between frames, so explicitly clear the
+  // text lift left by the previous one before painting the courtyard.
+  context.shadowColor = 'transparent';
+  context.shadowBlur = 0;
+  context.shadowOffsetY = 0;
   paintScene(context, image, frame ? SCENE_DRIFT * frame.progress : 0);
   context.textAlign = 'center';
   context.textBaseline = 'alphabetic';
@@ -285,26 +332,22 @@ export function drawStoryCard(
   context.fillText('MINI MEHFIL', centerX, WORDMARK_BASELINE);
   setTracking(context, '0px');
 
-  const title = fitTitle(context, card.title, maxWidth);
   let y = TITLE_BASELINE;
+  setFont(context, '600', layout.title.size, SERIF);
   context.fillStyle = '#fff8ec';
-  for (const line of title.lines) {
+  for (const line of layout.title.lines) {
     context.fillText(line, centerX, y);
-    y += title.size * TITLE_LINE_HEIGHT;
+    y += layout.title.size * TITLE_LINE_HEIGHT;
   }
 
   setFont(context, '700', 27, SANS);
   context.fillStyle = '#e9c27f';
   setTracking(context, '6px');
-  context.fillText(card.label.toUpperCase(), centerX, y + 18);
+  context.fillText(card.label.toUpperCase(), centerX, layout.labelBaseline);
   setTracking(context, '0px');
 
-  const top = y + STANZA_TOP_GAP;
-  const available = STANZA_BOTTOM - top;
-  const stanza = measureStanza(context, card, maxWidth, available);
-  const height = stanza.reduce((sum, entry) => sum + entry.height, 0);
-  let lineY = top + Math.max(0, (available - height) / 2);
-  for (const [index, entry] of stanza.entries()) {
+  let lineY = layout.stanzaTop;
+  for (const [index, entry] of layout.stanza.entries()) {
     // On the still card every line is equal. On the moving one the line being
     // sung carries the frame and the rest step back.
     const span = frame?.activeSpan ?? 1;

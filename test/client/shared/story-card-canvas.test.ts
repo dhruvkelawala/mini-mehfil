@@ -24,6 +24,7 @@ class Context {
   readonly texts: { text: string; x: number; y: number; font: string }[] = [];
   readonly rects: { y: number; fillStyle: unknown }[] = [];
   readonly images: { width: number; height: number }[] = [];
+  measureCalls = 0;
   createLinearGradient() {
     return { addColorStop() {} };
   }
@@ -43,6 +44,7 @@ class Context {
     this.texts.push({ text, x, y, font: this.font });
   }
   measureText(text: string) {
+    this.measureCalls += 1;
     const size = Number(/(\d+)px/.exec(this.font)?.[1] ?? 20);
     return { width: text.length * size * 0.55 };
   }
@@ -52,9 +54,24 @@ class Context {
 }
 
 class Canvas {
-  width = 0;
-  height = 0;
+  private canvasWidth = 0;
+  private canvasHeight = 0;
+  resizeCount = 0;
   readonly context = new Context();
+  get width() {
+    return this.canvasWidth;
+  }
+  set width(value: number) {
+    this.canvasWidth = value;
+    this.resizeCount += 1;
+  }
+  get height() {
+    return this.canvasHeight;
+  }
+  set height(value: number) {
+    this.canvasHeight = value;
+    this.resizeCount += 1;
+  }
   getContext() {
     return this.context;
   }
@@ -116,6 +133,37 @@ test('the courtyard is cropped to fill the portrait frame', () => {
   );
   expect(drawn?.width).toBeGreaterThanOrEqual(1080);
   expect(drawn?.height).toBeGreaterThanOrEqual(1920);
+});
+
+test('moving frames reuse the canvas backing store and measured lyric layout', () => {
+  const canvas = new Canvas();
+  const value = card({
+    stanza: [
+      { primary: 'આ સાંજ ધીમે', secondary: 'aa saanj dhime' },
+      { primary: 'મહેકે છે', secondary: 'maheke chhe' },
+    ],
+  });
+  const image = { width: 1600, height: 1000 } as HTMLImageElement;
+
+  drawStoryCard(canvas as unknown as HTMLCanvasElement, value, image, {
+    progress: 0,
+    activeLine: 0,
+  });
+  const resizeCount = canvas.resizeCount;
+  const measureCalls = canvas.context.measureCalls;
+
+  drawStoryCard(canvas as unknown as HTMLCanvasElement, value, image, {
+    progress: 0.5,
+    activeLine: 1,
+  });
+
+  expect(canvas.resizeCount, 'a frame must not reallocate 2 MP').toBe(
+    resizeCount,
+  );
+  expect(
+    canvas.context.measureCalls,
+    'unchanged copy keeps its measured layout',
+  ).toBe(measureCalls);
 });
 
 test('a background that will not load leaves a card that still reads', () => {
