@@ -23,9 +23,11 @@
     "build:host": "vite build --mode host",
     "build": "pnpm run build:host && pnpm run build:listener",
     "check:bundle": "node scripts/check-bundle-size.ts",
-    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run worker:types:check && pnpm test && pnpm run build && pnpm run test:dev && pnpm run check:bundle && pnpm run worker:dry-run",
+    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run worker:types:check && pnpm run story-card:check && pnpm test && pnpm run build && pnpm run test:dev && pnpm run check:bundle && pnpm run worker:dry-run",
     "worker:types": "wrangler types worker-configuration.d.ts --config share/wrangler.jsonc",
     "worker:types:check": "wrangler types --check worker-configuration.d.ts --config share/wrangler.jsonc",
+    "story-card": "node scripts/build-story-card.ts",
+    "story-card:check": "node scripts/build-story-card.ts --check",
     "worker:dry-run": "wrangler deploy --dry-run --config share/wrangler.jsonc"
   },
   "engines": {

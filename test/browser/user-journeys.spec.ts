@@ -817,6 +817,183 @@ test('shared playback refreshes progress and lyrics between media events', async
   await expect(shareButton).toContainText('Share');
 });
 
+test('the story maker scrolls its lyrics and previews only after selection settles', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const storyWindow = window as typeof window & {
+      __storyBlobCalls?: number;
+      __storyPainted?: string[];
+      __storyPlayCalls?: number;
+      __storyPaused?: boolean;
+    };
+    storyWindow.__storyBlobCalls = 0;
+    storyWindow.__storyPainted = [];
+    storyWindow.__storyPlayCalls = 0;
+    storyWindow.__storyPaused = true;
+    const paintText = Object.getOwnPropertyDescriptor(
+      CanvasRenderingContext2D.prototype,
+      'fillText',
+    )?.value as CanvasRenderingContext2D['fillText'];
+    CanvasRenderingContext2D.prototype.fillText = function (...args) {
+      if (this.canvas.id === 'story-canvas')
+        storyWindow.__storyPainted?.push(String(args[0]));
+      return Reflect.apply(paintText, this, args);
+    };
+    const encode = Object.getOwnPropertyDescriptor(
+      HTMLCanvasElement.prototype,
+      'toBlob',
+    )?.value as HTMLCanvasElement['toBlob'];
+    HTMLCanvasElement.prototype.toBlob = function (...args) {
+      storyWindow.__storyBlobCalls = (storyWindow.__storyBlobCalls ?? 0) + 1;
+      return Reflect.apply(encode, this, args);
+    };
+    Object.defineProperty(navigator, 'canShare', {
+      configurable: true,
+      value: (data: ShareData) => Array.isArray(data.files),
+    });
+    Object.defineProperty(window, 'MediaRecorder', {
+      configurable: true,
+      value: class {
+        static isTypeSupported(type: string) {
+          return type.startsWith('video/mp4');
+        }
+      },
+    });
+    Object.defineProperties(HTMLMediaElement.prototype, {
+      currentTime: { configurable: true, writable: true, value: 0 },
+      duration: { configurable: true, get: () => 90 },
+      readyState: { configurable: true, get: () => 1 },
+      paused: {
+        configurable: true,
+        get: () => storyWindow.__storyPaused ?? true,
+      },
+    });
+    HTMLMediaElement.prototype.play = function () {
+      storyWindow.__storyPlayCalls = (storyWindow.__storyPlayCalls ?? 0) + 1;
+      storyWindow.__storyPaused = false;
+      this.dispatchEvent(new Event('play'));
+      return Promise.resolve();
+    };
+    HTMLMediaElement.prototype.pause = function () {
+      storyWindow.__storyPaused = true;
+      this.dispatchEvent(new Event('pause'));
+    };
+  });
+
+  const scrollableSong = {
+    title: 'Lanterns Through the Night',
+    language: 'English',
+    nativeScriptName: 'Latin',
+    isLatinScript: true,
+    lyricsNative: `[Verse]
+Line one by the doorway
+Line two under lanterns
+Line three hears the tabla
+Line four answers softly
+Line five crosses moonlight
+Line six follows singing
+Line seven gathers closer
+Line eight holds the rhythm
+Line nine wakes the courtyard
+Line ten turns to morning
+Line eleven keeps glowing
+Line twelve closes gently`,
+    lyricsRoman: `[Verse]
+Line one by the doorway
+Line two under lanterns
+Line three hears the tabla
+Line four answers softly
+Line five crosses moonlight
+Line six follows singing
+Line seven gathers closer
+Line eight holds the rhythm
+Line nine wakes the courtyard
+Line ten turns to morning
+Line eleven keeps glowing
+Line twelve closes gently`,
+    lyricTiming: null,
+  };
+  await page.route(`**/s/${sharedSongId}`, (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: playbackPage(
+        sharedSongId,
+        scrollableSong,
+        'fixture-nonce',
+        'http://127.0.0.1:4387',
+        '',
+      ),
+    }),
+  );
+  await page.goto(`/s/${sharedSongId}`);
+  await page.getByRole('button', { name: 'Share a story for' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Choose the opening' }),
+  ).toBeVisible();
+  await expect(page.getByText('Suggested chorus')).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as typeof window & { __storyBlobCalls?: number })
+          .__storyBlobCalls,
+    ),
+    'opening the video maker must not encode an unused still card',
+  ).toBe(0);
+
+  const canvas = page.getByRole('slider', {
+    name: 'Scroll or drag to move through the lyrics',
+  });
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) return;
+
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.7, {
+    steps: 5,
+  });
+  await expect(page.getByText('Release to preview')).toBeVisible();
+  await page.waitForTimeout(220);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as typeof window & { __storyPlayCalls?: number })
+          .__storyPlayCalls,
+    ),
+    'holding a drag must not start and stop the song under a finger',
+  ).toBe(0);
+
+  await page.mouse.up();
+  await expect(page.getByText('Previewing your story')).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as typeof window & { __storyPlayCalls?: number })
+          .__storyPlayCalls,
+    ),
+  ).toBe(1);
+
+  const beforeScroll = await canvas.getAttribute('aria-valuetext');
+  await page.evaluate(() => {
+    (window as typeof window & { __storyPainted?: string[] }).__storyPainted =
+      [];
+  });
+  await page.mouse.wheel(0, 1_200);
+  await expect
+    .poll(() => canvas.getAttribute('aria-valuetext'))
+    .not.toBe(beforeScroll);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as typeof window & { __storyPainted?: string[] })
+            .__storyPainted ?? [],
+      ),
+    )
+    .toContain('Line twelve closes gently');
+});
+
 test('the shared page invites the listener to make their own song', async ({
   page,
 }) => {

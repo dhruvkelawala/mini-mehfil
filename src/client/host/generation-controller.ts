@@ -62,6 +62,8 @@ export interface GenerationController {
   generating: () => boolean;
   lyrics: () => HostLyrics | null;
   shareReference: () => string | null;
+  /** The link this song was published under, once it has been shared. */
+  shareUrl: () => string | null;
   checkGenerationVisible: () => boolean;
   performanceAvailable: () => boolean;
   pendingContext: () => GenerationContext;
@@ -419,6 +421,7 @@ export function createGenerationController({
     generating,
     lyrics,
     shareReference,
+    shareUrl,
     checkGenerationVisible,
     performanceAvailable,
     pendingContext: () => recovery.read()?.context ?? null,

@@ -145,12 +145,16 @@ class Element {
   constructor() {
     this.children = [];
     this.listeners = new Map();
+    this.queries = new Map();
     this.classList = { toggle() {} };
     this.attributes = new Map();
     this.hidden = false;
     this.textContent = '';
     this.className = '';
     this.value = 0;
+    this.clicks = 0;
+    this.dataset = {};
+    this.style = {};
   }
   addEventListener(type, listener) {
     this.listeners.set(type, listener);
@@ -161,8 +165,20 @@ class Element {
   replaceChildren(...children) {
     this.children = children;
   }
-  querySelector() {
-    return new Element();
+  /** Memoized, so a caption the page mutates is the same node a test reads. */
+  querySelector(selector) {
+    let child = this.queries.get(selector);
+    if (!child) {
+      child = new Element();
+      this.queries.set(selector, child);
+    }
+    return child;
+  }
+  click() {
+    this.clicks += 1;
+  }
+  remove() {
+    this.removed = true;
   }
   setAttribute(name, value) {
     this.attributes.set(name, value);
@@ -181,11 +197,64 @@ class Element {
 }
 
 /**
+ * Records every drawing call the story card makes. `measureText` models a
+ * monospace-ish advance from the pixel size in the font string, which is
+ * enough for the page's wrapping and fitting loops to behave like a browser's.
+ */
+class CanvasContext {
+  constructor() {
+    this.font = '';
+    this.fillStyle = '';
+    this.textAlign = '';
+    this.textBaseline = '';
+    this.letterSpacing = '0px';
+    this.texts = [];
+    this.rects = [];
+    this.images = [];
+  }
+  createLinearGradient() {
+    return { addColorStop() {} };
+  }
+  fillRect(x, y, width, height) {
+    this.rects.push({ x, y, width, height, fillStyle: this.fillStyle });
+  }
+  drawImage(image, x, y, width, height) {
+    this.images.push({ image, x, y, width, height });
+  }
+  fillText(text, x, y) {
+    this.texts.push({ text, x, y, font: this.font, fillStyle: this.fillStyle });
+  }
+  measureText(text) {
+    const size = Number(/(\d+)px/.exec(this.font)?.[1] ?? 20);
+    return { width: String(text).length * size * 0.55 };
+  }
+  get text() {
+    return this.texts.map((entry) => entry.text).join('\n');
+  }
+}
+
+class Canvas {
+  constructor() {
+    this.width = 0;
+    this.height = 0;
+    this.context = new CanvasContext();
+  }
+  getContext() {
+    return this.context;
+  }
+  toBlob(callback, type, quality) {
+    this.encoded = { type, quality };
+    callback(new Blob([new Uint8Array([255, 216, 255])], { type }));
+  }
+}
+
+/**
  * Renders a real shared playback page and runs its inline script against a
  * minimal DOM, so these assertions exercise the page as shipped rather than a
  * paraphrase of it.
  */
-async function playbackHarness(metadata, mediaDuration) {
+async function playbackHarness(metadata, mediaDuration, options = {}) {
+  const { backgroundLoads = true, canShareFiles = true } = options;
   const elements = new Map([
     ['#audio', new Element()],
     ['#play', new Element()],
@@ -197,6 +266,16 @@ async function playbackHarness(metadata, mediaDuration) {
     ['#player-shell', new Element()],
     ['.scene', new Element()],
     ['#share', new Element()],
+    ['#story', new Element()],
+    ['#story-stage', new Element()],
+    ['#story-canvas', new Element()],
+    ['#story-bar', new Element()],
+    ['#story-note', new Element()],
+    ['#story-where', new Element()],
+    ['#story-lengths', new Element()],
+    ['#story-progress', new Element()],
+    ['#story-go', new Element()],
+    ['#story-close', new Element()],
     ['#clock', new Element()],
   ]);
   const audio = elements.get('#audio');
@@ -227,22 +306,78 @@ async function playbackHarness(metadata, mediaDuration) {
   const songData = /<script id="song-data"[^>]*>([\s\S]*?)<\/script>/.exec(
     html,
   )[1];
+  const canvases = [];
+  const created = [];
+  const body = new Element();
   const document = {
+    body,
     querySelector(selector) {
       if (selector === '#song-data') return { textContent: songData };
       return elements.get(selector);
     },
-    createElement() {
-      return new Element();
+    createElement(tag) {
+      if (tag === 'canvas') {
+        const canvas = new Canvas();
+        canvases.push(canvas);
+        return canvas;
+      }
+      const element = new Element();
+      element.tag = tag;
+      created.push(element);
+      return element;
     },
   };
+  const shared = [];
+  class BackgroundImage {
+    constructor() {
+      this.listeners = new Map();
+      this.width = 1600;
+      this.height = 1000;
+    }
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+    set src(value) {
+      this.source = value;
+      void Promise.resolve().then(() =>
+        this.listeners.get(backgroundLoads ? 'load' : 'error')?.(),
+      );
+    }
+    get src() {
+      return this.source;
+    }
+  }
+  const objectUrls = [];
   const frames = [];
   const script = [
     ...html.matchAll(/<script(?: nonce="[^"]+")?>([\s\S]*?)<\/script>/g),
   ].at(-1)[1];
   vm.runInNewContext(script, {
     document,
-    navigator: { clipboard: { async writeText() {} } },
+    navigator: {
+      clipboard: { async writeText() {} },
+      ...(canShareFiles
+        ? {
+            canShare: (data) => Array.isArray(data?.files),
+            share: async (data) => {
+              shared.push(data);
+              await (options.onShare?.(data) ?? null);
+            },
+          }
+        : {}),
+    },
+    Image: BackgroundImage,
+    File,
+    Blob,
+    URL: {
+      createObjectURL(blob) {
+        objectUrls.push(blob);
+        return `blob:card-${objectUrls.length}`;
+      },
+      revokeObjectURL() {},
+    },
+    setTimeout: () => 0,
+    clearTimeout: () => {},
     location: { href: `https://share.example/s/${ID}` },
     Intl,
     requestAnimationFrame(callback) {
@@ -257,6 +392,16 @@ async function playbackHarness(metadata, mediaDuration) {
     elements,
     frames,
     songData: JSON.parse(songData),
+    canvases,
+    created,
+    shared,
+    objectUrls,
+    card: () => canvases.at(-1),
+    storyLabel: () => elements.get('#story').querySelector('span'),
+    async pressStory() {
+      await elements.get('#story').emit('pointerdown');
+      await elements.get('#story').emit('click');
+    },
     lines: () => elements.get('#reveal-lines').children,
     timingNote: () => elements.get('.performance-timing').textContent,
     async seekTo(seconds) {
@@ -314,6 +459,7 @@ test('a timed share follows its sections and never shows stale sung lines', asyn
   assert.deepEqual(page.songData.pacing, sharedPacing);
   assert.equal(page.songData.expectedDurationSeconds, 90);
   assert.deepEqual(Object.keys(page.songData).sort(), [
+    'card',
     'expectedDurationSeconds',
     'lines',
     'pacing',
@@ -407,6 +553,93 @@ test('a timed share follows its sections and never shows stale sung lines', asyn
   );
 });
 
+test('the story card paints the song, its lyrics and its URL into a poster', async () => {
+  const page = await playbackHarness(SONG, 90);
+  await page.pressStory();
+
+  const card = page.card();
+  assert.equal(card.width, 1080);
+  assert.equal(card.height, 1920);
+  assert.deepEqual(card.encoded, { type: 'image/jpeg', quality: 0.92 });
+
+  const painted = card.getContext().text;
+  assert.match(painted, /MINI MEHFIL/);
+  assert.match(painted, /Aloopuri Khavsa/);
+  assert.match(painted, /GUJARATI/);
+  assert.ok(painted.includes('આ સાંજ ધીમે'), 'the native line is burned in');
+  assert.ok(
+    painted.includes('aa saanj dhime'),
+    'the romanization sits under the native line',
+  );
+  assert.ok(
+    painted.includes('share.example'),
+    'the host is readable inside the picture, not only in the share text',
+  );
+
+  // Cover-cropped: the 1600x1000 courtyard fills the portrait frame.
+  const drawn = card.getContext().images.at(0);
+  assert.ok(drawn.width >= 1080 && drawn.height >= 1920);
+
+  assert.equal(page.shared.length, 1);
+  const [file] = page.shared[0].files;
+  assert.equal(file.type, 'image/jpeg');
+  assert.match(file.name, /\.jpg$/);
+  assert.ok(
+    page.shared[0].text.includes(`https://share.example/s/${ID}`),
+    'every other share target still receives the link as text',
+  );
+  assert.equal(
+    page.objectUrls.length,
+    0,
+    'a card handed to the share sheet is never also downloaded',
+  );
+});
+
+test('a browser without file sharing downloads the story card instead', async () => {
+  const page = await playbackHarness(SONG, 90, { canShareFiles: false });
+  assert.equal(
+    page.storyLabel().textContent,
+    'Card',
+    'the button says what it will do before it is pressed',
+  );
+
+  await page.pressStory();
+  assert.equal(page.shared.length, 0);
+  assert.equal(page.objectUrls.length, 1);
+  const link = page.created.find((element) => element.tag === 'a');
+  assert.match(link.download, /\.jpg$/);
+  assert.equal(link.clicks, 1);
+  assert.equal(link.removed, true);
+  assert.equal(page.storyLabel().textContent, 'Saved');
+});
+
+test('cancelling the share sheet leaves the story button at rest', async () => {
+  const page = await playbackHarness(SONG, 90, {
+    onShare() {
+      const cancelled = new Error('cancelled');
+      cancelled.name = 'AbortError';
+      throw cancelled;
+    },
+  });
+  await page.pressStory();
+  assert.equal(page.storyLabel().textContent, 'Story');
+  assert.equal(
+    page.objectUrls.length,
+    0,
+    'a cancelled share must not silently download a file',
+  );
+});
+
+test('the story card still reads when the courtyard background will not load', async () => {
+  const page = await playbackHarness(SONG, 90, { backgroundLoads: false });
+  await page.pressStory();
+  const context = page.card().getContext();
+  assert.equal(context.images.length, 0);
+  assert.equal(context.rects[0].fillStyle, '#142e2d');
+  assert.ok(context.text.includes('Aloopuri Khavsa'));
+  assert.equal(page.shared.length, 1);
+});
+
 test('a timed share falls back to the approximate reveal when the audio does not match', async () => {
   const page = await playbackHarness(TIMED_LYRICS, 140);
   await page.audio.emit('loadedmetadata');
@@ -487,6 +720,15 @@ test('upload to playback round trip preserves title, language, and both lyric sc
   assert.match(html, /class="player-icon play-icon"/);
   assert.match(html, /class="player-icon pause-icon"/);
   assert.match(html, /id="share"[^>]*>[\s\S]*?<svg class="player-icon"/);
+  assert.match(html, /class="player-actions"/);
+  assert.match(
+    html,
+    /id="story"[^>]*>[\s\S]*?<svg class="player-icon story-icon"/,
+  );
+  assert.ok(
+    html.includes('"host":"minimehfil.wtf"'),
+    'the card burns in the host the share URL actually uses',
+  );
   assert.match(html, /class="player-icon download-icon"/);
   assert.doesNotMatch(html, new RegExp(`Make your own song \\u${'2197'}`, 'u'));
   assert.doesNotMatch(html, new RegExp(`id="share"[^>]*>\\u${'2197'}`, 'u'));
